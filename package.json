@@ -1,0 +1,167 @@
+{
+  "name": "forge-local-agent",
+  "displayName": "Forge — Local AI Coding Agent",
+  "description": "A Cursor-style agentic coding assistant that runs entirely on local Ollama models. Agent/Ask/Plan modes, multitask chat tabs, .forge/rules + .forge/skills + .forge/hooks, repo-stored chat history, multi-file agent edits, inline Cmd+K editing, and Tab autocomplete — no cloud, no API keys.",
+  "version": "0.2.1",
+  "publisher": "local-forge",
+  "private": true,
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Machine Learning", "Programming Languages", "Other"],
+  "keywords": ["ollama", "ai", "agent", "local", "llm", "chat", "autocomplete"],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "icon": "media/icon.png",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "forge",
+          "title": "Forge",
+          "icon": "media/activitybar-icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "forge": [
+        {
+          "type": "webview",
+          "id": "forge.chatView",
+          "name": "Chat",
+          "icon": "media/activitybar-icon.svg"
+        }
+      ]
+    },
+    "commands": [
+      { "command": "forge.newChat", "title": "Forge: New Chat", "icon": "$(add)" },
+      { "command": "forge.focusChat", "title": "Forge: Focus Chat" },
+      { "command": "forge.inlineEdit", "title": "Forge: Edit Selection with AI (Cmd+K)" },
+      { "command": "forge.acceptInlineEdit", "title": "Forge: Accept Inline Edit" },
+      { "command": "forge.rejectInlineEdit", "title": "Forge: Reject Inline Edit" },
+      { "command": "forge.selectChatModel", "title": "Forge: Select Chat Model" },
+      { "command": "forge.selectCompletionModel", "title": "Forge: Select Autocomplete Model" },
+      { "command": "forge.indexWorkspace", "title": "Forge: Index Workspace for @codebase Search" },
+      { "command": "forge.toggleTabCompletion", "title": "Forge: Toggle Tab Autocomplete" },
+      { "command": "forge.addFileToContext", "title": "Forge: Add File to Chat Context" },
+      { "command": "forge.addSelectionToChat", "title": "Forge: Add Selection to Chat" },
+      { "command": "forge.acceptAllAgentEdits", "title": "Forge: Accept All Proposed Edits" },
+      { "command": "forge.rejectAllAgentEdits", "title": "Forge: Reject All Proposed Edits" },
+      { "command": "forge.openDiffForFile", "title": "Forge: Review Proposed Change" },
+      { "command": "forge.checkOllamaStatus", "title": "Forge: Check Ollama Connection" },
+      { "command": "forge.newRule", "title": "Forge: New Rule (.forge/rules)" },
+      { "command": "forge.newSkill", "title": "Forge: New Skill / Slash Command (.forge/skills)" },
+      { "command": "forge.openHooksFolder", "title": "Forge: Open Hooks Folder (.forge/hooks)" }
+    ],
+    "menus": {
+      "editor/context": [
+        { "command": "forge.inlineEdit", "group": "forge@1", "when": "editorTextFocus" },
+        { "command": "forge.addSelectionToChat", "group": "forge@2", "when": "editorHasSelection" }
+      ],
+      "explorer/context": [
+        { "command": "forge.addFileToContext", "group": "forge@1" }
+      ],
+      "view/title": [
+        { "command": "forge.newChat", "when": "view == forge.chatView", "group": "navigation" },
+        { "command": "forge.indexWorkspace", "when": "view == forge.chatView", "group": "navigation" }
+      ]
+    },
+    "keybindings": [
+      { "command": "forge.focusChat", "key": "cmd+l", "mac": "cmd+l", "win": "ctrl+l", "linux": "ctrl+l" },
+      { "command": "forge.inlineEdit", "key": "cmd+k", "mac": "cmd+k", "win": "ctrl+k", "linux": "ctrl+k", "when": "editorTextFocus" },
+      { "command": "forge.acceptInlineEdit", "key": "cmd+enter", "mac": "cmd+enter", "win": "ctrl+enter", "linux": "ctrl+enter", "when": "forge.inlineEditActive" },
+      { "command": "forge.rejectInlineEdit", "key": "cmd+backspace", "mac": "cmd+backspace", "win": "ctrl+backspace", "linux": "ctrl+backspace", "when": "forge.inlineEditActive" },
+      { "command": "forge.addSelectionToChat", "key": "cmd+shift+l", "mac": "cmd+shift+l", "win": "ctrl+shift+l", "linux": "ctrl+shift+l", "when": "editorHasSelection" }
+    ],
+    "configuration": {
+      "title": "Forge",
+      "properties": {
+        "forge.ollamaBaseUrl": {
+          "type": "string",
+          "default": "http://localhost:11434",
+          "description": "Base URL of your local Ollama server."
+        },
+        "forge.chatModel": {
+          "type": "string",
+          "default": "",
+          "description": "Ollama model tag to use for chat/agent (e.g. 'qwen2.5-coder:14b'). Leave empty to auto-pick the best available coding model on first use."
+        },
+        "forge.completionModel": {
+          "type": "string",
+          "default": "",
+          "description": "Ollama model tag to use for Tab autocomplete (a fast, small model recommended). Leave empty to reuse the chat model."
+        },
+        "forge.embeddingModel": {
+          "type": "string",
+          "default": "nomic-embed-text",
+          "description": "Ollama embedding model used to index the workspace for @codebase search. If not installed, Forge falls back to keyword search automatically."
+        },
+        "forge.temperature": {
+          "type": "number",
+          "default": 0.2,
+          "description": "Sampling temperature for chat/agent responses."
+        },
+        "forge.maxAgentIterations": {
+          "type": "number",
+          "default": 25,
+          "description": "Maximum number of tool-call steps the agent may take in a single turn before stopping."
+        },
+        "forge.requireApprovalForWrites": {
+          "type": "boolean",
+          "default": true,
+          "description": "Require you to accept/reject each file edit the agent proposes before it is written to disk."
+        },
+        "forge.requireApprovalForCommands": {
+          "type": "boolean",
+          "default": true,
+          "description": "Require approval before the agent runs a terminal command, unless it matches an auto-approve pattern."
+        },
+        "forge.autoApproveCommands": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [
+            "^git status", "^git diff", "^git log", "^ls\\b", "^cat\\b", "^pwd$",
+            "^npm (test|run test|run lint|run build)\\b", "^yarn (test|lint|build)\\b",
+            "^pytest\\b", "^grep\\b", "^find\\b", "^echo\\b"
+          ],
+          "description": "Regex patterns for read-only/safe commands the agent may run without asking for approval each time."
+        },
+        "forge.enableTabCompletion": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable ghost-text Tab autocomplete powered by your local model."
+        },
+        "forge.completionDebounceMs": {
+          "type": "number",
+          "default": 250,
+          "description": "Milliseconds to wait after typing stops before requesting an autocomplete suggestion."
+        },
+        "forge.contextChunkCount": {
+          "type": "number",
+          "default": 8,
+          "description": "Number of workspace chunks to retrieve for @codebase context."
+        },
+        "forge.maxContextFileKB": {
+          "type": "number",
+          "default": 200,
+          "description": "Skip indexing/reading files larger than this size (KB) to keep context tight."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -w -p ./",
+    "typecheck": "tsc --noEmit -p ./",
+    "package": "npm run compile && vsce package --no-dependencies --allow-missing-repository"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^2.24.0",
+    "typescript": "^5.4.0"
+  }
+}
