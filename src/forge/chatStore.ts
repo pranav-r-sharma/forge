@@ -6,7 +6,7 @@ import { CheckpointRecord } from '../agent/checkpoints';
 import { CompactionCache } from '../agent/contextManager';
 import { logger } from '../util/logger';
 
-export type ForgeMode = 'agent' | 'ask' | 'plan' | 'auto';
+export type ForgeMode = 'agent' | 'ask' | 'plan' | 'auto' | 'outcome';
 
 export interface StoredSession {
   id: string;
@@ -19,12 +19,16 @@ export interface StoredSession {
   modelHistory: ChatMessage[];
   checkpoints?: CheckpointRecord[];
   compactionCache?: CompactionCache;
+  /** Optional "definition of done" shell command for Agent/Auto/Outcome modes — see agentLoop.ts's verify-gated final-answer loop. */
+  verifyCommand?: string;
+  /** Counts turns since the last automatic memory-extraction review, so it only runs periodically rather than every turn — see ChatSession.maybeReviewForMemory(). */
+  turnsSinceMemoryReview?: number;
 }
 
 /** One line of the append-only `.forge/chat/<id>.log.jsonl` crash-recovery log — see item "Logging of important decisions/actions". */
 export interface LogEntry {
   ts: string;
-  kind: 'user' | 'tool_call' | 'tool_result' | 'final' | 'error' | 'checkpoint' | 'mode_change';
+  kind: 'user' | 'tool_call' | 'tool_result' | 'final' | 'error' | 'checkpoint' | 'mode_change' | 'verify' | 'memory_review';
   detail: string;
 }
 

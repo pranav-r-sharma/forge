@@ -28,6 +28,7 @@ import {
   rejectAllEditsCommand,
   selectChatModelCommand,
   selectCompletionModelCommand,
+  setModelForModeCommand,
   showHwStatusCommand,
 } from './commands';
 
@@ -101,6 +102,7 @@ export async function activate(context: vscode.ExtensionContext) {
       await statusBar.refresh();
     }),
     vscode.commands.registerCommand('forge.selectCompletionModel', () => selectCompletionModelCommand(ollama)),
+    vscode.commands.registerCommand('forge.setModelForMode', () => setModelForModeCommand(ollama)),
     vscode.commands.registerCommand('forge.indexWorkspace', async () => {
       await indexWorkspaceCommand(workspaceIndex);
       await chatViewProvider.refreshIndexStatus();

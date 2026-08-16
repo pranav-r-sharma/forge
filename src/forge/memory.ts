@@ -52,6 +52,11 @@ export class MemoryStore {
       .filter(Boolean);
   }
 
+  /** Every currently-remembered fact, one string each, no bullet prefix — used by the automatic memory-review pass (memoryReview.ts) to avoid re-proposing something already saved. */
+  async listFacts(): Promise<string[]> {
+    return this.facts(await this.readRaw());
+  }
+
   /** What gets spliced into the system prompt — capped so a large memory file can't itself blow the context budget it exists to protect. */
   async renderForPrompt(): Promise<string> {
     const raw = await this.readRaw();

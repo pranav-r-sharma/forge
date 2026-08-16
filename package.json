@@ -2,7 +2,7 @@
   "name": "forge-local-agent",
   "displayName": "Forge — Local AI Coding Agent",
   "description": "A Cursor-style agentic coding assistant that runs entirely on local Ollama models. Agent/Ask/Plan modes, multitask chat tabs, .forge/rules + .forge/skills + .forge/hooks, repo-stored chat history, multi-file agent edits, inline Cmd+K editing, and Tab autocomplete — no cloud, no API keys.",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "publisher": "local-forge",
   "private": true,
   "engines": {
@@ -43,6 +43,7 @@
       { "command": "forge.rejectInlineEdit", "title": "Forge: Reject Inline Edit" },
       { "command": "forge.selectChatModel", "title": "Forge: Select Chat Model" },
       { "command": "forge.selectCompletionModel", "title": "Forge: Select Autocomplete Model" },
+      { "command": "forge.setModelForMode", "title": "Forge: Set Model for Mode (per-mode routing)" },
       { "command": "forge.indexWorkspace", "title": "Forge: Index Workspace for @codebase Search" },
       { "command": "forge.toggleTabCompletion", "title": "Forge: Toggle Tab Autocomplete" },
       { "command": "forge.addFileToContext", "title": "Forge: Add File to Chat Context" },
@@ -119,6 +120,11 @@
           "type": "number",
           "default": 32768,
           "description": "Context window size requested from Ollama (options.num_ctx) for chat/agent and inline-edit calls. Ollama's own default is small and silent about truncating — a long agent session can quietly lose early context without this set. Check your model's real max with `ollama show <model>` and set this close to it if you have the memory/VRAM to spare (the KV cache is sized to this ceiling whether or not you use all of it)."
+        },
+        "forge.modelRouting": {
+          "type": "object",
+          "default": {},
+          "description": "Optional per-mode model overrides, e.g. {\"plan\": \"deepseek-r1:14b\", \"agent\": \"qwen2.5-coder:14b\"}. A mode with no entry here falls back to forge.chatModel. Also settable via \"Forge: Set Model for Mode\" (quick pick, no JSON editing needed). A chat tab's own model override (the model-name button in the composer) still wins over this."
         },
         "forge.keepAliveMinutes": {
           "type": "number",

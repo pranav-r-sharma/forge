@@ -22,6 +22,7 @@
     history: [],
     attachedFiles: [],
     checkpoints: [], // {id, label, createdAt} for the active session
+    verifyCommand: '', // optional "definition of done" command for the active session (Agent/Auto/Outcome modes)
     hwStatus: { loadedModels: [] },
     lastMetrics: undefined,
     mentionResults: [], // [{path, kind}] or skill matches, whichever is active
@@ -46,7 +47,7 @@
         <div id="search-results" class="search-results"></div>
       </div>
       <div id="banner" class="forge-banner" style="display:none;"></div>
-      <div id="auto-banner" class="forge-banner forge-banner-warn" style="display:none;">&#9888; Auto mode: no approvals — edits and commands run immediately. A checkpoint is saved before each turn.</div>
+      <div id="auto-banner" class="forge-banner forge-banner-warn" style="display:none;"></div>
       <div id="pending-panel" class="forge-pending-panel" style="display:none;">
         <div class="forge-pending-header">
           <span id="pending-count"></span>
@@ -59,6 +60,10 @@
       <div id="transcript" class="forge-transcript"></div>
       <div class="forge-composer">
         <div id="mode-strip" class="forge-mode-strip"></div>
+        <div id="verify-row" class="forge-verify-row" style="display:none;">
+          <span class="verify-row-label" title="Optional shell command Forge automatically re-runs after every final answer in this mode — a non-zero exit is fed back and the run keeps going instead of stopping.">&#127919; Definition of done:</span>
+          <input id="verify-input" type="text" placeholder="optional command, e.g. npm test — leave blank to skip" />
+        </div>
         <div id="chips" class="forge-chips"></div>
         <div id="mention-dropdown" class="forge-mention-dropdown" style="display:none;"></div>
         <textarea id="input" class="forge-input" rows="3" placeholder="Ask Forge, @ to attach a file, / for a skill… (Enter to send, Shift+Enter for newline)"></textarea>
@@ -99,6 +104,8 @@
     searchPanel: document.getElementById('search-panel'),
     searchInput: /** @type {HTMLInputElement} */ (document.getElementById('search-input')),
     searchResults: document.getElementById('search-results'),
+    verifyRow: document.getElementById('verify-row'),
+    verifyInput: /** @type {HTMLInputElement} */ (document.getElementById('verify-input')),
   };
 
   document.getElementById('btn-new-chat').addEventListener('click', () => vscodeApi.postMessage({ type: 'newChat' }));
@@ -163,7 +170,7 @@
     el.modeStrip.innerHTML = '';
     for (const m of state.modes) {
       const btn = document.createElement('button');
-      btn.className = 'mode-btn' + (m.id === 'auto' ? ' mode-auto' : '') + (m.id === state.activeMode ? ' active' : '');
+      btn.className = 'mode-btn' + (m.id === 'auto' ? ' mode-auto' : '') + (m.id === 'outcome' ? ' mode-outcome' : '') + (m.id === state.activeMode ? ' active' : '');
       btn.textContent = m.label;
       btn.title = m.description;
       btn.addEventListener('click', () => {
@@ -171,9 +178,13 @@
         if (m.id === 'auto' && !window.confirm('Switch to Auto mode? Forge will edit files and run commands with NO approval prompts from here on (a hard-coded denylist still blocks a few destructive commands). A checkpoint is saved before every turn so you can revert.')) {
           return;
         }
+        if (m.id === 'outcome' && !window.confirm('Switch to Outcome mode? Describe a destination, not steps — Forge works backward from it with NO approval prompts (same denylist exception as Auto mode) and keeps iterating, checking its own progress, until it\'s reached. Set an optional "definition of done" command below the mode row for a real, automatic check instead of relying on the model\'s own judgment. A checkpoint is saved before every turn so you can revert.')) {
+          return;
+        }
         state.activeMode = m.id;
         renderModeStrip();
         renderAutoBanner();
+        renderVerifyRow();
         vscodeApi.postMessage({ type: 'setMode', mode: m.id });
       });
       el.modeStrip.appendChild(btn);
@@ -181,8 +192,49 @@
   }
 
   function renderAutoBanner() {
-    el.autoBanner.style.display = state.activeMode === 'auto' ? 'block' : 'none';
+    if (state.activeMode === 'auto') {
+      el.autoBanner.style.display = 'block';
+      el.autoBanner.innerHTML = '&#9888; Auto mode: no approvals — edits and commands run immediately. A checkpoint is saved before each turn.';
+    } else if (state.activeMode === 'outcome') {
+      el.autoBanner.style.display = 'block';
+      el.autoBanner.innerHTML = '&#127919; Outcome mode: state the destination, not the steps — Forge works backward from it, no approvals, and keeps iterating until it\'s reached. A checkpoint is saved before each turn.';
+    } else {
+      el.autoBanner.style.display = 'none';
+    }
   }
+
+  // Modes that take autonomous action and so can meaningfully use a
+  // "definition of done" check — mirrors modeSupportsVerifyCommand() in
+  // src/agent/modes.ts. Ask/Plan never touch anything, so there's nothing
+  // for a done-check to check.
+  const VERIFY_CAPABLE_MODES = ['agent', 'auto', 'outcome'];
+
+  function renderVerifyRow() {
+    const show = VERIFY_CAPABLE_MODES.includes(state.activeMode);
+    el.verifyRow.style.display = show ? 'flex' : 'none';
+    if (show) el.verifyInput.value = state.verifyCommand || '';
+  }
+
+  let verifyCommitTimer;
+  function commitVerifyCommand() {
+    clearTimeout(verifyCommitTimer);
+    const value = el.verifyInput.value.trim();
+    if (value === (state.verifyCommand || '')) return;
+    state.verifyCommand = value;
+    vscodeApi.postMessage({ type: 'setVerifyCommand', command: value });
+  }
+  el.verifyInput.addEventListener('blur', commitVerifyCommand);
+  el.verifyInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      commitVerifyCommand();
+      el.verifyInput.blur();
+    }
+  });
+  el.verifyInput.addEventListener('input', () => {
+    clearTimeout(verifyCommitTimer);
+    verifyCommitTimer = setTimeout(commitVerifyCommand, 800);
+  });
 
   // ---------- tab strip (multitask) ----------
   function renderTabStrip() {
@@ -519,6 +571,20 @@
       return wrap;
     }
 
+    if (entry.kind === 'verify') {
+      wrap.className = 'tool-card verify-card ' + (entry.status === 'running' ? 'running' : entry.ok ? 'ok' : 'fail');
+      const icon = entry.status === 'running' ? spinnerSvg() : entry.ok ? '&#10003;' : '&#10007;';
+      wrap.innerHTML = `
+        <div class="tool-card-head">
+          <span class="tool-icon">${icon}</span>
+          <span class="tool-name">Definition of done</span>
+          <span class="tool-args"><code>${escapeHtml(entry.command)}</code></span>
+        </div>
+        ${entry.status === 'running' ? '<div class="tool-summary">Checking…</div>' : `<div class="tool-summary">${entry.ok ? 'Passed.' : 'Not met yet — Forge is feeding this back and continuing.'} ${escapeHtml(entry.summary || '')}</div>`}
+      `;
+      return wrap;
+    }
+
     return null;
   }
 
@@ -599,8 +665,10 @@
     state.busyBySession[session.id] = session.busy;
     state.history = session.history;
     state.checkpoints = session.checkpoints || [];
+    state.verifyCommand = session.verifyCommand || '';
     renderModeStrip();
     renderAutoBanner();
+    renderVerifyRow();
     renderTabStrip();
     renderBusy();
     renderAllHistory();

@@ -621,6 +621,43 @@ body {
   border-bottom: 1px solid var(--vscode-inputValidation-warningBorder, orange);
 }
 
+.mode-btn.mode-outcome {
+  border-color: var(--vscode-charts-purple, #b180d7);
+}
+.mode-btn.mode-outcome.active {
+  background: var(--vscode-charts-purple, #b180d7);
+  color: var(--vscode-editor-background, #fff);
+}
+
+.forge-verify-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 2px;
+  font-size: 0.85em;
+}
+.verify-row-label {
+  opacity: 0.75;
+  white-space: nowrap;
+  cursor: help;
+}
+#verify-input {
+  flex: 1;
+  min-width: 0;
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+  border: 1px solid var(--vscode-input-border, transparent);
+  border-radius: 4px;
+  padding: 3px 6px;
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 0.95em;
+}
+#verify-input:focus {
+  outline: 1px solid var(--vscode-focusBorder);
+}
+
+.verify-card .tool-name { color: var(--vscode-charts-purple, #b180d7); }
+
 .msg-user-wrap {
   display: flex;
   flex-direction: column;

@@ -8,7 +8,7 @@ import { RulesEngine } from '../forge/rules';
 import { SkillsEngine } from '../forge/skills';
 import { HookRunner } from '../forge/hooks';
 import { MemoryStore } from '../forge/memory';
-import { ChatStore } from '../forge/chatStore';
+import { ChatStore, SessionSummary } from '../forge/chatStore';
 import { MODES } from '../agent/modes';
 import { getConfig, setChatModel } from '../util/config';
 import { genId } from '../util/ids';
@@ -16,7 +16,7 @@ import { toRelative } from '../util/paths';
 import { WorkspaceEntryIndex } from '../util/fileSearch';
 import { logger } from '../util/logger';
 import { ChatSession, ChatSessionServices } from './chatSession';
-import { ExtensionToWebviewMessage, HwStatus, InitState, SearchResultItem, WebviewToExtensionMessage } from '../webview/protocol';
+import { ExtensionToWebviewMessage, HwStatus, InitState, SearchResultItem, UiTranscriptEntry, WebviewToExtensionMessage } from '../webview/protocol';
 
 /**
  * Thin webview host + multi-session ("multitask") manager. All the actual
@@ -182,6 +182,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         this.sessions.delete(msg.id);
         await this.chatStore.delete(msg.id);
         this.chatMemoryIndex.removeSession(msg.id);
+        this.historyCache.delete(msg.id);
         if (this.activeSessionId === msg.id) {
           let next: ChatSession | undefined = [...this.sessions.values()][0];
           if (!next) {
@@ -280,10 +281,37 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         this.post({ type: 'hwStatus', status: await this.buildHwStatus() });
         return;
       }
+      case 'setVerifyCommand': {
+        this.activeSession()?.setVerifyCommand(msg.command);
+        return;
+      }
     }
   }
 
-  /** Item #6: searches every persisted chat's transcript (not just the open one), across `.forge/chat/*.json`. Linear scan — fine at the personal, single-workspace scale Forge operates at. */
+  /**
+   * Item #6: searches every persisted chat's transcript (not just the open
+   * one), across `.forge/chat/*.json`. Still a linear scan over messages
+   * within each session — exact-substring highlighting wants the real text,
+   * not an embedding, so this stays separate from ChatMemoryIndex's semantic
+   * search — but no longer re-reads and re-parses every closed session's
+   * JSON file from disk on every keystroke: `historyCache` remembers each
+   * closed session's transcript keyed by its `updatedAt`, so a search only
+   * pays the disk-read cost once per session per change, not once per
+   * search call. Open sessions are cheap already (in-memory, no cache
+   * needed) and always read live so a search reflects an in-flight turn.
+   */
+  private historyCache = new Map<string, { updatedAt: string; history: UiTranscriptEntry[] }>();
+
+  private async historyForSearch(summary: SessionSummary): Promise<UiTranscriptEntry[]> {
+    const open = this.sessions.get(summary.id);
+    if (open) return open.uiHistory;
+    const cached = this.historyCache.get(summary.id);
+    if (cached && cached.updatedAt === summary.updatedAt) return cached.history;
+    const history = (await this.chatStore.load(summary.id))?.uiHistory || [];
+    this.historyCache.set(summary.id, { updatedAt: summary.updatedAt, history });
+    return history;
+  }
+
   private async searchAllChats(query: string): Promise<SearchResultItem[]> {
     const q = query.trim().toLowerCase();
     if (!q) return [];
@@ -291,8 +319,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     const summaries = await this.chatStore.listSessions();
     for (const summary of summaries) {
       if (results.length >= 50) break;
-      const open = this.sessions.get(summary.id);
-      const history = open ? open.uiHistory : (await this.chatStore.load(summary.id))?.uiHistory || [];
+      const history = await this.historyForSearch(summary);
       for (const entry of history) {
         if (results.length >= 50) break;
         const text = 'text' in entry ? entry.text : '';

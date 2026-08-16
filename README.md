@@ -6,7 +6,7 @@ See `CURSOR_PARITY.md` for a full feature-by-feature map against Cursor, and `RO
 
 ## What you get
 
-- **Agent / Ask / Plan modes** — Agent has full read/write/run autonomy; Ask is read-only Q&A with no side effects; Plan drafts a step-by-step plan for you to review before anything runs, then hands off to Agent mode when you approve it. Switch anytime from the mode strip above the message box.
+- **Agent / Ask / Plan / Auto / Outcome modes** — Agent has full read/write/run autonomy; Ask is read-only Q&A with no side effects; Plan drafts a step-by-step plan for you to review before anything runs; Auto is fully autonomous with no approvals; Outcome is "reverse engineering" — state a destination and Forge works backward from it, with an optional command that automatically verifies "done" instead of taking the model's word for it. Switch anytime from the mode strip above the message box.
 - **Multitask chat tabs** — run several conversations at once (e.g. one investigating a bug while another refactors something unrelated); background tabs keep working and show a spinner until you switch to them.
 - **Chat history stored in your repo** — every session is a JSON file under `.forge/chat/`, not hidden app-support state, so it travels with the project.
 - **Project rules** (`.forge/rules/*.md`) — always-on or file-glob-scoped instructions injected into the agent's system prompt, Cursor `.cursor/rules` equivalent. **Forge: New Rule** scaffolds one.
@@ -19,7 +19,7 @@ See `CURSOR_PARITY.md` for a full feature-by-feature map against Cursor, and `RO
 - **Command approval** — shell commands the agent wants to run are shown to you first, unless you've allow-listed that pattern.
 - **@codebase search** — semantic search over your workspace if you've pulled an embedding model (`nomic-embed-text`), with an automatic keyword-search fallback if you haven't.
 - **Memory** — a curated durable-facts file (`.forge/memory.md`) injected into every prompt, plus semantic search over every past chat (`search_chat_history`) so a long-running project's history is retrievable on demand instead of having to fit in one prompt. See "Memory" below.
-- **Model picker** — auto-detects installed Ollama models and recommends a good default (qwen2.5-coder, deepseek-coder, etc.); switch anytime from the status bar.
+- **Model picker + per-mode routing** — auto-detects installed Ollama models and recommends a good default (qwen2.5-coder, deepseek-coder, etc.); switch anytime from the status bar, and optionally route different modes to different models (`forge.modelRouting` / **Forge: Set Model for Mode**) since a reasoning model for Plan and a strong coder for Agent are genuinely different jobs.
 
 Zero runtime npm dependencies — the whole extension is hand-written TypeScript talking to Ollama's HTTP API with Node's built-in `fetch`.
 
@@ -90,6 +90,15 @@ The pill strip above the message box switches modes per chat tab:
 - **Ask** — read-only. The agent can `read_file` / `search_code` / `search_codebase` / `get_problems` to investigate, but `write_file` and `run_command` are refused. Good for "explain this" / "where does X happen" without any risk of it touching files.
 - **Plan** — no tools at all; the model reads only what's already in the conversation/attached files and produces a numbered plan. Review it, then click **Execute plan** on the plan card to hand off to Agent mode, which executes it step by step with the plan pinned into its context.
 - **Auto** (new in 0.3.0) — fully autonomous: every file edit and shell command runs immediately, with **no approval prompts at all**, except a small hard-coded denylist of genuinely destructive commands (`rm -rf /`, force-pushing over `main`/`master`, disk-format commands, fork bombs, etc.) that always still ask, even in Auto mode. Switching to it shows a confirmation dialog explaining this. Because nothing pauses for your review, two things back it up: a **checkpoint is saved automatically before every turn** (see below — one click undoes everything from that point on), and a **loop detector** watches for the agent repeating the same failing action and stops the turn with an explanation instead of grinding forever. On a genuine failure, Auto mode is instructed to diagnose and try a different approach rather than stopping to ask — that's the point of it — but it will still stop and explain itself if it's truly stuck or the task is done.
+- **Outcome** (new in 0.5.0) — "reverse engineering": you describe a destination, not steps, and Forge works backward from it. See below for the details — it's autonomous the same way Auto mode is, plus a mechanism that keeps it honest about when the goal is actually met.
+
+### Outcome mode — state the destination, not the steps
+
+Pick **Outcome** from the mode strip, then describe an end state instead of a task: "the API returns valid JSON for GET /users and the existing tests still pass", "the login page has a working dark-mode toggle", "this build succeeds without warnings". Forge treats your message as a goal, not a to-do list — the system prompt has it restate the goal as concrete, checkable criteria, look at what's actually there right now, and work backward from the gap between the two, autonomously (same no-approval behavior as Auto mode, same dangerous-command exception, same checkpoint-before-every-turn safety net).
+
+The part that makes this more than "Auto mode with a friendlier prompt" is the **definition-of-done command** — an optional field that appears below the mode strip whenever Agent, Auto, or Outcome mode is active. Set it to a shell command whose exit code means "the goal is met" (`npm test`, `curl -sf localhost:3000/health`, a custom check script, whatever fits) and Forge stops trusting the model's own opinion about being done: after every plain-text final answer, **Forge runs that command itself**, and only actually ends the turn if it exits 0. A non-zero exit gets fed straight back to the model as real evidence ("the goal is not met yet — this is not an opinion") and the turn keeps going instead of shipping an unearned "done." An always-failing check still can't run forever — the same loop detector that backs Auto mode notices the repeated failure and stops with an explanation.
+
+If you don't set a check command, the model has to verify its own work some other way (re-reading a file, running a relevant command) before it's allowed to claim success — weaker than an automatic check, but still better than taking its word for it, and the hallucination-claim check from 0.3.0 still applies underneath all of this.
 
 ### Multitask (chat tabs)
 
@@ -107,18 +116,22 @@ Two settings control how much of your conversation Forge sends to Ollama on each
 
 Context compaction (above) keeps a single long turn from blowing the context window, but it doesn't fix the bigger version of the same problem: a *project* easily outlives any one chat, and a fresh chat starts from nothing. Two pieces work together to fix that:
 
-- **`.forge/memory.md`** — a short, curated list of durable facts ("this repo uses pnpm, not npm", "the user prefers tabs", "staging DB creds live in `.env.staging`"). It's injected into every system prompt, in every chat, the same way `.forge/rules/` is. The agent adds to it itself via a `remember` tool call when it learns something worth never forgetting; you can also open and hand-edit it directly with **Forge: Open Memory File**. It's deliberately meant to stay small — if it starts turning into a real knowledge base, that content belongs in `.forge/rules/` instead.
+- **`.forge/memory.md`** — a short, curated list of durable facts ("this repo uses pnpm, not npm", "the user prefers tabs", "staging DB creds live in `.env.staging`"). It's injected into every system prompt, in every chat, the same way `.forge/rules/` is. The agent adds to it itself via a `remember` tool call when it learns something worth never forgetting; you can also open and hand-edit it directly with **Forge: Open Memory File**. It's deliberately meant to stay small — if it starts turning into a real knowledge base, that content belongs in `.forge/rules/` instead. As of 0.5.0, this isn't purely reactive: every 6 completed turns in a chat, Forge runs a small **automatic review pass** in the background (fire-and-forget, never blocks a turn) that re-reads the recent conversation and proposes anything durable it notices, on top of whatever the model already flagged mid-conversation via `remember`. Every proposed fact still goes through the same de-dupe, so this can only ever add a fact once.
 - **Chat-history search** — every past chat (not just the open one) is chunked and embedded into a searchable index, incrementally updated after every turn. The agent can call `search_chat_history` itself when you reference something that sounds like it was already discussed or decided ("like we talked about…"), instead of asking you to repeat it or guessing. This is the same embedding-index machinery as `@codebase`/`search_codebase`, pointed at `.forge/chat/*.json` instead of your source files, with the same automatic keyword-search fallback if no embedding model is installed.
 
 Together these mean a long-running project's context doesn't actually run out — it becomes something the agent looks up on demand rather than something that has to be kept, in full, in every prompt. Neither is retroactive: chat-history search only covers sessions that have been indexed (every session gets indexed as you use it, so this only matters for import scenarios), and memory only contains what's actually been written to `.forge/memory.md`.
 
 ### Search — find anything across every chat
 
-Click the 🔍 icon in the header to search every message in every saved chat (not just the open tab) — results show which chat they're from and jump you straight there.
+Click the 🔍 icon in the header to search every message in every saved chat (not just the open tab) — results show which chat they're from and jump you straight there. Closed sessions' transcripts are cached in memory (keyed by when they were last saved), so typing a query doesn't re-read and re-parse every chat file from disk on every keystroke — only sessions that actually changed since the last search get re-read.
 
 ### @-mentioning files and folders
 
 Type `@` to attach a file *or a folder* to your message — use **↑/↓ arrow keys** to move through the results and **Enter** or **Tab** to pick one, same as the `/` skill-command dropdown, no mouse required. Attaching a folder gives the agent a shallow listing of its contents rather than dumping everything in it into context; it can `list_dir`/`read_file` further in from there.
+
+### Model routing — different models for different modes
+
+One model doing chat, planning, and Tab autocomplete is a real compromise — local models have genuinely different strengths. `forge.modelRouting` maps mode → model (e.g. a reasoning-tuned model for Plan, your strongest coder for Agent/Auto/Outcome, a fast small model left as the default for Ask). Run **Forge: Set Model for Mode** for a quick-pick UI instead of hand-editing settings JSON. Resolution order for any given turn: a chat tab's own model override (the model-name button in the composer) wins first, then this mode routing, then `forge.chatModel` as the final fallback. Tab autocomplete and the embedding model stay on their own separate settings, unaffected by this.
 
 ### HW utilization
 
@@ -198,7 +211,7 @@ Rather than relying on any one model's native function-calling format (inconsist
 
 File edits go through an in-memory "pending edit" overlay: the agent's own view of a file it just edited is immediately the new version (so it can make several dependent edits in one turn), but nothing touches your disk until you accept it. Tab autocomplete uses Ollama's `/api/generate` with `prompt`/`suffix` (fill-in-middle) and lets Ollama apply each model's own FIM template, so it works across qwen2.5-coder, deepseek-coder, starcoder2, codegemma, codellama, etc. without hand-maintaining per-model special tokens.
 
-## Known limitations (0.4.0)
+## Known limitations (0.5.0)
 
 - Inline edit (Cmd+K) uses a simple input box for the instruction rather than a floating in-editor widget, and supports one pending inline edit at a time.
 - No multi-root workspace support — Forge uses the first workspace folder.
@@ -206,11 +219,12 @@ File edits go through an in-memory "pending edit" overlay: the agent's own view 
 - Pending (unaccepted) proposed edits live in memory only and won't survive a full VS Code restart — review them before closing if you have some outstanding.
 - Rules/skills are project-scoped only (no global/user-level rules yet); multitask tabs share one Ollama server so heavy concurrent use is bottlenecked by your machine's actual GPU/CPU throughput, not by Forge.
 - **Checkpoints are per-chat, but files are workspace-wide.** If two multitask tabs edit the same file in an interleaved order, restoring one tab's checkpoint can clobber the other tab's later edit to that file — Forge doesn't attempt to resolve that conflict, it just restores what its own checkpoint recorded. Keep this in mind if you're running two Auto-mode tabs against overlapping files at once.
-- **Chat search and cross-session listing are a linear scan** over `.forge/chat/*.json` — fine at personal, single-workspace scale; would need real indexing to stay fast with hundreds of long chats.
+- **Chat search and cross-session listing are still a linear scan** over messages (0.5.0 added a per-session cache, so it's no longer a disk read per keystroke — see "Search" above — but it's not a real index); fine at personal, single-workspace scale, would need real indexing for hundreds of long chats.
 - **The hallucination check (unverified-claim detection) is a narrow regex**, not real verification — it only catches "created/updated/wrote `path.ext`"-shaped claims and gives the model a couple of chances to correct itself; it's a mitigation, not a guarantee nothing is ever misreported.
-- No multi-model-per-task-type routing yet (one chat model, one optional separate completion model) — see `ROADMAP.md`.
-- **Memory relies on the model actually calling `remember`/`search_chat_history`.** There's no automatic fact extraction — if the model doesn't think to save something, it isn't saved, same as any other tool call in this architecture. The system prompt nudges it to use both, but this isn't a guarantee.
+- **Memory still can't force the model's hand.** `remember` (mid-conversation) and the automatic review pass (every 6 turns) both increase the odds something durable gets saved, but neither is a guarantee — the system prompt nudges, the review pass double-checks periodically, and that's it.
 - **`.forge/memory.md` is intentionally not itself size-limited beyond what's injected per-turn** (`renderForPrompt()` caps at ~4000 chars, keeping the most recent facts) — if you or the agent let it grow very large, older facts silently stop being injected rather than erroring; open it directly with **Forge: Open Memory File** to prune it by hand.
+- **Outcome mode without a definition-of-done command is only as honest as the model's own self-check.** With a command configured, "done" is a real exit code Forge checks itself; without one, it falls back to the same hallucination-claim mitigation as every other mode — set a check command whenever the goal can be expressed as one, it's a meaningfully stronger guarantee.
+- **The definition-of-done command runs with the same permissions as everything else Forge does** — it's not sandboxed, and it runs automatically after every attempt in Agent/Auto/Outcome mode, so don't point it at something destructive or side-effecting that you wouldn't want run repeatedly and unattended.
 - See `CURSOR_PARITY.md` for the full list of what's intentionally not built yet (MCP servers, @-mention of code symbols/docs/web, auto-indexing, etc.).
 
 ## Testing & release process

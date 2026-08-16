@@ -13,7 +13,8 @@ export type UiTranscriptEntry =
   | { kind: 'approval'; id: string; callId: string; detail: string; status: 'pending' | 'approved' | 'denied' }
   | { kind: 'plan'; id: string; text: string; executed?: boolean }
   | { kind: 'error'; id: string; text: string }
-  | { kind: 'system'; id: string; text: string };
+  | { kind: 'system'; id: string; text: string }
+  | { kind: 'verify'; id: string; command: string; status: 'running' | 'done'; ok?: boolean; summary?: string };
 
 export interface ModelInfo {
   name: string;
@@ -47,6 +48,8 @@ export interface SessionState {
   busy: boolean;
   history: UiTranscriptEntry[];
   checkpoints: CheckpointInfo[];
+  /** Optional "definition of done" command — see modes.ts's modeSupportsVerifyCommand. */
+  verifyCommand?: string;
 }
 
 export interface SearchResultItem {
@@ -119,4 +122,5 @@ export type WebviewToExtensionMessage =
   | { type: 'toggleTabCompletion'; enabled: boolean }
   | { type: 'restoreCheckpoint'; id: string }
   | { type: 'searchChats'; query: string }
-  | { type: 'refreshHwStatus' };
+  | { type: 'refreshHwStatus' }
+  | { type: 'setVerifyCommand'; command: string };

@@ -1,10 +1,11 @@
 import * as vscode from 'vscode';
 import { OllamaClient, pickBestCompletionModel, pickBestDefaultModel } from './ollama/client';
-import { setChatModel, setCompletionModel, getConfig } from './util/config';
+import { setChatModel, setCompletionModel, setModelForMode, getConfig } from './util/config';
 import { PendingEditManager } from './tools/editApply';
 import { openDiffForEdit } from './tools/diffContentProvider';
 import { WorkspaceIndex } from './indexing/workspaceIndex';
 import { MemoryStore } from './forge/memory';
+import { MODES } from './agent/modes';
 import { logger } from './util/logger';
 
 /** Item "HWD Utilization metrics" — a quick, no-UI-work-required way to see what's currently resident in Ollama and its VRAM footprint (GET /api/ps), for when the composer-footer readout (live tokens/sec, from ChatSession's 'metrics' events) isn't enough. */
@@ -101,6 +102,42 @@ export async function selectCompletionModelCommand(ollama: OllamaClient) {
   if (!picked) return;
   await setCompletionModel(picked.label === '(use chat model)' ? '' : picked.label);
   vscode.window.showInformationMessage(`Forge autocomplete model set to ${picked.label}.`);
+}
+
+/** Item "multi-model task routing" — a small model for Tab completion and Ask, a strong one for Agent/Auto/Outcome's actual editing work, a reasoning-tuned one for Plan, without hand-editing forge.modelRouting JSON. */
+export async function setModelForModeCommand(ollama: OllamaClient) {
+  const health = await ollama.health();
+  if (!health.ok) {
+    vscode.window.showErrorMessage(`Forge: can't reach Ollama (${health.error}).`);
+    return;
+  }
+  const modePick = await vscode.window.showQuickPick(
+    Object.values(MODES).map((m) => ({ label: m.label, description: m.description, id: m.id })),
+    { title: 'Forge: Set Model for Mode — which mode?' }
+  );
+  if (!modePick) return;
+
+  const models = await ollama.listModels();
+  if (models.length === 0) {
+    vscode.window.showWarningMessage('Forge: no models found. Pull one first, e.g. "ollama pull qwen2.5-coder".');
+    return;
+  }
+  const cfg = getConfig();
+  const current = cfg.modelRouting[(modePick as any).id as keyof typeof cfg.modelRouting];
+  const options = [
+    { label: `(use forge.chatModel — currently "${cfg.chatModel || 'unset'}")`, description: 'Clear any override for this mode', value: '' },
+    ...models.map((m) => ({ label: m.name, description: m.details?.parameter_size, value: m.name })),
+  ];
+  const picked = await vscode.window.showQuickPick(options, {
+    title: `Forge: Set Model for ${modePick.label} mode${current ? ` (currently ${current})` : ''}`,
+  });
+  if (!picked) return;
+  await setModelForMode((modePick as any).id, (picked as any).value);
+  vscode.window.showInformationMessage(
+    (picked as any).value
+      ? `Forge: ${modePick.label} mode now uses ${(picked as any).value}.`
+      : `Forge: ${modePick.label} mode reverted to the default chat model.`
+  );
 }
 
 export async function checkOllamaStatusCommand(ollama: OllamaClient) {

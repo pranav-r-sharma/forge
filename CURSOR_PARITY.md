@@ -15,6 +15,7 @@ This catalogues Cursor's agentic integration into the editor — everything beyo
 | Agent mode | Full autonomous tool use: read, write, run commands, iterate | ✅ v1 (was the only mode) → now one of four |
 | Plan mode | Model drafts a step-by-step plan first; you approve before it touches anything | 🆕 v2 — `plan` mode: no tools available, produces a checklist, "Execute Plan" hands off to Agent mode |
 | (No direct Cursor equivalent — closest is "YOLO mode" auto-run) | Fully autonomous, zero approval prompts | 🆕 v3.0 — `auto` mode, backed by checkpoints + a loop detector as the safety net in place of per-step approval |
+| (No direct Cursor equivalent) | State a goal/end-state, not steps — the agent works backward and verifies its own progress | 🆕 v0.5.0 — `outcome` mode ("reverse engineering"): system prompt frames the message as a goal to restate as checkable criteria and close the gap toward, fully autonomous like Auto mode, plus an optional "definition of done" shell command (also usable in Agent/Auto) that Forge itself runs after every claimed-done answer — a failing check is fed back as evidence and the turn keeps going instead of ending on an unverified claim |
 | Custom modes (user-defined tool/model presets) | Save a named mode with its own system prompt, tool allowlist, model | 🗺️ roadmap |
 | Multitask (parallel agent runs) | Several agent conversations progressing at once, e.g. across worktrees | 🆕 v2 (partial) — multiple chat **tabs/sessions** in one workspace, each with independent history/mode/model, running concurrently. True parallel *worktree* isolation is roadmap. |
 | Background Agent (cloud sandbox, PR creation, Slack trigger) | Kicks off a remote agent run outside your editor | ➖ N/A locally — no cloud sandbox by design. Roadmap alternative: a local "detached run" that keeps iterating in a background terminal while you do something else. |
@@ -58,10 +59,10 @@ This catalogues Cursor's agentic integration into the editor — everything beyo
 | Legacy single `.cursorrules` file | 🆕 v2 — a bare `.forge/rules.md` (no frontmatter) is treated as always-on, for the simple case |
 | User/global rules (apply to every project) | 🗺️ roadmap — v2 rules are project-scoped only (`forge.userRules` global setting is a natural v3 add) |
 | `.cursor/commands/*.md` (custom slash commands) | 🆕 v2 — `.forge/skills/*.md`, invoked as `/name` in chat |
-| Memories (auto-remembered facts/preferences) | 🆕 v0.4.0 — `.forge/memory.md`, curated durable facts injected into every prompt; the agent adds to it via a `remember` tool call (not fully automatic extraction — it's a tool the model is nudged to use, not a background process). Paired with `search_chat_history` (semantic search over every past chat) for anything that doesn't need to be a standing fact. |
+| Memories (auto-remembered facts/preferences) | 🆕 v0.4.0 — `.forge/memory.md`, curated durable facts injected into every prompt; the agent adds to it via a `remember` tool call. 🆕 v0.5.0 — plus an actual periodic automatic review pass (every 6 turns, fire-and-forget) that proposes facts on its own instead of relying solely on the model remembering to call the tool. Paired with `search_chat_history` (semantic search over every past chat) for anything that doesn't need to be a standing fact. |
 | MCP servers (`.cursor/mcp.json`) | 🗺️ roadmap — real value-add since it'd let Forge's agent call the same MCP tool ecosystem Claude/Cursor use; nontrivial (needs an MCP client) |
 | Hooks (`beforeSubmitPrompt`, `afterFileEdit`, `beforeShellExecution`, etc.) | 🆕 v2 (subset) — `.forge/hooks/<event>` executable scripts for `session-start`, `before-write`, `after-write`, `before-command`, `after-command`; gating hooks can block an action by exiting non-zero |
-| Model picker / multiple models per task type | ✅ v1 (chat vs. completion model) → 🗺️ roadmap for full per-task routing (see `ROADMAP.md`) |
+| Model picker / multiple models per task type | 🆕 v0.5.0 — `forge.modelRouting` (mode → model) plus the original chat-vs-completion split; **Forge: Set Model for Mode** is the quick-pick UI, no JSON editing needed |
 
 ## 5. Chat & session management
 
@@ -70,7 +71,7 @@ This catalogues Cursor's agentic integration into the editor — everything beyo
 | Persistent chat history | ✅ v1 (VS Code `workspaceState`) → 🆕 v2 (moved to `.forge/chat/*.json` in the repo, per your request) |
 | Multiple chat tabs | 🆕 v2 |
 | Branch a conversation | 🗺️ roadmap |
-| Search across chat history | 🆕 v3.0 — searches every saved session, not just the open tab |
+| Search across chat history | 🆕 v3.0 — searches every saved session, not just the open tab; 🆕 v0.5.0 — closed sessions' transcripts are now cached (keyed by `updatedAt`), so repeated searches stop re-reading every session file from disk each keystroke |
 | Context-window summarization on long chats | 🆕 v3.0 — stale-read pruning + summarization of the older part of a long transcript, applied only to what's sent to the model (never to the persisted `.forge/chat/*.json`, so nothing is actually lost). Paired in v0.4.0 with `search_chat_history` so the model can pull back an exact detail a summary glossed over, instead of only the persisted-but-unreachable-from-the-prompt transcript. |
 | Per-message checkpoints | 🆕 v3.0 (see Checkpoints above) |
 

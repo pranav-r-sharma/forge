@@ -81,6 +81,8 @@ export type AgentEvent =
   | { type: 'error'; message: string }
   | { type: 'metrics'; metrics: OllamaCallMetrics }
   | { type: 'checkpoint'; id: string; label: string }
+  | { type: 'verify_start'; command: string; draftText: string }
+  | { type: 'verify_result'; command: string; ok: boolean; summary: string }
   | { type: 'done' }
   | { type: 'aborted' };
 

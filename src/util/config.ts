@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { ForgeMode } from '../agent/modes';
 
 /** Strongly-typed accessor for the `forge.*` settings, re-read on every call so live edits apply immediately. */
 export interface ForgeConfig {
@@ -18,6 +19,8 @@ export interface ForgeConfig {
   maxContextFileKB: number;
   numCtx: number;
   keepAliveMinutes: number;
+  /** Per-mode model overrides (Agent/Ask/Plan/Auto/Outcome) — see resolveModelForMode(). An empty/missing entry for a mode falls back to `chatModel`. */
+  modelRouting: Partial<Record<ForgeMode, string>>;
 }
 
 export function getConfig(): ForgeConfig {
@@ -49,6 +52,7 @@ export function getConfig(): ForgeConfig {
     // reload + KV-cache-rebuild cost every time you pause to think).
     // 0 = server default (~5 min idle unload).
     keepAliveMinutes: cfg.get<number>('keepAliveMinutes') ?? -1,
+    modelRouting: cfg.get<Partial<Record<ForgeMode, string>>>('modelRouting') || {},
   };
 }
 
@@ -58,4 +62,25 @@ export async function setChatModel(model: string) {
 
 export async function setCompletionModel(model: string) {
   await vscode.workspace.getConfiguration('forge').update('completionModel', model, vscode.ConfigurationTarget.Global);
+}
+
+/** Sets (or clears, with model === '') the model routed to one specific mode — see forge.modelRouting and resolveModelForMode(). */
+export async function setModelForMode(mode: ForgeMode, model: string) {
+  const cfg = vscode.workspace.getConfiguration('forge');
+  const routing = { ...(cfg.get<Partial<Record<ForgeMode, string>>>('modelRouting') || {}) };
+  if (model) routing[mode] = model;
+  else delete routing[mode];
+  await cfg.update('modelRouting', routing, vscode.ConfigurationTarget.Global);
+}
+
+/**
+ * Resolves which model a turn should actually use, in priority order: an
+ * explicit per-session override (the user picked one for this chat tab)
+ * beats per-mode routing (this mode always uses a specific model) beats the
+ * single global default. Tab completion and the embedding model stay on
+ * their own separate settings — they were never part of the one-model
+ * compromise this exists to fix.
+ */
+export function resolveModelForMode(mode: ForgeMode, sessionOverride: string, cfg: ForgeConfig): string {
+  return sessionOverride || cfg.modelRouting[mode] || cfg.chatModel;
 }

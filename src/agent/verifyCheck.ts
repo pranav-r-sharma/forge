@@ -1,0 +1,66 @@
+import * as vscode from 'vscode';
+import { spawn } from 'child_process';
+
+const MAX_OUTPUT_CHARS = 4000;
+const TIMEOUT_MS = 120_000;
+
+export interface VerifyCheckResult {
+  ok: boolean;
+  output: string;
+}
+
+/**
+ * Runs the user-configured "definition of done" command (Auto/Outcome
+ * modes — see ChatSession.verifyCommand) and reports whether it exited 0.
+ * Deliberately separate from `commandTool.ts`'s `runCommandTool`: this is a
+ * command the *user* typed in ahead of time to describe what "done" means,
+ * not one the model is choosing to run right now, so it doesn't go through
+ * ApprovalBroker — the user already consented to it running automatically
+ * when they set it. Still respects cancellation (stopping a turn stops this
+ * too) and is capped the same way run_command is, so a hung dev server
+ * can't wedge the turn forever.
+ */
+export function runVerifyCommand(command: string, cwd: string, cancellation: vscode.CancellationToken): Promise<VerifyCheckResult> {
+  return new Promise((resolve) => {
+    let output = '';
+    let settled = false;
+    let child: ReturnType<typeof spawn>;
+    try {
+      child = spawn(command, { shell: true, cwd, timeout: TIMEOUT_MS, env: { ...process.env, CI: '1', FORGE_AGENT: '1' } });
+    } catch (err: any) {
+      resolve({ ok: false, output: `Failed to run verify command: ${err?.message || err}` });
+      return;
+    }
+
+    const onData = (buf: Buffer) => {
+      if (output.length < MAX_OUTPUT_CHARS) output += buf.toString('utf8');
+    };
+    child.stdout?.on('data', onData);
+    child.stderr?.on('data', onData);
+
+    const cancelListener = cancellation.onCancellationRequested(() => {
+      if (!settled) {
+        try {
+          child.kill();
+        } catch {
+          /* noop */
+        }
+      }
+    });
+
+    child.on('error', (err: any) => {
+      if (settled) return;
+      settled = true;
+      cancelListener.dispose();
+      resolve({ ok: false, output: `Failed to run verify command: ${err?.message || err}` });
+    });
+
+    child.on('close', (code: number | null) => {
+      if (settled) return;
+      settled = true;
+      cancelListener.dispose();
+      const truncated = output.length >= MAX_OUTPUT_CHARS ? '\n... output truncated' : '';
+      resolve({ ok: code === 0, output: `$ ${command}\n(exit code: ${code ?? 'unknown'})\n${output.trim() || '(no output)'}${truncated}` });
+    });
+  });
+}

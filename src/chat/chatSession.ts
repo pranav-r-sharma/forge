@@ -5,21 +5,25 @@ import { PendingEditManager } from '../tools/editApply';
 import { ApprovalBroker } from '../agent/approvalBroker';
 import { runAgentTurn } from '../agent/agentLoop';
 import { AgentEvent } from '../agent/types';
-import { ForgeMode } from '../agent/modes';
+import { ForgeMode, modeSupportsVerifyCommand } from '../agent/modes';
 import { CheckpointStore } from '../agent/checkpoints';
 import { CompactionCache } from '../agent/contextManager';
 import { WorkspaceIndex } from '../indexing/workspaceIndex';
-import { ChatMemoryIndex } from '../indexing/chatMemoryIndex';
+import { ChatMemoryIndex, extractSearchableText } from '../indexing/chatMemoryIndex';
 import { RulesEngine } from '../forge/rules';
 import { SkillsEngine } from '../forge/skills';
 import { HookRunner } from '../forge/hooks';
 import { MemoryStore } from '../forge/memory';
+import { reviewForMemoryFacts } from '../forge/memoryReview';
 import { ChatStore, StoredSession, deriveTitle } from '../forge/chatStore';
-import { getConfig } from '../util/config';
+import { getConfig, resolveModelForMode } from '../util/config';
 import { genId } from '../util/ids';
 import { toRelative } from '../util/paths';
 import { logger } from '../util/logger';
 import { ExtensionToWebviewMessage, SessionState, UiTranscriptEntry } from '../webview/protocol';
+
+/** How many completed turns pass between automatic memory-review sweeps (see ChatSession.maybeReviewForMemory) — frequent enough to catch things before a session ends, rare enough that it's not a network call on every single turn. */
+const MEMORY_REVIEW_INTERVAL = 6;
 
 export interface ChatSessionServices {
   ollama: OllamaClient;
@@ -51,6 +55,8 @@ export class ChatSession {
   title: string;
   mode: ForgeMode = 'agent';
   model = ''; // '' = use the global default chat model
+  /** Optional "definition of done" shell command — see modes.ts's modeSupportsVerifyCommand. '' = none configured. */
+  verifyCommand = '';
   uiHistory: UiTranscriptEntry[] = [];
   modelHistory: ChatMessage[] = [];
   busy = false;
@@ -60,6 +66,7 @@ export class ChatSession {
   private approvalBroker: ApprovalBroker;
   private lastPlan: { entryId: string; text: string } | undefined;
   private currentAssistantId: string | undefined;
+  private currentVerifyId: string | undefined;
   private streamMode = new Map<string, 'pending' | 'live' | 'suppressed'>();
   private peek = new Map<string, string>();
   private postedLive = new Set<string>();
@@ -68,6 +75,7 @@ export class ChatSession {
   private checkpoints = new CheckpointStore();
   private compactionCache: CompactionCache | undefined;
   private beforeWriteSub: vscode.Disposable;
+  private turnsSinceMemoryReview = 0;
 
   constructor(
     private services: ChatSessionServices,
@@ -105,6 +113,8 @@ export class ChatSession {
     s.createdAt = stored.createdAt || nowIso();
     if (stored.checkpoints) s.checkpoints = CheckpointStore.fromJSON(stored.checkpoints);
     s.compactionCache = stored.compactionCache;
+    s.verifyCommand = stored.verifyCommand || '';
+    s.turnsSinceMemoryReview = stored.turnsSinceMemoryReview || 0;
     return s;
   }
 
@@ -120,6 +130,8 @@ export class ChatSession {
       modelHistory: this.modelHistory,
       checkpoints: this.checkpoints.toJSON(),
       compactionCache: this.compactionCache,
+      verifyCommand: this.verifyCommand || undefined,
+      turnsSinceMemoryReview: this.turnsSinceMemoryReview,
     };
   }
 
@@ -132,6 +144,7 @@ export class ChatSession {
       busy: this.busy,
       history: this.uiHistory,
       checkpoints: this.checkpoints.list().map((c) => ({ id: c.id, label: c.label, createdAt: c.createdAt })),
+      verifyCommand: this.verifyCommand || undefined,
     };
   }
 
@@ -144,13 +157,19 @@ export class ChatSession {
     this.services.chatStore.save(this.toStored()).catch((err) => logger.warn('session persist failed', String(err)));
   }
 
-  private log(kind: 'user' | 'tool_call' | 'tool_result' | 'final' | 'error' | 'checkpoint' | 'mode_change', detail: string) {
+  private log(kind: 'user' | 'tool_call' | 'tool_result' | 'final' | 'error' | 'checkpoint' | 'mode_change' | 'verify' | 'memory_review', detail: string) {
     this.services.chatStore.appendLog(this.id, { ts: nowIso(), kind, detail }).catch(() => {});
   }
 
   setMode(mode: ForgeMode) {
     this.mode = mode;
     this.log('mode_change', mode);
+    this.persist();
+  }
+
+  /** Sets or clears this session's "definition of done" command (see modes.ts's modeSupportsVerifyCommand) — takes effect on the next send(), no restart needed. */
+  setVerifyCommand(command: string) {
+    this.verifyCommand = command.trim();
     this.persist();
   }
 
@@ -246,7 +265,7 @@ export class ChatSession {
       return;
     }
     const cfg = getConfig();
-    const model = this.model || cfg.chatModel;
+    const model = resolveModelForMode(this.mode, this.model, cfg);
     if (!model) {
       this.post({ type: 'toast', level: 'error', text: 'No chat model selected. Click the model name to pick one.' });
       return;
@@ -349,7 +368,14 @@ export class ChatSession {
         (event) => this.handleAgentEvent(event),
         this.cts.token,
         model,
-        { mode: this.mode, rulesText: rulesText || undefined, memoryText: memoryText || undefined, planContext: opts?.planContext, compactionCache: this.compactionCache }
+        {
+          mode: this.mode,
+          rulesText: rulesText || undefined,
+          memoryText: memoryText || undefined,
+          planContext: opts?.planContext,
+          compactionCache: this.compactionCache,
+          verifyCommand: modeSupportsVerifyCommand(this.mode) && this.verifyCommand ? this.verifyCommand : undefined,
+        }
       );
       this.modelHistory = result.messages;
       this.compactionCache = result.compactionCache;
@@ -370,7 +396,45 @@ export class ChatSession {
       // grew. Best-effort: a memory-index failure must never break the turn
       // that just completed.
       this.services.chatMemoryIndex.indexSession(this.toStored()).catch((err) => logger.warn('chat memory indexing failed', String(err)));
+      this.maybeReviewForMemory();
     }
+  }
+
+  /**
+   * Automatic half of the memory system (item "add these features" —
+   * automatic memory extraction, complementing the model-initiated
+   * `remember` tool call from the memory system's first pass). Fires at
+   * most once every MEMORY_REVIEW_INTERVAL completed turns, always
+   * fire-and-forget so a slow/unreachable Ollama can never hold up the turn
+   * that just finished. Every fact it proposes still goes through
+   * MemoryStore.addFact()'s de-dupe, so an over-eager review can only ever
+   * add a fact once.
+   */
+  private maybeReviewForMemory() {
+    this.turnsSinceMemoryReview++;
+    if (this.turnsSinceMemoryReview < MEMORY_REVIEW_INTERVAL) return;
+    this.turnsSinceMemoryReview = 0;
+    this.persist();
+
+    const cfg = getConfig();
+    const model = this.model || cfg.chatModel;
+    if (!model) return;
+    const recent = { uiHistory: this.uiHistory.slice(-24) } as StoredSession;
+    const excerpt = extractSearchableText(recent);
+
+    this.runMemoryReview(excerpt, model).catch((err) => logger.warn('automatic memory review failed', String(err)));
+  }
+
+  private async runMemoryReview(excerpt: string, model: string) {
+    const existingFacts = await this.services.memory.listFacts();
+    const facts = await reviewForMemoryFacts(excerpt, this.services.ollama, model, existingFacts);
+    if (facts.length === 0) return;
+    let added = 0;
+    for (const fact of facts) {
+      const result = await this.services.memory.addFact(fact);
+      if (result.added) added++;
+    }
+    if (added > 0) this.log('memory_review', `auto-remembered ${added} fact(s): ${facts.slice(0, added).join('; ')}`);
   }
 
   private handleAgentEvent(event: AgentEvent) {
@@ -423,6 +487,34 @@ export class ChatSession {
       }
       case 'metrics': {
         this.post({ type: 'metricsUpdate', sessionId: this.id, metrics: event.metrics });
+        return;
+      }
+      case 'verify_start': {
+        this.flush();
+        // Unlike a tool call (where the preceding "thinking" text is usually
+        // just filler and gets dropped), the text here is the model's actual
+        // attempted final answer — show it as a real bubble even if the
+        // verify check below is about to send the turn around again, so the
+        // user can see what it claimed.
+        this.finalizeStreamingAssistant(event.draftText, false);
+        const entry: UiTranscriptEntry = { kind: 'verify', id: genId('vf'), command: event.command, status: 'running' };
+        this.currentVerifyId = entry.id;
+        this.pushEntry(entry);
+        this.post({ type: 'entry', sessionId: this.id, entry });
+        return;
+      }
+      case 'verify_result': {
+        const idx = this.currentVerifyId ? this.uiHistory.findIndex((e) => e.id === this.currentVerifyId) : -1;
+        if (idx >= 0) {
+          const entry = this.uiHistory[idx] as Extract<UiTranscriptEntry, { kind: 'verify' }>;
+          entry.status = 'done';
+          entry.ok = event.ok;
+          entry.summary = event.summary;
+          this.pushEntry(entry, true);
+          this.post({ type: 'entryUpdate', sessionId: this.id, entry });
+        }
+        this.currentVerifyId = undefined;
+        this.log('verify', `${event.command} — ${event.ok ? 'passed' : 'failed'}: ${event.summary.slice(0, 200)}`);
         return;
       }
       case 'approval_request': {

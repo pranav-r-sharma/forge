@@ -14,6 +14,7 @@ import { logger } from '../util/logger';
 import { CompactionCache, hardCapOversizedMessages, maybeCompact, pruneStaleReadsView } from './contextManager';
 import { LoopDetector, signatureForStep } from './loopDetector';
 import { findUnverifiedClaims } from './claimChecker';
+import { runVerifyCommand } from './verifyCheck';
 
 export interface AgentDeps {
   ollama: OllamaClient;
@@ -34,6 +35,16 @@ export interface AgentTurnOptions {
   planContext?: string;
   /** Carried across turns so compaction doesn't re-summarize from scratch every time — see ChatSession. */
   compactionCache?: CompactionCache;
+  /**
+   * Optional "definition of done" shell command (Agent/Auto/Outcome modes —
+   * see modes.ts's modeSupportsVerifyCommand and ChatSession.verifyCommand).
+   * When set, a plain-text final answer isn't accepted at face value: Forge
+   * runs this command first, and only actually ends the turn if it exits 0.
+   * A non-zero exit gets fed back as evidence and the loop continues — this
+   * is what makes OUTCOME mode's "keep iterating until it's actually true"
+   * promise real instead of just a prompt asking the model to be honest.
+   */
+  verifyCommand?: string;
 }
 
 export interface AgentTurnResult {
@@ -177,6 +188,30 @@ export async function runAgentTurn(
         continue;
       }
       messages.push({ role: 'assistant', content: fullText });
+
+      // "Definition of done": a plain-text final answer isn't the actual end
+      // of the turn if a verify command is configured — Forge, not the
+      // model, is the arbiter of whether the goal is really met. A failing
+      // check gets fed straight back in as evidence and the loop continues,
+      // which is what makes OUTCOME mode's iterate-until-true promise real.
+      if (options.verifyCommand) {
+        emit({ type: 'verify_start', command: options.verifyCommand, draftText: fullText.trim() });
+        const verify = await runVerifyCommand(options.verifyCommand, deps.workspaceRoot.fsPath, cancellation);
+        emit({ type: 'verify_result', command: options.verifyCommand, ok: verify.ok, summary: summarize(verify.output) });
+        if (cancellation.isCancellationRequested) {
+          emit({ type: 'aborted' });
+          return { messages, compactionCache };
+        }
+        if (!verify.ok) {
+          const nudge = `[Definition-of-done check failed]\n${verify.output}\n\nThe goal is not met yet — this is real evidence, not an opinion. Diagnose why and keep working; do not repeat the same "done" claim without either fixing the underlying issue or explaining concretely why this check itself is wrong (e.g. it tests the wrong thing).`;
+          messages.push({ role: 'user', content: nudge });
+          if (checkLoop(loopDetector, '__verify__', { command: options.verifyCommand }, false, verify.output, emit)) {
+            return { messages, compactionCache };
+          }
+          continue;
+        }
+      }
+
       emit({ type: 'final', text: fullText.trim(), unverifiedClaims: unverified.length > 0 ? unverified : undefined });
       emit({ type: 'done' });
       return { messages, compactionCache };
