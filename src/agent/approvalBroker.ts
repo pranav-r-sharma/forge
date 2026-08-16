@@ -1,5 +1,5 @@
 import { AgentEvent } from './types';
-import { commandMatchesAutoApprove } from '../tools/commandTool';
+import { commandMatchesAutoApprove, isDangerousCommand } from '../tools/commandTool';
 
 /**
  * Bridges the agent loop's `run_command` tool with the chat webview: a
@@ -17,12 +17,21 @@ export class ApprovalBroker {
   ) {}
 
   requestCommandApproval(command: string, callId: string): Promise<boolean> {
-    if (!this.getRequireApproval()) return Promise.resolve(true);
-    if (commandMatchesAutoApprove(command, this.getAutoApprovePatterns())) return Promise.resolve(true);
+    // The dangerous-command denylist always wins, even when requireApproval
+    // is off (Auto mode) — see commandTool.ts for why.
+    if (!isDangerousCommand(command)) {
+      if (!this.getRequireApproval()) return Promise.resolve(true);
+      if (commandMatchesAutoApprove(command, this.getAutoApprovePatterns())) return Promise.resolve(true);
+    }
 
     return new Promise((resolve) => {
       this.waiters.set(callId, resolve);
-      this.emit({ type: 'approval_request', kind: 'command', callId, detail: command });
+      this.emit({
+        type: 'approval_request',
+        kind: 'command',
+        callId,
+        detail: isDangerousCommand(command) ? `${command}\n\n⚠ This command matches Forge's hard-coded dangerous-command list and always requires your approval, even in Auto mode.` : command,
+      });
     });
   }
 

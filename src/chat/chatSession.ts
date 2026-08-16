@@ -6,6 +6,8 @@ import { ApprovalBroker } from '../agent/approvalBroker';
 import { runAgentTurn } from '../agent/agentLoop';
 import { AgentEvent } from '../agent/types';
 import { ForgeMode } from '../agent/modes';
+import { CheckpointStore } from '../agent/checkpoints';
+import { CompactionCache } from '../agent/contextManager';
 import { WorkspaceIndex } from '../indexing/workspaceIndex';
 import { RulesEngine } from '../forge/rules';
 import { SkillsEngine } from '../forge/skills';
@@ -59,6 +61,9 @@ export class ChatSession {
   private postedLive = new Set<string>();
   private tokenBuffer = new Map<string, string>();
   private flushTimer: ReturnType<typeof setInterval> | undefined;
+  private checkpoints = new CheckpointStore();
+  private compactionCache: CompactionCache | undefined;
+  private beforeWriteSub: vscode.Disposable;
 
   constructor(
     private services: ChatSessionServices,
@@ -71,8 +76,19 @@ export class ChatSession {
     this.approvalBroker = new ApprovalBroker(
       (e) => this.handleAgentEvent(e),
       () => getConfig().autoApproveCommands,
-      () => getConfig().requireApprovalForCommands
+      // Auto mode is fully autonomous (item #2) — no command approval gate,
+      // except the hard-coded dangerous-command denylist ApprovalBroker
+      // itself always enforces regardless of this flag.
+      () => (this.mode === 'auto' ? false : getConfig().requireApprovalForCommands)
     );
+    // Item #3: lazily capture each touched file's pre-write content so a
+    // checkpoint can be restored later. Registered per-session (not
+    // workspace-global) even though PendingEditManager is shared across
+    // multitask tabs — see checkpoints.ts's doc comment for the known
+    // limitation this implies when two tabs edit the same file.
+    this.beforeWriteSub = this.services.pendingEdits.onBeforeWrite((relPath, priorContent) => {
+      this.checkpoints.recordBeforeWrite(relPath, priorContent);
+    });
   }
 
   static fromStored(stored: StoredSession, services: ChatSessionServices, notify: (id: string, msg: ExtensionToWebviewMessage) => void): ChatSession {
@@ -83,6 +99,8 @@ export class ChatSession {
     s.uiHistory = stored.uiHistory;
     s.modelHistory = stored.modelHistory;
     s.createdAt = stored.createdAt || nowIso();
+    if (stored.checkpoints) s.checkpoints = CheckpointStore.fromJSON(stored.checkpoints);
+    s.compactionCache = stored.compactionCache;
     return s;
   }
 
@@ -96,20 +114,74 @@ export class ChatSession {
       updatedAt: nowIso(),
       uiHistory: this.uiHistory,
       modelHistory: this.modelHistory,
+      checkpoints: this.checkpoints.toJSON(),
+      compactionCache: this.compactionCache,
     };
   }
 
   toSummaryState(): SessionState {
-    return { id: this.id, title: this.title, mode: this.mode, model: this.model, busy: this.busy, history: this.uiHistory };
+    return {
+      id: this.id,
+      title: this.title,
+      mode: this.mode,
+      model: this.model,
+      busy: this.busy,
+      history: this.uiHistory,
+      checkpoints: this.checkpoints.list().map((c) => ({ id: c.id, label: c.label, createdAt: c.createdAt })),
+    };
+  }
+
+  /** Releases the shared PendingEditManager subscription. Call this whenever a session is removed from ChatViewProvider's in-memory map (closed/deleted), so closing many tabs over a long-running VS Code session doesn't accumulate dead listeners on the workspace-wide PendingEditManager. */
+  dispose() {
+    this.beforeWriteSub.dispose();
   }
 
   private persist() {
     this.services.chatStore.save(this.toStored()).catch((err) => logger.warn('session persist failed', String(err)));
   }
 
+  private log(kind: 'user' | 'tool_call' | 'tool_result' | 'final' | 'error' | 'checkpoint' | 'mode_change', detail: string) {
+    this.services.chatStore.appendLog(this.id, { ts: nowIso(), kind, detail }).catch(() => {});
+  }
+
   setMode(mode: ForgeMode) {
     this.mode = mode;
+    this.log('mode_change', mode);
     this.persist();
+  }
+
+  /** Item #3: restores this session's files and transcript to the state at the start of an earlier turn, undoing every edit made from that point on. */
+  async restoreCheckpoint(id: string): Promise<{ ok: boolean; message: string }> {
+    if (this.busy) return { ok: false, message: 'Stop the current run before restoring a checkpoint.' };
+    const resolved = this.checkpoints.applyRestore(id);
+    if (!resolved) return { ok: false, message: 'That checkpoint no longer exists.' };
+
+    let filesTouched = 0;
+    for (const [relPath, content] of Object.entries(resolved.fileStates)) {
+      try {
+        const uri = vscode.Uri.joinPath(this.services.workspaceRoot, relPath);
+        if (content === null) {
+          try {
+            await vscode.workspace.fs.delete(uri);
+          } catch {
+            /* already gone, fine — it didn't exist at the checkpoint either */
+          }
+        } else {
+          await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(uri, '..'));
+          await vscode.workspace.fs.writeFile(uri, Buffer.from(content, 'utf8'));
+        }
+        filesTouched++;
+      } catch (err) {
+        logger.warn('checkpoint restore failed for', relPath, String(err));
+      }
+    }
+
+    this.uiHistory = this.uiHistory.slice(0, resolved.target.uiHistoryIndex);
+    this.modelHistory = this.modelHistory.slice(0, resolved.target.modelHistoryLength);
+    this.lastPlan = undefined;
+    this.log('checkpoint', `restored to ${resolved.target.id} (${resolved.target.label}); reverted ${filesTouched} file(s)`);
+    this.persist();
+    return { ok: true, message: `Restored to "${resolved.target.label}" — reverted ${filesTouched} file(s) and the conversation from that point on.` };
   }
 
   private post(msg: ExtensionToWebviewMessage) {
@@ -129,19 +201,6 @@ export class ChatSession {
 
   async runHookOnce(event: 'session-start') {
     await this.services.hooks.run(event, { sessionId: this.id });
-  }
-
-  async handleQueryFiles(query: string): Promise<string[]> {
-    const files = await vscode.workspace.findFiles(
-      '**/*',
-      '**/{node_modules,.git,dist,out,build,.next,venv,.venv,__pycache__,coverage,target,.forge}/**',
-      5000
-    );
-    const q = query.toLowerCase();
-    return files
-      .map((u) => toRelative(this.services.workspaceRoot, u))
-      .filter((p) => (q ? p.toLowerCase().includes(q) : true))
-      .slice(0, 30);
   }
 
   stop() {
@@ -207,9 +266,25 @@ export class ChatSession {
 
     if (this.uiHistory.length === 0) this.title = deriveTitle(text);
 
-    const userEntry: UiTranscriptEntry = { kind: 'user', id: genId('u'), text, files };
+    // Item #3: a checkpoint begins with every turn — nothing is snapshotted
+    // yet (see checkpoints.ts), just a marker that "before this point"
+    // begins here, so any files touched from here on can be reverted later
+    // via restoreCheckpoint(). autoModeSelected reflects the mode this
+    // *specific* turn will run in, so a checkpoint label is accurate even if
+    // the user flips modes right after sending.
+    const checkpointId = genId('ckpt');
+    this.checkpoints.begin({
+      id: checkpointId,
+      label: deriveTitle(text),
+      createdAt: nowIso(),
+      uiHistoryIndex: this.uiHistory.length,
+      modelHistoryLength: this.modelHistory.length,
+    });
+
+    const userEntry: UiTranscriptEntry = { kind: 'user', id: genId('u'), text, files, checkpointId };
     this.pushEntry(userEntry);
     this.post({ type: 'entry', sessionId: this.id, entry: userEntry });
+    this.log('user', text.length > 300 ? text.slice(0, 300) + '…' : text);
     if (skillUsed) {
       const sysEntry: UiTranscriptEntry = { kind: 'system', id: genId('sys'), text: `Expanded /${skillUsed}` };
       this.pushEntry(sysEntry);
@@ -220,6 +295,17 @@ export class ChatSession {
     for (const rel of files) {
       try {
         const uri = vscode.Uri.joinPath(this.services.workspaceRoot, rel);
+        const stat = await vscode.workspace.fs.stat(uri).catch(() => undefined);
+        if (stat && stat.type === vscode.FileType.Directory) {
+          // Item #5: folders can be @-tagged too. We don't dump a whole
+          // folder's contents into context (could be huge/binary-laden) —
+          // give the model a shallow listing and let it list_dir/read_file
+          // its way in from there, same as if it discovered the folder itself.
+          const children: [string, vscode.FileType][] = await vscode.workspace.fs.readDirectory(uri).catch(() => []);
+          const names = children.slice(0, 200).map(([name, type]: [string, vscode.FileType]) => `${name}${type === vscode.FileType.Directory ? '/' : ''}`).join('\n');
+          augmented += `\n\n[Attached folder: ${rel}]\n${names || '(empty)'}${children.length > 200 ? '\n... (truncated; use list_dir for more)' : ''}`;
+          continue;
+        }
         const content = await this.services.pendingEdits.readEffective(uri);
         if (content !== undefined) {
           const capped = content.length > 20000 ? content.slice(0, 20000) + '\n... (truncated)' : content;
@@ -241,7 +327,7 @@ export class ChatSession {
     this.startFlushTimer();
 
     try {
-      this.modelHistory = await runAgentTurn(
+      const result = await runAgentTurn(
         this.modelHistory,
         augmented,
         {
@@ -256,13 +342,16 @@ export class ChatSession {
         (event) => this.handleAgentEvent(event),
         this.cts.token,
         model,
-        { mode: this.mode, rulesText: rulesText || undefined, planContext: opts?.planContext }
+        { mode: this.mode, rulesText: rulesText || undefined, planContext: opts?.planContext, compactionCache: this.compactionCache }
       );
+      this.modelHistory = result.messages;
+      this.compactionCache = result.compactionCache;
     } catch (err: any) {
       logger.error('runAgentTurn crashed', err);
       const errEntry: UiTranscriptEntry = { kind: 'error', id: genId('e'), text: err?.message || String(err) };
       this.pushEntry(errEntry);
       this.post({ type: 'entry', sessionId: this.id, entry: errEntry });
+      this.log('error', err?.message || String(err));
     } finally {
       this.stopFlushTimer();
       this.busy = false;
@@ -304,6 +393,7 @@ export class ChatSession {
         const entry: UiTranscriptEntry = { kind: 'tool', id: genId('t'), callId: event.callId, tool: event.tool, args: event.args, status: 'running' };
         this.pushEntry(entry);
         this.post({ type: 'entry', sessionId: this.id, entry });
+        this.log('tool_call', `${event.tool} ${JSON.stringify(event.args).slice(0, 200)}`);
         return;
       }
       case 'tool_result': {
@@ -316,6 +406,11 @@ export class ChatSession {
           this.pushEntry(entry, true);
           this.post({ type: 'entryUpdate', sessionId: this.id, entry });
         }
+        this.log('tool_result', `${event.ok ? 'ok' : 'fail'}: ${event.summary.slice(0, 200)}`);
+        return;
+      }
+      case 'metrics': {
+        this.post({ type: 'metricsUpdate', sessionId: this.id, metrics: event.metrics });
         return;
       }
       case 'approval_request': {
@@ -329,6 +424,7 @@ export class ChatSession {
         return; // PendingEditManager.onDidChange is the source of truth, pushed workspace-wide.
       case 'final': {
         this.flush();
+        this.log('final', event.text.slice(0, 300));
         if (this.mode === 'plan') {
           this.finalizeStreamingAssistant('', true); // drop the plain assistant bubble, we render a 'plan' card instead
           const id = genId('plan');
@@ -337,7 +433,7 @@ export class ChatSession {
           this.pushEntry(entry);
           this.post({ type: 'entry', sessionId: this.id, entry });
         } else {
-          this.finalizeStreamingAssistant(event.text);
+          this.finalizeStreamingAssistant(event.text, false, event.unverifiedClaims);
         }
         return;
       }
@@ -347,6 +443,7 @@ export class ChatSession {
         const entry: UiTranscriptEntry = { kind: 'error', id: genId('e'), text: event.message };
         this.pushEntry(entry);
         this.post({ type: 'entry', sessionId: this.id, entry });
+        this.log('error', event.message);
         return;
       }
       case 'aborted':
@@ -359,7 +456,7 @@ export class ChatSession {
     }
   }
 
-  private finalizeStreamingAssistant(fallbackText: string, forceDrop = false) {
+  private finalizeStreamingAssistant(fallbackText: string, forceDrop = false, unverifiedClaims?: string[]) {
     const id = this.currentAssistantId;
     if (!id) return;
     const idx = this.uiHistory.findIndex((e) => e.id === id);
@@ -375,6 +472,7 @@ export class ChatSession {
       } else {
         entry.text = finalText;
         entry.streaming = false;
+        if (unverifiedClaims?.length) entry.unverifiedClaims = unverifiedClaims;
         this.pushEntry(entry, true);
         this.post({ type: 'entryUpdate', sessionId: this.id, entry });
       }

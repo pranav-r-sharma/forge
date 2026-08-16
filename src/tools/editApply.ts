@@ -32,7 +32,24 @@ export class PendingEditManager {
   private readonly _onDidChange = new vscode.EventEmitter<PendingEditSerialized[]>();
   readonly onDidChange = this._onDidChange.event;
 
+  /**
+   * Fired right before a file actually hits disk (whether written
+   * immediately because approval isn't required, or later via accept()),
+   * with the file's real content one instant before the mutation —
+   * `null` if it didn't exist yet (a create). This is what the
+   * checkpoint system (agent/checkpoints.ts) hooks into to lazily capture
+   * "state at the start of this turn" without having to snapshot the whole
+   * workspace up front. Listeners are best-effort/fire-and-forget: a
+   * throwing listener must never block or fail the actual write.
+   */
+  private beforeWriteListeners: Array<(relPath: string, priorContent: string | null) => void> = [];
+
   constructor(private workspaceRoot: vscode.Uri) {}
+
+  onBeforeWrite(listener: (relPath: string, priorContent: string | null) => void): vscode.Disposable {
+    this.beforeWriteListeners.push(listener);
+    return { dispose: () => { this.beforeWriteListeners = this.beforeWriteListeners.filter((l) => l !== listener); } };
+  }
 
   private fire() {
     this._onDidChange.fire(this.listSerialized());
@@ -79,6 +96,9 @@ export class PendingEditManager {
   }
 
   private async writeToDisk(edit: PendingEdit): Promise<void> {
+    const priorContent = await this.readDiskContentOrNull(edit.uri);
+    this.fireBeforeWrite(edit.relativePath, priorContent);
+
     if (edit.kind === 'delete') {
       try {
         await vscode.workspace.fs.delete(edit.uri);
@@ -94,6 +114,25 @@ export class PendingEditManager {
       /* already exists */
     }
     await vscode.workspace.fs.writeFile(edit.uri, Buffer.from(edit.newText, 'utf8'));
+  }
+
+  private async readDiskContentOrNull(uri: vscode.Uri): Promise<string | null> {
+    try {
+      const bytes = await vscode.workspace.fs.readFile(uri);
+      return Buffer.from(bytes).toString('utf8');
+    } catch {
+      return null;
+    }
+  }
+
+  private fireBeforeWrite(relPath: string, priorContent: string | null) {
+    for (const listener of this.beforeWriteListeners) {
+      try {
+        listener(relPath, priorContent);
+      } catch (err) {
+        logger.warn('onBeforeWrite listener threw', String(err));
+      }
+    }
   }
 
   async accept(id: string): Promise<boolean> {

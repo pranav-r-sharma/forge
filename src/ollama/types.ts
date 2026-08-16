@@ -34,6 +34,11 @@ export interface ChatStreamChunk {
   done_reason?: string;
   eval_count?: number;
   prompt_eval_count?: number;
+  /** Nanoseconds. Only present on the final (done: true) chunk. */
+  eval_duration?: number;
+  prompt_eval_duration?: number;
+  total_duration?: number;
+  load_duration?: number;
 }
 
 export interface GenerateStreamChunk {
@@ -42,10 +47,41 @@ export interface GenerateStreamChunk {
   response: string;
   done: boolean;
   context?: number[];
+  eval_count?: number;
+  prompt_eval_count?: number;
+  eval_duration?: number;
+  prompt_eval_duration?: number;
+  total_duration?: number;
+  load_duration?: number;
+}
+
+/** Perf/HW metrics derived from a completed chat()/generate() call — see item "HW Utilization metrics". */
+export interface OllamaCallMetrics {
+  model: string;
+  promptTokens?: number;
+  evalTokens?: number;
+  /** Tokens/sec during generation (eval phase only — excludes prompt processing). */
+  tokensPerSecond?: number;
+  totalDurationMs?: number;
+  loadDurationMs?: number;
 }
 
 export interface EmbeddingResponse {
   embedding: number[];
+}
+
+/** One entry from GET /api/ps — a currently loaded (resident) model. */
+export interface OllamaPsModel {
+  name: string;
+  model: string;
+  size: number;
+  size_vram?: number;
+  expires_at?: string;
+  details?: { parameter_size?: string; quantization_level?: string };
+}
+
+export interface OllamaPsResponse {
+  models: OllamaPsModel[];
 }
 
 export interface ChatRequestOptions {
@@ -58,6 +94,12 @@ export interface ChatRequestOptions {
   maxTokens?: number;
   /** Extra stop sequences appended to the model request. */
   stop?: string[];
+  /** Context window size to request from Ollama (options.num_ctx). Omitted = server default. */
+  numCtx?: number;
+  /** Minutes to keep the model resident after this call, or -1 for indefinitely, 0 to unload immediately. Omitted = server default (~5 min). */
+  keepAliveMinutes?: number;
+  /** Called once with perf metrics parsed from the final stream chunk, if the server reported them. */
+  onMetrics?: (metrics: OllamaCallMetrics) => void;
 }
 
 export interface GenerateRequestOptions {
@@ -69,4 +111,7 @@ export interface GenerateRequestOptions {
   maxTokens?: number;
   stop?: string[];
   raw?: boolean;
+  numCtx?: number;
+  keepAliveMinutes?: number;
+  onMetrics?: (metrics: OllamaCallMetrics) => void;
 }

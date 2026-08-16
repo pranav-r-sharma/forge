@@ -595,3 +595,136 @@ body {
 .toast.fade-out {
   opacity: 0;
 }
+
+/* ---------- v0.3.0 additions ---------- */
+
+.mention-item.selected {
+  background: var(--vscode-list-activeSelectionBackground, var(--vscode-list-hoverBackground));
+  color: var(--vscode-list-activeSelectionForeground, inherit);
+}
+.mention-kind {
+  opacity: 0.55;
+  margin-right: 4px;
+  font-family: var(--vscode-editor-font-family, monospace);
+}
+
+.mode-btn.mode-auto {
+  border-color: var(--vscode-inputValidation-warningBorder, orange);
+}
+.mode-btn.mode-auto.active {
+  background: var(--vscode-inputValidation-warningBackground, orange);
+  color: var(--vscode-foreground);
+}
+.forge-banner-warn {
+  background: var(--vscode-inputValidation-warningBackground, rgba(255, 165, 0, 0.12));
+  color: var(--vscode-inputValidation-warningForeground, var(--vscode-foreground));
+  border-bottom: 1px solid var(--vscode-inputValidation-warningBorder, orange);
+}
+
+.msg-user-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
+  max-width: 100%;
+}
+.checkpoint-restore-btn {
+  align-self: flex-end;
+  background: none;
+  border: none;
+  color: var(--vscode-descriptionForeground, currentColor);
+  opacity: 0.55;
+  cursor: pointer;
+  font-size: 10px;
+  padding: 0 2px;
+}
+.checkpoint-restore-btn:hover {
+  opacity: 1;
+  text-decoration: underline;
+}
+
+.claim-warning {
+  margin-top: 4px;
+  font-size: 11px;
+  opacity: 0.85;
+  color: var(--vscode-inputValidation-warningForeground, var(--vscode-foreground));
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.msg-body code.file-ref {
+  cursor: pointer;
+  text-decoration: underline dotted;
+}
+.msg-body code.file-ref:hover {
+  background: var(--vscode-list-hoverBackground);
+}
+.tool-args .file-ref {
+  cursor: pointer;
+  text-decoration: underline dotted;
+}
+
+.hw-readout {
+  opacity: 0.65;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 30%;
+}
+.hw-readout:hover {
+  opacity: 1;
+}
+
+.forge-search-panel {
+  position: absolute;
+  top: 34px;
+  left: 8px;
+  right: 8px;
+  background: var(--vscode-editorWidget-background);
+  border: 1px solid var(--vscode-widget-border, var(--vscode-panel-border));
+  border-radius: 6px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+  z-index: 30;
+  max-height: 60vh;
+  display: flex;
+  flex-direction: column;
+}
+.forge-search-panel input {
+  margin: 8px;
+  padding: 6px 8px;
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+  border: 1px solid var(--vscode-input-border, transparent);
+  border-radius: 4px;
+  font-size: 12px;
+}
+.search-results {
+  overflow-y: auto;
+  padding: 0 4px 8px;
+}
+.search-result-item {
+  padding: 6px 8px;
+  font-size: 12px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.search-result-item:hover {
+  background: var(--vscode-list-hoverBackground);
+}
+.search-result-title {
+  font-weight: 600;
+  font-size: 11px;
+  opacity: 0.75;
+  margin-bottom: 2px;
+}
+.search-result-snippet mark {
+  background: var(--vscode-editor-findMatchHighlightBackground, yellow);
+  color: inherit;
+}
+.search-empty {
+  padding: 10px;
+  opacity: 0.6;
+  font-size: 12px;
+}

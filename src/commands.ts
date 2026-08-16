@@ -6,6 +6,27 @@ import { openDiffForEdit } from './tools/diffContentProvider';
 import { WorkspaceIndex } from './indexing/workspaceIndex';
 import { logger } from './util/logger';
 
+/** Item "HWD Utilization metrics" — a quick, no-UI-work-required way to see what's currently resident in Ollama and its VRAM footprint (GET /api/ps), for when the composer-footer readout (live tokens/sec, from ChatSession's 'metrics' events) isn't enough. */
+export async function showHwStatusCommand(ollama: OllamaClient) {
+  const health = await ollama.health();
+  if (!health.ok) {
+    vscode.window.showErrorMessage(`Forge: can't reach Ollama (${health.error}).`);
+    return;
+  }
+  const loaded = await ollama.ps();
+  if (loaded.length === 0) {
+    vscode.window.showInformationMessage('Forge: no models currently loaded in Ollama (nothing resident right now — send a message to load one).');
+    return;
+  }
+  const lines = loaded.map((m) => {
+    const sizeGB = (m.size / 1024 / 1024 / 1024).toFixed(1);
+    const vramGB = m.size_vram !== undefined ? ` · ${(m.size_vram / 1024 / 1024 / 1024).toFixed(1)}GB VRAM` : '';
+    const until = m.expires_at ? ` · keep-alive until ${new Date(m.expires_at).toLocaleTimeString()}` : '';
+    return `${m.name} — ${sizeGB}GB${vramGB}${until}`;
+  });
+  vscode.window.showInformationMessage(`Forge — loaded models:\n${lines.join('\n')}`, { modal: true });
+}
+
 export async function selectChatModelCommand(ollama: OllamaClient) {
   const health = await ollama.health();
   if (!health.ok) {

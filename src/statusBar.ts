@@ -32,6 +32,6 @@ export class ForgeStatusBar {
     this.item.backgroundColor = undefined;
     const modelLabel = cfg.chatModel || 'no model selected';
     this.item.text = `$(sparkle) Forge: ${modelLabel}`;
-    this.item.tooltip = `Ollama connected at ${cfg.ollamaBaseUrl}\nChat model: ${cfg.chatModel || '(none)'}\nCompletion model: ${cfg.completionModel || '(uses chat model)'}\nClick to change.`;
+    this.item.tooltip = `Ollama connected at ${cfg.ollamaBaseUrl}\nChat model: ${cfg.chatModel || '(none)'}\nCompletion model: ${cfg.completionModel || '(uses chat model)'}\nContext window: ${cfg.numCtx.toLocaleString()} tokens · keep-alive: ${cfg.keepAliveMinutes === -1 ? 'forever' : cfg.keepAliveMinutes === 0 ? 'server default' : `${cfg.keepAliveMinutes}m`}\nClick to change model. Run "Forge: Show HW Utilization" for live VRAM/loaded-model info.`;
   }
 }

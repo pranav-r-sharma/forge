@@ -25,6 +25,7 @@ import {
   rejectAllEditsCommand,
   selectChatModelCommand,
   selectCompletionModelCommand,
+  showHwStatusCommand,
 } from './commands';
 
 export async function activate(context: vscode.ExtensionContext) {
@@ -114,7 +115,8 @@ export async function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('forge.checkOllamaStatus', () => checkOllamaStatusCommand(ollama)),
     vscode.commands.registerCommand('forge.newRule', () => newRuleCommand(workspaceRoot)),
     vscode.commands.registerCommand('forge.newSkill', () => newSkillCommand(workspaceRoot)),
-    vscode.commands.registerCommand('forge.openHooksFolder', () => openHooksFolderCommand(workspaceRoot))
+    vscode.commands.registerCommand('forge.openHooksFolder', () => openHooksFolderCommand(workspaceRoot)),
+    vscode.commands.registerCommand('forge.showHwStatus', () => showHwStatusCommand(ollama))
   );
 
   // Best-effort background warm-up: don't block activation on network I/O.

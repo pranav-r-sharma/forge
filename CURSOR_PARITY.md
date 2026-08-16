@@ -12,8 +12,9 @@ This catalogues Cursor's agentic integration into the editor — everything beyo
 | Cursor feature | What it does | Forge status |
 |---|---|---|
 | Ask mode | Read-only Q&A over the codebase, no edits/commands | 🆕 v2 — `ask` mode, tool access limited to read/search |
-| Agent mode | Full autonomous tool use: read, write, run commands, iterate | ✅ v1 (was the only mode) → now one of three |
+| Agent mode | Full autonomous tool use: read, write, run commands, iterate | ✅ v1 (was the only mode) → now one of four |
 | Plan mode | Model drafts a step-by-step plan first; you approve before it touches anything | 🆕 v2 — `plan` mode: no tools available, produces a checklist, "Execute Plan" hands off to Agent mode |
+| (No direct Cursor equivalent — closest is "YOLO mode" auto-run) | Fully autonomous, zero approval prompts | 🆕 v3.0 — `auto` mode, backed by checkpoints + a loop detector as the safety net in place of per-step approval |
 | Custom modes (user-defined tool/model presets) | Save a named mode with its own system prompt, tool allowlist, model | 🗺️ roadmap |
 | Multitask (parallel agent runs) | Several agent conversations progressing at once, e.g. across worktrees | 🆕 v2 (partial) — multiple chat **tabs/sessions** in one workspace, each with independent history/mode/model, running concurrently. True parallel *worktree* isolation is roadmap. |
 | Background Agent (cloud sandbox, PR creation, Slack trigger) | Kicks off a remote agent run outside your editor | ➖ N/A locally — no cloud sandbox by design. Roadmap alternative: a local "detached run" that keeps iterating in a background terminal while you do something else. |
@@ -45,7 +46,7 @@ This catalogues Cursor's agentic integration into the editor — everything beyo
 | Cmd+K inline edit | ✅ v1 |
 | Agent multi-file diffs | ✅ v1 — pending-edit overlay + review panel |
 | Accept / Reject / Accept All | ✅ v1 |
-| Checkpoints (revert codebase to an earlier point in the conversation) | 🗺️ roadmap — would piggyback on the existing pending-edit history plus a snapshot on each accepted batch |
+| Checkpoints (revert codebase to an earlier point in the conversation) | 🆕 v3.0 — every message is a checkpoint; restoring one reverts every file touched since AND truncates the chat, together |
 | Auto-run / YOLO mode (auto-approve everything) | ✅ v1 — `requireApprovalForWrites` / `requireApprovalForCommands` + `autoApproveCommands` patterns |
 | Iterate on lints (self-correct from diagnostics) | ✅ v1 — `get_problems` tool the agent can call post-edit (not yet automatic; roadmap: auto-invoke after every accepted edit) |
 
@@ -69,8 +70,9 @@ This catalogues Cursor's agentic integration into the editor — everything beyo
 | Persistent chat history | ✅ v1 (VS Code `workspaceState`) → 🆕 v2 (moved to `.forge/chat/*.json` in the repo, per your request) |
 | Multiple chat tabs | 🆕 v2 |
 | Branch a conversation | 🗺️ roadmap |
-| Context-window summarization on long chats | 🗺️ roadmap — today `maxAgentIterations` just caps steps; no automatic mid-conversation compaction yet |
-| Per-message checkpoints | 🗺️ roadmap (see Checkpoints above) |
+| Search across chat history | 🆕 v3.0 — searches every saved session, not just the open tab |
+| Context-window summarization on long chats | 🆕 v3.0 — stale-read pruning + summarization of the older part of a long transcript, applied only to what's sent to the model (never to the persisted `.forge/chat/*.json`, so nothing is actually lost) |
+| Per-message checkpoints | 🆕 v3.0 (see Checkpoints above) |
 
 ## 6. Terminal & environment
 
@@ -78,7 +80,7 @@ This catalogues Cursor's agentic integration into the editor — everything beyo
 |---|---|
 | Agent-run terminal commands with streaming output | ✅ v1 — `run_command` tool, approval-gated |
 | Background/long-running process monitoring | 🗺️ roadmap — today commands run to completion or timeout; no "start a dev server and keep watching it" primitive |
-| Full autonomous loop (describe a task, agent keeps iterating until done/tests pass) | 🗺️ roadmap — closest today is Agent mode's ReAct loop capped at `maxAgentIterations`; a real "run until green" loop is on the v3 list (see `ROADMAP.md`) |
+| Full autonomous loop (describe a task, agent keeps iterating until done/tests pass) | 🆕 v3.0 (partial) — Auto mode removes approvals and raises the iteration cap to effectively-unbounded, backed by a loop detector so it stops on thrashing rather than a fixed step count. It does not yet have an explicit "definition of done" it re-checks (e.g. auto-rerunning `npm test`) — see `ROADMAP.md`. |
 
 ## 7. Indexing
 

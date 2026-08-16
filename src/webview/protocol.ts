@@ -1,12 +1,14 @@
 import { PendingEditSerialized } from '../agent/types';
 import { ForgeMode } from '../agent/modes';
 import { SessionSummary } from '../forge/chatStore';
+import { OllamaCallMetrics } from '../ollama/types';
+import { FileSearchEntry } from '../util/fileSearch';
 
 /** Messages/state shared between the extension host (chatViewProvider.ts) and the webview UI (media/webview.js). */
 
 export type UiTranscriptEntry =
-  | { kind: 'user'; id: string; text: string; files?: string[] }
-  | { kind: 'assistant'; id: string; text: string; streaming?: boolean }
+  | { kind: 'user'; id: string; text: string; files?: string[]; checkpointId?: string }
+  | { kind: 'assistant'; id: string; text: string; streaming?: boolean; unverifiedClaims?: string[] }
   | { kind: 'tool'; id: string; callId: string; tool: string; args: Record<string, any>; status: 'running' | 'done'; ok?: boolean; summary?: string }
   | { kind: 'approval'; id: string; callId: string; detail: string; status: 'pending' | 'approved' | 'denied' }
   | { kind: 'plan'; id: string; text: string; executed?: boolean }
@@ -31,6 +33,12 @@ export interface SkillInfo {
   description?: string;
 }
 
+export interface CheckpointInfo {
+  id: string;
+  label: string;
+  createdAt: string;
+}
+
 export interface SessionState {
   id: string;
   title: string;
@@ -38,6 +46,20 @@ export interface SessionState {
   model: string;
   busy: boolean;
   history: UiTranscriptEntry[];
+  checkpoints: CheckpointInfo[];
+}
+
+export interface SearchResultItem {
+  sessionId: string;
+  sessionTitle: string;
+  entryId: string;
+  snippet: string;
+}
+
+/** HW utilization readout for the status bar / composer footer (item "HWD Utilization metrics"). */
+export interface HwStatus {
+  lastCallMetrics?: OllamaCallMetrics;
+  loadedModels: { name: string; sizeGB: number; vramGB?: number; expiresAt?: string }[];
 }
 
 export interface InitState {
@@ -53,6 +75,7 @@ export interface InitState {
   skills: SkillInfo[];
   sessions: SessionSummary[];
   activeSession: SessionState;
+  hwStatus: HwStatus;
 }
 
 export type ExtensionToWebviewMessage =
@@ -62,13 +85,17 @@ export type ExtensionToWebviewMessage =
   | { type: 'tokenAppend'; sessionId: string; id: string; text: string }
   | { type: 'pendingEdits'; edits: PendingEditSerialized[] }
   | { type: 'busy'; sessionId: string; busy: boolean }
-  | { type: 'filesResult'; query: string; files: string[] }
+  | { type: 'filesResult'; query: string; results: FileSearchEntry[] }
   | { type: 'toast'; level: 'info' | 'warn' | 'error'; text: string }
   | { type: 'indexStatus'; indexed: number; total: number; embeddingsAvailable: boolean }
   | { type: 'prefill'; text: string; files?: string[] }
   | { type: 'sessionsList'; sessions: SessionSummary[]; activeId: string }
   | { type: 'sessionSwitched'; session: SessionState }
-  | { type: 'skillsList'; skills: SkillInfo[] };
+  | { type: 'skillsList'; skills: SkillInfo[] }
+  | { type: 'hwStatus'; status: HwStatus }
+  | { type: 'metricsUpdate'; sessionId: string; metrics: OllamaCallMetrics }
+  | { type: 'checkpointRestored'; sessionId: string; message: string; ok: boolean }
+  | { type: 'searchResults'; query: string; results: SearchResultItem[] };
 
 export type WebviewToExtensionMessage =
   | { type: 'ready' }
@@ -89,4 +116,7 @@ export type WebviewToExtensionMessage =
   | { type: 'indexWorkspace' }
   | { type: 'queryFiles'; query: string }
   | { type: 'openFile'; path: string }
-  | { type: 'toggleTabCompletion'; enabled: boolean };
+  | { type: 'toggleTabCompletion'; enabled: boolean }
+  | { type: 'restoreCheckpoint'; id: string }
+  | { type: 'searchChats'; query: string }
+  | { type: 'refreshHwStatus' };

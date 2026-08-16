@@ -11,9 +11,10 @@ import { MODES } from '../agent/modes';
 import { getConfig, setChatModel } from '../util/config';
 import { genId } from '../util/ids';
 import { toRelative } from '../util/paths';
+import { WorkspaceEntryIndex } from '../util/fileSearch';
 import { logger } from '../util/logger';
 import { ChatSession, ChatSessionServices } from './chatSession';
-import { ExtensionToWebviewMessage, InitState, WebviewToExtensionMessage } from '../webview/protocol';
+import { ExtensionToWebviewMessage, HwStatus, InitState, SearchResultItem, WebviewToExtensionMessage } from '../webview/protocol';
 
 /**
  * Thin webview host + multi-session ("multitask") manager. All the actual
@@ -26,7 +27,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   private view: vscode.WebviewView | undefined;
   private sessions = new Map<string, ChatSession>();
   private activeSessionId: string | undefined;
-  private fileListCache: { at: number; files: vscode.Uri[] } | undefined;
+  private entryIndex: WorkspaceEntryIndex;
   private services: ChatSessionServices;
 
   constructor(
@@ -42,6 +43,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     private readonly workspaceName: string
   ) {
     this.services = { ollama, pendingEdits, workspaceIndex, rules, skills, hooks, chatStore, workspaceRoot, workspaceName };
+    this.entryIndex = new WorkspaceEntryIndex(workspaceRoot);
     this.pendingEdits.onDidChange((edits) => this.post({ type: 'pendingEdits', edits }));
   }
 
@@ -170,7 +172,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           this.post({ type: 'toast', level: 'warn', text: "Can't delete your only chat — start a new one first." });
           return;
         }
-        this.sessions.get(msg.id)?.stop();
+        const closing = this.sessions.get(msg.id);
+        closing?.stop();
+        closing?.dispose();
         this.sessions.delete(msg.id);
         await this.chatStore.delete(msg.id);
         if (this.activeSessionId === msg.id) {
@@ -227,33 +231,87 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         await vscode.commands.executeCommand('forge.indexWorkspace');
         return;
       case 'queryFiles': {
-        const files = await this.queryFiles(msg.query);
-        this.post({ type: 'filesResult', query: msg.query, files });
+        const results = await this.entryIndex.query(msg.query);
+        this.post({ type: 'filesResult', query: msg.query, results });
         return;
       }
       case 'openFile': {
+        // Item #9: clickable file references (tool-card paths, and
+        // backtick-quoted paths in prose — see webview.js's file-ref click
+        // handler) route here. Try the file first, then a folder (reveal in
+        // Explorer) since @-mentions can now attach either (item #5).
         const uri = vscode.Uri.joinPath(this.workspaceRoot, msg.path);
-        vscode.window.showTextDocument(uri).then(undefined, () => vscode.window.showWarningMessage(`Could not open ${msg.path}`));
+        vscode.window.showTextDocument(uri).then(undefined, async () => {
+          try {
+            const stat = await vscode.workspace.fs.stat(uri);
+            if (stat.type === vscode.FileType.Directory) {
+              await vscode.commands.executeCommand('revealInExplorer', uri);
+              return;
+            }
+          } catch {
+            /* fall through to the warning below */
+          }
+          vscode.window.showWarningMessage(`Could not open ${msg.path}`);
+        });
         return;
       }
       case 'toggleTabCompletion':
         await vscode.workspace.getConfiguration('forge').update('enableTabCompletion', msg.enabled, vscode.ConfigurationTarget.Global);
         return;
+      case 'restoreCheckpoint': {
+        const session = this.activeSession();
+        if (!session) return;
+        const result = await session.restoreCheckpoint(msg.id);
+        this.post({ type: 'checkpointRestored', sessionId: session.id, message: result.message, ok: result.ok });
+        if (result.ok) this.post({ type: 'sessionSwitched', session: session.toSummaryState() });
+        return;
+      }
+      case 'searchChats': {
+        const results = await this.searchAllChats(msg.query);
+        this.post({ type: 'searchResults', query: msg.query, results });
+        return;
+      }
+      case 'refreshHwStatus': {
+        this.post({ type: 'hwStatus', status: await this.buildHwStatus() });
+        return;
+      }
     }
   }
 
-  private async queryFiles(query: string): Promise<string[]> {
-    const now = Date.now();
-    if (!this.fileListCache || now - this.fileListCache.at > 15_000) {
-      const files = await vscode.workspace.findFiles(
-        '**/*',
-        '**/{node_modules,.git,dist,out,build,.next,venv,.venv,__pycache__,coverage,target,.forge}/**',
-        5000
-      );
-      this.fileListCache = { at: now, files };
+  /** Item #6: searches every persisted chat's transcript (not just the open one), across `.forge/chat/*.json`. Linear scan — fine at the personal, single-workspace scale Forge operates at. */
+  private async searchAllChats(query: string): Promise<SearchResultItem[]> {
+    const q = query.trim().toLowerCase();
+    if (!q) return [];
+    const results: SearchResultItem[] = [];
+    const summaries = await this.chatStore.listSessions();
+    for (const summary of summaries) {
+      if (results.length >= 50) break;
+      const open = this.sessions.get(summary.id);
+      const history = open ? open.uiHistory : (await this.chatStore.load(summary.id))?.uiHistory || [];
+      for (const entry of history) {
+        if (results.length >= 50) break;
+        const text = 'text' in entry ? entry.text : '';
+        if (!text || !text.toLowerCase().includes(q)) continue;
+        const idx = text.toLowerCase().indexOf(q);
+        const start = Math.max(0, idx - 40);
+        const snippet = `${start > 0 ? '…' : ''}${text.slice(start, idx + q.length + 60)}${idx + q.length + 60 < text.length ? '…' : ''}`;
+        results.push({ sessionId: summary.id, sessionTitle: summary.title || 'New chat', entryId: entry.id, snippet });
+      }
     }
-    const q = query.toLowerCase();
-    return this.fileListCache.files.map((u) => toRelative(this.workspaceRoot, u)).filter((p) => (q ? p.toLowerCase().includes(q) : true)).slice(0, 30);
+    return results;
+  }
+
+  /** Item #1: HW utilization — currently-loaded model(s) and their VRAM footprint via GET /api/ps. Best-effort; an older/unreachable Ollama just yields an empty list rather than an error. */
+  private async buildHwStatus(): Promise<HwStatus> {
+    const loaded = await this.ollama.ps();
+    return {
+      loadedModels: loaded.map((m) => ({
+        name: m.name,
+        sizeGB: Math.round((m.size / 1024 / 1024 / 1024) * 10) / 10,
+        vramGB: m.size_vram !== undefined ? Math.round((m.size_vram / 1024 / 1024 / 1024) * 10) / 10 : undefined,
+        expiresAt: m.expires_at,
+      })),
+    };
   }
 
   private async sendInit() {
@@ -313,7 +371,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       sessions: [...known.values()],
       activeSession: active
         ? active.toSummaryState()
-        : { id: 'none', title: 'New chat', mode: 'agent', model: '', busy: false, history: [] },
+        : { id: 'none', title: 'New chat', mode: 'agent', model: '', busy: false, history: [], checkpoints: [] },
+      hwStatus: await this.buildHwStatus(),
     };
     this.post({ type: 'init', state });
   }

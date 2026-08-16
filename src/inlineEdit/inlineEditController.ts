@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { OllamaClient } from '../ollama/client';
+import { OllamaClient, keepAliveOpt } from '../ollama/client';
 import { getConfig } from '../util/config';
 import { unifiedDiff } from '../util/diff';
 import { logger } from '../util/logger';
@@ -80,8 +80,14 @@ export class InlineEditController {
             messages: [{ role: 'user', content: prompt }],
             temperature: Math.min(cfg.temperature, 0.3),
             signal: tokenToSignal(token),
+            numCtx: cfg.numCtx,
+            keepAliveMinutes: keepAliveOpt(cfg.keepAliveMinutes),
           });
         } catch (err: any) {
+          // Same fix as the chat panel's Stop button (item #8): a user
+          // cancelling this progress notification aborts the fetch, which
+          // shouldn't be reported as a connectivity failure.
+          if (err?.name === 'AbortError') return;
           logger.error('inline edit chat() failed', err);
           vscode.window.showErrorMessage(`Forge inline edit failed: ${err?.message || err}`);
         }

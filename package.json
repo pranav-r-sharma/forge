@@ -2,7 +2,7 @@
   "name": "forge-local-agent",
   "displayName": "Forge — Local AI Coding Agent",
   "description": "A Cursor-style agentic coding assistant that runs entirely on local Ollama models. Agent/Ask/Plan modes, multitask chat tabs, .forge/rules + .forge/skills + .forge/hooks, repo-stored chat history, multi-file agent edits, inline Cmd+K editing, and Tab autocomplete — no cloud, no API keys.",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "publisher": "local-forge",
   "private": true,
   "engines": {
@@ -53,7 +53,8 @@
       { "command": "forge.checkOllamaStatus", "title": "Forge: Check Ollama Connection" },
       { "command": "forge.newRule", "title": "Forge: New Rule (.forge/rules)" },
       { "command": "forge.newSkill", "title": "Forge: New Skill / Slash Command (.forge/skills)" },
-      { "command": "forge.openHooksFolder", "title": "Forge: Open Hooks Folder (.forge/hooks)" }
+      { "command": "forge.openHooksFolder", "title": "Forge: Open Hooks Folder (.forge/hooks)" },
+      { "command": "forge.showHwStatus", "title": "Forge: Show HW Utilization (tokens/sec, VRAM)" }
     ],
     "menus": {
       "editor/context": [
@@ -105,8 +106,23 @@
         },
         "forge.maxAgentIterations": {
           "type": "number",
-          "default": 25,
-          "description": "Maximum number of tool-call steps the agent may take in a single turn before stopping."
+          "default": 200,
+          "description": "Maximum tool-call steps per turn in Agent/Ask/Plan mode before Forge stops and asks you to continue. The loop detector (always on) is the real safety net against thrashing now, so this just bounds a single very long turn — raise it if you hit it on legitimately long tasks."
+        },
+        "forge.autoModeMaxIterations": {
+          "type": "number",
+          "default": 100000,
+          "description": "Maximum tool-call steps per turn in Auto mode — effectively unbounded, since Auto mode is meant to run hands-off until done. The loop detector still stops it if it starts thrashing."
+        },
+        "forge.numCtx": {
+          "type": "number",
+          "default": 32768,
+          "description": "Context window size requested from Ollama (options.num_ctx) for chat/agent and inline-edit calls. Ollama's own default is small and silent about truncating — a long agent session can quietly lose early context without this set. Check your model's real max with `ollama show <model>` and set this close to it if you have the memory/VRAM to spare (the KV cache is sized to this ceiling whether or not you use all of it)."
+        },
+        "forge.keepAliveMinutes": {
+          "type": "number",
+          "default": -1,
+          "description": "Minutes Ollama keeps a model loaded in memory after a request. -1 = never unload between messages (avoids a full reload + KV-cache rebuild every time you pause to think — set via Ollama's per-request keep_alive, which works regardless of how the Ollama server itself was launched). 0 = Ollama's own default (~5 min idle unload)."
         },
         "forge.requireApprovalForWrites": {
           "type": "boolean",

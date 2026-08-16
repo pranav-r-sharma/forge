@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { OllamaClient } from '../ollama/client';
+import { OllamaClient, keepAliveOpt } from '../ollama/client';
 import { getConfig } from '../util/config';
 import { buildFimContext, cleanCompletion } from './fimPrompt';
 import { logger } from '../util/logger';
@@ -54,6 +54,8 @@ export class ForgeInlineCompletionProvider implements vscode.InlineCompletionIte
         maxTokens: 128,
         stop: STOP_SEQUENCES,
         signal: controller.signal,
+        numCtx: cfg.numCtx,
+        keepAliveMinutes: keepAliveOpt(cfg.keepAliveMinutes),
       });
     } catch (err: any) {
       if (err?.name !== 'AbortError') logger.warn('inline completion generate() failed', String(err));

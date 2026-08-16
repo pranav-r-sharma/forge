@@ -1,6 +1,6 @@
 import { ToolName } from './types';
 
-export type ForgeMode = 'agent' | 'ask' | 'plan';
+export type ForgeMode = 'agent' | 'ask' | 'plan' | 'auto';
 
 export interface ModeDef {
   id: ForgeMode;
@@ -32,6 +32,14 @@ export const MODES: Record<ForgeMode, ModeDef> = {
     allowedTools: 'all',
     promptFragment:
       'You are in AGENT mode: you have full access to every tool, including write_file and run_command. Work autonomously across multiple tool calls until the task is actually complete.',
+  },
+  auto: {
+    id: 'auto',
+    label: 'Auto',
+    description: 'Fully autonomous — no approvals for edits or commands. Keeps working through failures on its own. A checkpoint is saved before every turn so you can always revert.',
+    allowedTools: 'all',
+    promptFragment:
+      'You are in AUTO mode: fully autonomous. Every file edit and shell command is applied immediately WITHOUT asking the user for approval — there is no human reviewing each step as you go, only reviewing the end result (and they can revert to a checkpoint saved before this turn if something goes wrong, so acting is safe). Because of this: 1) Be more careful, not less — think before large or destructive changes, and prefer additive/reversible steps. 2) If a tool call fails or a command errors, do NOT stop and ask — diagnose the failure from its output and try a different approach; only stop and produce a final answer once the task is genuinely done, genuinely impossible, or you are repeating the same failing approach with no new information (in which case explain what you tried and why it isn\'t working, rather than looping forever — Forge will also automatically detect and halt repetitive loops). 3) Still never fabricate that you\'ve done something — only report an action as done after its tool result actually confirms it.',
   },
   ask: {
     id: 'ask',

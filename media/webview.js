@@ -21,6 +21,12 @@
     activeMode: 'agent',
     history: [],
     attachedFiles: [],
+    checkpoints: [], // {id, label, createdAt} for the active session
+    hwStatus: { loadedModels: [] },
+    lastMetrics: undefined,
+    mentionResults: [], // [{path, kind}] or skill matches, whichever is active
+    mentionSelectedIndex: -1,
+    searchOpen: false,
   };
 
   const root = document.getElementById('root');
@@ -29,12 +35,18 @@
       <div class="forge-header">
         <div class="forge-header-title"><span class="forge-logo">&#9670;</span> Forge</div>
         <div class="forge-header-actions">
+          <button id="btn-search" class="icon-btn" title="Search all chats">&#128269;</button>
           <button id="btn-index" class="icon-btn" title="Index workspace for @codebase search">&#8635;</button>
           <button id="btn-new-chat" class="icon-btn" title="New chat">+</button>
         </div>
       </div>
       <div id="tab-strip" class="forge-tab-strip"></div>
+      <div id="search-panel" class="forge-search-panel" style="display:none;">
+        <input id="search-input" type="text" placeholder="Search every chat…" />
+        <div id="search-results" class="search-results"></div>
+      </div>
       <div id="banner" class="forge-banner" style="display:none;"></div>
+      <div id="auto-banner" class="forge-banner forge-banner-warn" style="display:none;">&#9888; Auto mode: no approvals — edits and commands run immediately. A checkpoint is saved before each turn.</div>
       <div id="pending-panel" class="forge-pending-panel" style="display:none;">
         <div class="forge-pending-header">
           <span id="pending-count"></span>
@@ -56,6 +68,7 @@
             <input type="checkbox" id="tab-toggle-input" /> Tab-complete
           </label>
           <span class="spacer"></span>
+          <span id="hw-readout" class="hw-readout" title="Click to refresh HW status"></span>
           <span id="index-status" class="index-status"></span>
           <button id="btn-send" class="send-btn">Send</button>
         </div>
@@ -67,6 +80,7 @@
   const el = {
     tabStrip: document.getElementById('tab-strip'),
     banner: document.getElementById('banner'),
+    autoBanner: document.getElementById('auto-banner'),
     pendingPanel: document.getElementById('pending-panel'),
     pendingCount: document.getElementById('pending-count'),
     pendingList: document.getElementById('pending-list'),
@@ -78,8 +92,13 @@
     modelBtn: document.getElementById('btn-model'),
     tabToggle: /** @type {HTMLInputElement} */ (document.getElementById('tab-toggle-input')),
     indexStatusEl: document.getElementById('index-status'),
+    hwReadout: document.getElementById('hw-readout'),
     sendBtn: document.getElementById('btn-send'),
     toastHost: document.getElementById('toast-host'),
+    searchBtn: document.getElementById('btn-search'),
+    searchPanel: document.getElementById('search-panel'),
+    searchInput: /** @type {HTMLInputElement} */ (document.getElementById('search-input')),
+    searchResults: document.getElementById('search-results'),
   };
 
   document.getElementById('btn-new-chat').addEventListener('click', () => vscodeApi.postMessage({ type: 'newChat' }));
@@ -88,23 +107,81 @@
   document.getElementById('btn-reject-all').addEventListener('click', () => vscodeApi.postMessage({ type: 'rejectAllEdits' }));
   el.modelBtn.addEventListener('click', () => vscodeApi.postMessage({ type: 'selectModel' }));
   el.tabToggle.addEventListener('change', () => vscodeApi.postMessage({ type: 'toggleTabCompletion', enabled: el.tabToggle.checked }));
+  el.hwReadout.addEventListener('click', () => vscodeApi.postMessage({ type: 'refreshHwStatus' }));
+
+  // ---------- chat search (item #6) ----------
+  el.searchBtn.addEventListener('click', () => {
+    state.searchOpen = !state.searchOpen;
+    el.searchPanel.style.display = state.searchOpen ? 'flex' : 'none';
+    if (state.searchOpen) {
+      el.searchInput.value = '';
+      el.searchResults.innerHTML = '';
+      el.searchInput.focus();
+    }
+  });
+  let searchDebounce;
+  el.searchInput.addEventListener('input', () => {
+    clearTimeout(searchDebounce);
+    const q = el.searchInput.value.trim();
+    if (!q) {
+      el.searchResults.innerHTML = '';
+      return;
+    }
+    searchDebounce = setTimeout(() => vscodeApi.postMessage({ type: 'searchChats', query: q }), 200);
+  });
+  el.searchInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      state.searchOpen = false;
+      el.searchPanel.style.display = 'none';
+    }
+  });
+  function renderSearchResults(results, query) {
+    el.searchResults.innerHTML = '';
+    if (results.length === 0) {
+      el.searchResults.innerHTML = `<div class="search-empty">No matches${query ? ` for "${escapeHtml(query)}"` : ''}.</div>`;
+      return;
+    }
+    for (const r of results) {
+      const item = document.createElement('div');
+      item.className = 'search-result-item';
+      const snippetHtml = escapeHtml(r.snippet).replace(new RegExp(escapeRegExp(escapeHtml(query)), 'ig'), (m) => `<mark>${m}</mark>`);
+      item.innerHTML = `<div class="search-result-title">${escapeHtml(r.sessionTitle)}</div><div class="search-result-snippet">${snippetHtml}</div>`;
+      item.addEventListener('click', () => {
+        vscodeApi.postMessage({ type: 'switchSession', id: r.sessionId });
+        state.searchOpen = false;
+        el.searchPanel.style.display = 'none';
+      });
+      el.searchResults.appendChild(item);
+    }
+  }
+  function escapeRegExp(s) {
+    return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
 
   // ---------- mode strip ----------
   function renderModeStrip() {
     el.modeStrip.innerHTML = '';
     for (const m of state.modes) {
       const btn = document.createElement('button');
-      btn.className = 'mode-btn' + (m.id === state.activeMode ? ' active' : '');
+      btn.className = 'mode-btn' + (m.id === 'auto' ? ' mode-auto' : '') + (m.id === state.activeMode ? ' active' : '');
       btn.textContent = m.label;
       btn.title = m.description;
       btn.addEventListener('click', () => {
         if (m.id === state.activeMode) return;
+        if (m.id === 'auto' && !window.confirm('Switch to Auto mode? Forge will edit files and run commands with NO approval prompts from here on (a hard-coded denylist still blocks a few destructive commands). A checkpoint is saved before every turn so you can revert.')) {
+          return;
+        }
         state.activeMode = m.id;
         renderModeStrip();
+        renderAutoBanner();
         vscodeApi.postMessage({ type: 'setMode', mode: m.id });
       });
       el.modeStrip.appendChild(btn);
     }
+  }
+
+  function renderAutoBanner() {
+    el.autoBanner.style.display = state.activeMode === 'auto' ? 'block' : 'none';
   }
 
   // ---------- tab strip (multitask) ----------
@@ -135,6 +212,21 @@
   // ---------- composer ----------
   el.sendBtn.addEventListener('click', onSendOrStop);
   el.input.addEventListener('keydown', (e) => {
+    const dropdownOpen = mentionQueryStart >= 0 && el.mentionDropdown.style.display !== 'none';
+    if (dropdownOpen && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+      // Item #5: navigate @/  mention results with arrow keys, not just the mouse.
+      e.preventDefault();
+      const n = state.mentionResults.length;
+      if (n === 0) return;
+      state.mentionSelectedIndex = e.key === 'ArrowDown' ? (state.mentionSelectedIndex + 1) % n : (state.mentionSelectedIndex - 1 + n) % n;
+      renderMentionSelection();
+      return;
+    }
+    if (dropdownOpen && (e.key === 'Enter' || e.key === 'Tab') && state.mentionSelectedIndex >= 0) {
+      e.preventDefault();
+      chooseMentionResult(state.mentionResults[state.mentionSelectedIndex]);
+      return;
+    }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       onSendOrStop();
@@ -185,55 +277,78 @@
 
   function hideMentionDropdown() {
     mentionQueryStart = -1;
+    state.mentionResults = [];
+    state.mentionSelectedIndex = -1;
     el.mentionDropdown.style.display = 'none';
     el.mentionDropdown.innerHTML = '';
   }
 
-  function showSkillResults(query) {
-    const q = query.toLowerCase();
-    const matches = state.skills.filter((s) => s.name.toLowerCase().includes(q));
-    if (matches.length === 0) {
+  /** Renders whatever's currently in state.mentionResults (skills or file/folder entries — tagged with a `_kind` so click/Enter selection is uniform) and wires arrow-key highlight + click, both routing through chooseMentionResult(). */
+  function renderMentionDropdown() {
+    if (state.mentionResults.length === 0) {
       hideMentionDropdown();
       return;
     }
     el.mentionDropdown.style.display = 'block';
     el.mentionDropdown.innerHTML = '';
-    for (const s of matches.slice(0, 12)) {
+    state.mentionResults.forEach((r, i) => {
       const item = document.createElement('div');
-      item.className = 'mention-item';
-      item.innerHTML = `<strong>/${escapeHtml(s.name)}</strong>${s.description ? ` <span class="mention-desc">${escapeHtml(s.description)}</span>` : ''}`;
-      item.addEventListener('click', () => {
-        el.input.value = `/${s.name} `;
-        hideMentionDropdown();
-        el.input.focus();
-        el.input.setSelectionRange(el.input.value.length, el.input.value.length);
+      item.className = 'mention-item' + (i === state.mentionSelectedIndex ? ' selected' : '');
+      item.dataset.idx = String(i);
+      if (r._kind === 'skill') {
+        item.innerHTML = `<strong>/${escapeHtml(r.name)}</strong>${r.description ? ` <span class="mention-desc">${escapeHtml(r.description)}</span>` : ''}`;
+      } else {
+        const icon = r.kind === 'folder' ? '\u{1F4C1}' : '\u{1F4C4}'; // 📁 / 📄
+        item.innerHTML = `<span class="mention-kind">${icon}</span>${escapeHtml(r.path)}`;
+      }
+      item.addEventListener('mouseenter', () => {
+        state.mentionSelectedIndex = i;
+        renderMentionSelection();
       });
+      item.addEventListener('click', () => chooseMentionResult(r));
       el.mentionDropdown.appendChild(item);
-    }
+    });
   }
 
-  function showMentionResults(files) {
-    if (mentionQueryStart < 0 || mentionTrigger !== '@') return;
-    if (files.length === 0) {
+  /** Cheap re-highlight after arrow-key nav — avoids rebuilding the whole dropdown on every keypress. */
+  function renderMentionSelection() {
+    const items = el.mentionDropdown.querySelectorAll('.mention-item');
+    items.forEach((it, i) => {
+      it.classList.toggle('selected', i === state.mentionSelectedIndex);
+      if (i === state.mentionSelectedIndex) it.scrollIntoView({ block: 'nearest' });
+    });
+  }
+
+  function chooseMentionResult(r) {
+    if (!r) return;
+    if (r._kind === 'skill') {
+      el.input.value = `/${r.name} `;
       hideMentionDropdown();
+      el.input.focus();
+      el.input.setSelectionRange(el.input.value.length, el.input.value.length);
       return;
     }
-    el.mentionDropdown.style.display = 'block';
-    el.mentionDropdown.innerHTML = '';
-    for (const f of files.slice(0, 12)) {
-      const item = document.createElement('div');
-      item.className = 'mention-item';
-      item.textContent = f;
-      item.addEventListener('click', () => {
-        const caret = el.input.selectionStart || 0;
-        el.input.value = el.input.value.slice(0, mentionQueryStart) + el.input.value.slice(caret);
-        if (!state.attachedFiles.includes(f)) state.attachedFiles.push(f);
-        renderChips();
-        hideMentionDropdown();
-        el.input.focus();
-      });
-      el.mentionDropdown.appendChild(item);
-    }
+    const caret = el.input.selectionStart || 0;
+    el.input.value = el.input.value.slice(0, mentionQueryStart) + el.input.value.slice(caret);
+    if (!state.attachedFiles.includes(r.path)) state.attachedFiles.push(r.path);
+    renderChips();
+    hideMentionDropdown();
+    el.input.focus();
+  }
+
+  function showSkillResults(query) {
+    const q = query.toLowerCase();
+    const matches = state.skills.filter((s) => s.name.toLowerCase().includes(q)).slice(0, 12).map((s) => ({ ...s, _kind: 'skill' }));
+    state.mentionResults = matches;
+    state.mentionSelectedIndex = matches.length ? 0 : -1;
+    renderMentionDropdown();
+  }
+
+  function showMentionResults(results) {
+    if (mentionQueryStart < 0 || mentionTrigger !== '@') return;
+    state.mentionResults = results.slice(0, 12).map((r) => ({ ...r, _kind: 'file' }));
+    state.mentionSelectedIndex = state.mentionResults.length ? 0 : -1;
+    renderMentionDropdown();
   }
 
   function renderChips() {
@@ -314,16 +429,36 @@
     wrap.setAttribute('data-id', entry.id);
 
     if (entry.kind === 'user') {
-      wrap.className = 'msg msg-user';
+      wrap.className = 'msg-user-wrap';
+      const bubble = document.createElement('div');
+      bubble.className = 'msg msg-user';
       const files = (entry.files || []).map((f) => `<span class="msg-file-chip">${escapeHtml(f)}</span>`).join('');
-      wrap.innerHTML = `${files ? `<div class="msg-files">${files}</div>` : ''}<div class="msg-body">${renderMarkdown(entry.text)}</div>`;
+      bubble.innerHTML = `${files ? `<div class="msg-files">${files}</div>` : ''}<div class="msg-body">${renderMarkdown(entry.text)}</div>`;
+      wrap.appendChild(bubble);
+      // Item #3: every user turn is a checkpoint boundary — offer to jump
+      // back to it (and undo everything since) as long as it still exists
+      // (it's dropped once you've already restored past it).
+      if (entry.checkpointId && state.checkpoints.some((c) => c.id === entry.checkpointId)) {
+        const btn = document.createElement('button');
+        btn.className = 'checkpoint-restore-btn';
+        btn.textContent = '⟲ Restore to here';
+        btn.title = 'Revert every file edit and message from this point on';
+        btn.addEventListener('click', () => {
+          if (!window.confirm('Restore to this point? This reverts every file edit made from here on and removes the messages after it. This cannot be undone.')) return;
+          vscodeApi.postMessage({ type: 'restoreCheckpoint', id: entry.checkpointId });
+        });
+        wrap.appendChild(btn);
+      }
       return wrap;
     }
 
     if (entry.kind === 'assistant') {
       wrap.className = 'msg msg-assistant' + (entry.streaming ? ' streaming' : '');
       const bodyHtml = entry.streaming ? escapeHtml(entry.text) : renderMarkdown(entry.text);
-      wrap.innerHTML = `<div class="msg-avatar">&#9670;</div><div class="msg-body" data-raw="${entry.streaming ? '1' : '0'}">${bodyHtml}</div>`;
+      const claimWarning = entry.unverifiedClaims?.length
+        ? `<div class="claim-warning">&#9888; Says it changed ${entry.unverifiedClaims.map((p) => `<code>${escapeHtml(p)}</code>`).join(', ')} but Forge found no matching write_file call — double-check before trusting this.</div>`
+        : '';
+      wrap.innerHTML = `<div class="msg-avatar">&#9670;</div><div style="flex:1;min-width:0;"><div class="msg-body" data-raw="${entry.streaming ? '1' : '0'}">${bodyHtml}</div>${claimWarning}</div>`;
       return wrap;
     }
 
@@ -345,12 +480,12 @@
     if (entry.kind === 'tool') {
       wrap.className = 'tool-card ' + (entry.status === 'running' ? 'running' : entry.ok ? 'ok' : 'fail');
       const icon = entry.status === 'running' ? spinnerSvg() : entry.ok ? '&#10003;' : '&#10007;';
-      const argSummary = summarizeArgs(entry.tool, entry.args);
+      const argSummary = summarizeArgsHtml(entry.tool, entry.args);
       wrap.innerHTML = `
         <div class="tool-card-head">
           <span class="tool-icon">${icon}</span>
           <span class="tool-name">${escapeHtml(entry.tool)}</span>
-          <span class="tool-args">${escapeHtml(argSummary)}</span>
+          <span class="tool-args">${argSummary}</span>
         </div>
         ${entry.summary ? `<div class="tool-summary">${escapeHtml(entry.summary)}</div>` : ''}
       `;
@@ -394,6 +529,22 @@
     if (typeof args.query === 'string') return `"${args.query}"`;
     const s = JSON.stringify(args);
     return s.length > 80 ? s.slice(0, 80) + '…' : s;
+  }
+
+  /** Item #9: same as summarizeArgs, but when the tool call is about a file path, that path is a clickable file-ref span instead of plain text. */
+  function summarizeArgsHtml(tool, args) {
+    if (!args) return '';
+    if (typeof args.path === 'string') {
+      const suffix = args.search ? ' (targeted edit)' : '';
+      return `<span class="file-ref" data-path="${escapeAttr(args.path)}">${escapeHtml(args.path)}</span>${escapeHtml(suffix)}`;
+    }
+    return escapeHtml(summarizeArgs(tool, args));
+  }
+
+  /** Heuristic for whether an inline-code span in a rendered message looks like a workspace file path worth making clickable (item #9). Deliberately conservative — a false positive just means a click does nothing useful (chatViewProvider shows "could not open" and moves on), so this favors precision over recall. */
+  function looksLikePath(code) {
+    if (/\s/.test(code) || code.length > 200) return false;
+    return /^[\w.\-]+(\/[\w.\-]+)*\.[A-Za-z0-9]{1,10}$/.test(code) || /^[\w.\-]+\/[\w.\-/]+$/.test(code);
   }
 
   function spinnerSvg() {
@@ -447,10 +598,37 @@
     state.activeMode = session.mode;
     state.busyBySession[session.id] = session.busy;
     state.history = session.history;
+    state.checkpoints = session.checkpoints || [];
     renderModeStrip();
+    renderAutoBanner();
     renderTabStrip();
     renderBusy();
     renderAllHistory();
+  }
+
+  // Item #9: one delegated listener covers every current AND future
+  // .file-ref span (tool-card paths, backtick-quoted paths in prose) —
+  // no per-node listener wiring needed as the transcript re-renders.
+  el.transcript.addEventListener('click', (e) => {
+    const target = e.target.closest('.file-ref');
+    if (target && target.dataset.path) {
+      vscodeApi.postMessage({ type: 'openFile', path: target.dataset.path });
+    }
+  });
+
+  function renderHwReadout() {
+    const m = state.lastMetrics;
+    const loaded = state.hwStatus.loadedModels || [];
+    const parts = [];
+    if (m && m.tokensPerSecond) parts.push(`${m.tokensPerSecond.toFixed(1)} tok/s`);
+    if (loaded.length) {
+      const vram = loaded.reduce((n, x) => n + (x.vramGB || x.sizeGB || 0), 0);
+      parts.push(`${loaded.length} model${loaded.length === 1 ? '' : 's'} loaded (${vram.toFixed(1)}GB)`);
+    }
+    el.hwReadout.textContent = parts.join(' · ');
+    el.hwReadout.title = loaded.length
+      ? loaded.map((x) => `${x.name}: ${x.sizeGB}GB${x.vramGB !== undefined ? ` (${x.vramGB}GB VRAM)` : ''}`).join('\n')
+      : 'Click to check what Ollama currently has loaded';
   }
 
   // ---------- message handling ----------
@@ -468,12 +646,14 @@
           modes: msg.state.modes,
           skills: msg.state.skills,
           sessions: msg.state.sessions,
+          hwStatus: msg.state.hwStatus || { loadedModels: [] },
         });
         el.tabToggle.checked = state.tabCompletionEnabled;
         renderModelBtn();
         renderConnectionBanner();
         renderIndexStatus();
         renderPendingEdits();
+        renderHwReadout();
         loadSession(msg.state.activeSession);
         if (!state.connected) showToast('error', msg.state.connectionError ? `Ollama: ${msg.state.connectionError}` : 'Ollama not reachable.');
         break;
@@ -523,7 +703,7 @@
         break;
       }
       case 'filesResult': {
-        showMentionResults(msg.files);
+        showMentionResults(msg.results);
         break;
       }
       case 'skillsList': {
@@ -546,6 +726,25 @@
           renderChips();
         }
         el.input.focus();
+        break;
+      }
+      case 'hwStatus': {
+        state.hwStatus = msg.status;
+        renderHwReadout();
+        break;
+      }
+      case 'metricsUpdate': {
+        if (msg.sessionId !== state.activeSessionId) break;
+        state.lastMetrics = msg.metrics;
+        renderHwReadout();
+        break;
+      }
+      case 'checkpointRestored': {
+        showToast(msg.ok ? 'info' : 'error', msg.message);
+        break;
+      }
+      case 'searchResults': {
+        renderSearchResults(msg.results, msg.query);
         break;
       }
     }
@@ -571,7 +770,11 @@
           return `<pre class="code-block"><code>${escapeHtml(p.content)}</code></pre>`;
         }
         let html = escapeHtml(p.content);
-        html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+        // Item #9: a backtick-quoted path the model mentions (e.g. "created
+        // `src/foo.ts`") becomes a clickable reference — click opens it in
+        // the editor, same as clicking a tool card's path (see the
+        // delegated .file-ref click handler and summarizeArgsHtml above).
+        html = html.replace(/`([^`]+)`/g, (m, code) => (looksLikePath(code) ? `<code class="file-ref" data-path="${code}">${code}</code>` : `<code>${code}</code>`));
         html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
         html = html.replace(/(^|[\s(])\*([^*\n]+)\*(?=[\s).,!?]|$)/g, '$1<em>$2</em>');
         html = html

@@ -88,10 +88,31 @@ The pill strip above the message box switches modes per chat tab:
 - **Agent** — full autonomy: reads, edits, runs commands, iterates until done. This is what v1 shipped as the only mode.
 - **Ask** — read-only. The agent can `read_file` / `search_code` / `search_codebase` / `get_problems` to investigate, but `write_file` and `run_command` are refused. Good for "explain this" / "where does X happen" without any risk of it touching files.
 - **Plan** — no tools at all; the model reads only what's already in the conversation/attached files and produces a numbered plan. Review it, then click **Execute plan** on the plan card to hand off to Agent mode, which executes it step by step with the plan pinned into its context.
+- **Auto** (new in 0.3.0) — fully autonomous: every file edit and shell command runs immediately, with **no approval prompts at all**, except a small hard-coded denylist of genuinely destructive commands (`rm -rf /`, force-pushing over `main`/`master`, disk-format commands, fork bombs, etc.) that always still ask, even in Auto mode. Switching to it shows a confirmation dialog explaining this. Because nothing pauses for your review, two things back it up: a **checkpoint is saved automatically before every turn** (see below — one click undoes everything from that point on), and a **loop detector** watches for the agent repeating the same failing action and stops the turn with an explanation instead of grinding forever. On a genuine failure, Auto mode is instructed to diagnose and try a different approach rather than stopping to ask — that's the point of it — but it will still stop and explain itself if it's truly stuck or the task is done.
 
 ### Multitask (chat tabs)
 
 The strip above the mode pills is a tab bar — click **+** for a new chat, click a tab to switch, click **×** to close it. Closing a tab asks for confirmation and then **permanently deletes** that chat's history from `.forge/chat/` — there's currently no "hide but keep" state, so if you want to keep a conversation around, just leave the tab open (or don't close your last one; Forge always keeps at least one chat alive). Each open tab has its own mode, message history, and in-flight agent run; a tab working in the background shows a small pulsing dot until you switch to it.
+
+### Checkpoints — restore a chat (and your files) to an earlier point
+
+Every message you send starts a checkpoint. Hover a message and click **⟲ Restore to here** (with a confirmation first) to revert every file edit made from that point on *and* drop the conversation back to right before it — both together, so your files and the chat transcript never end up out of sync with each other. This works the same in every mode, but it's what makes Auto mode's lack of approvals safe to use: if a run goes somewhere you didn't want, restore to the message before it started. Restoring doesn't require guessing what changed — Forge tracked exactly which files were touched and what they looked like right before your turn began.
+
+### Context management — long sessions don't quietly lose information
+
+Two settings control how much of your conversation Forge sends to Ollama on each turn: `forge.numCtx` (the context window it requests from the model) and internal pruning/compaction that keeps the *live prompt* bounded once a session gets long — stale file reads (superseded by a later edit or a newer read) get collapsed to a one-line placeholder, and once the transcript passes a size budget derived from `numCtx`, everything except the system prompt and the last dozen-or-so messages gets folded into a short model-generated summary. Critically, **this only affects what's sent to the model on the next call — it never deletes anything from `.forge/chat/`.** The full, uncompacted transcript is always there; scroll up, or use chat search (below) to find anything from earlier in a long session, even after it's been summarized out of what the model currently sees. A crash-recovery log (`.forge/chat/<id>.log.jsonl`, append-only, one line per tool call/result/decision) also means a mid-session crash or restart doesn't lose the record of what the agent was doing right up to that point, even if the last full snapshot is slightly behind.
+
+### Search — find anything across every chat
+
+Click the 🔍 icon in the header to search every message in every saved chat (not just the open tab) — results show which chat they're from and jump you straight there.
+
+### @-mentioning files and folders
+
+Type `@` to attach a file *or a folder* to your message — use **↑/↓ arrow keys** to move through the results and **Enter** or **Tab** to pick one, same as the `/` skill-command dropdown, no mouse required. Attaching a folder gives the agent a shallow listing of its contents rather than dumping everything in it into context; it can `list_dir`/`read_file` further in from there.
+
+### HW utilization
+
+The composer footer shows live tokens/sec for the last response and how many models Ollama currently has loaded (and their VRAM footprint), refreshed automatically after each turn — click it, or run **Forge: Show HW Utilization**, to refresh on demand. Backed by Ollama's `/api/ps`.
 
 ### Project rules — `.forge/rules/`
 
@@ -149,9 +170,12 @@ All under `Settings → Extensions → Forge` (or search `forge.` in Settings):
 | `forge.completionModel` | *(uses chat model)* | Model used for Tab autocomplete — pick something small and fast |
 | `forge.embeddingModel` | `nomic-embed-text` | Model used to index the workspace |
 | `forge.temperature` | `0.2` | Sampling temperature for chat/agent |
-| `forge.maxAgentIterations` | `25` | Safety cap on tool-call steps per turn |
-| `forge.requireApprovalForWrites` | `true` | Stage edits for review instead of writing immediately |
-| `forge.requireApprovalForCommands` | `true` | Ask before running shell commands |
+| `forge.maxAgentIterations` | `200` | Cap on tool-call steps per turn in Agent/Ask/Plan — generous by design now that the loop detector, not this number, is the real thrash-protection (was `25` through 0.2.x) |
+| `forge.autoModeMaxIterations` | `100000` | Same cap, but for Auto mode — effectively unbounded since Auto is meant to run hands-off |
+| `forge.numCtx` | `32768` | Context window requested from Ollama (`options.num_ctx`). Check `ollama show <model>` for your model's real max and raise this toward it if you have the RAM/VRAM — Ollama's own default is smaller and silently truncates long sessions without this |
+| `forge.keepAliveMinutes` | `-1` | Minutes Ollama keeps a model loaded after a request; `-1` = never unload between messages, `0` = Ollama's own ~5-minute default |
+| `forge.requireApprovalForWrites` | `true` | Stage edits for review instead of writing immediately (Auto mode always bypasses this) |
+| `forge.requireApprovalForCommands` | `true` | Ask before running shell commands (Auto mode always bypasses this except the dangerous-command denylist) |
 | `forge.autoApproveCommands` | *(safe read-only list)* | Regex patterns that skip the approval prompt |
 | `forge.enableTabCompletion` | `true` | Ghost-text autocomplete on/off |
 | `forge.completionDebounceMs` | `250` | Delay before requesting a completion |
@@ -164,14 +188,18 @@ Rather than relying on any one model's native function-calling format (inconsist
 
 File edits go through an in-memory "pending edit" overlay: the agent's own view of a file it just edited is immediately the new version (so it can make several dependent edits in one turn), but nothing touches your disk until you accept it. Tab autocomplete uses Ollama's `/api/generate` with `prompt`/`suffix` (fill-in-middle) and lets Ollama apply each model's own FIM template, so it works across qwen2.5-coder, deepseek-coder, starcoder2, codegemma, codellama, etc. without hand-maintaining per-model special tokens.
 
-## Known limitations (v2)
+## Known limitations (0.3.0)
 
 - Inline edit (Cmd+K) uses a simple input box for the instruction rather than a floating in-editor widget, and supports one pending inline edit at a time.
 - No multi-root workspace support — Forge uses the first workspace folder.
 - The semantic index is a flat cosine-similarity search over line-chunked files (no AST-aware chunking) — good for "what file handles X", not a replacement for `search_code` on exact symbols.
 - Pending (unaccepted) proposed edits live in memory only and won't survive a full VS Code restart — review them before closing if you have some outstanding.
 - Rules/skills are project-scoped only (no global/user-level rules yet); multitask tabs share one Ollama server so heavy concurrent use is bottlenecked by your machine's actual GPU/CPU throughput, not by Forge.
-- See `CURSOR_PARITY.md` for the full list of what's intentionally not built yet (MCP servers, checkpoints, @-mention of code symbols/docs/web, auto-indexing, etc.) and `ROADMAP.md` for what's next, including the two big ones: multi-model task routing and a true "run until it works" autonomous loop.
+- **Checkpoints are per-chat, but files are workspace-wide.** If two multitask tabs edit the same file in an interleaved order, restoring one tab's checkpoint can clobber the other tab's later edit to that file — Forge doesn't attempt to resolve that conflict, it just restores what its own checkpoint recorded. Keep this in mind if you're running two Auto-mode tabs against overlapping files at once.
+- **Chat search and cross-session listing are a linear scan** over `.forge/chat/*.json` — fine at personal, single-workspace scale; would need real indexing to stay fast with hundreds of long chats.
+- **The hallucination check (unverified-claim detection) is a narrow regex**, not real verification — it only catches "created/updated/wrote `path.ext`"-shaped claims and gives the model a couple of chances to correct itself; it's a mitigation, not a guarantee nothing is ever misreported.
+- No multi-model-per-task-type routing yet (one chat model, one optional separate completion model) — see `ROADMAP.md`.
+- See `CURSOR_PARITY.md` for the full list of what's intentionally not built yet (MCP servers, @-mention of code symbols/docs/web, auto-indexing, etc.).
 
 ## Testing & release process
 
@@ -187,6 +215,7 @@ Every build up through 0.2.0 was verified with `tsc --noEmit` (a permissive dev-
    - Confirm `.forge/chat/index.json` and the corresponding `<id>.json` are actually removed from disk after a delete, not just hidden in the UI.
    - Close every tab down to one and confirm Forge refuses to delete the last one instead of leaving you with no active chat.
    - Restart VS Code entirely and confirm the remaining chat(s) reload with their full history.
+   - **For 0.3.0 specifically:** switch to Auto mode on a throwaway task, confirm it edits without prompting; then click "Restore to here" on the message before that turn and confirm the file(s) actually revert and the follow-up messages disappear from the chat. Deliberately make the agent fail the same command 3 times (e.g. ask it to run a command that doesn't exist) and confirm the loop detector stops it instead of retrying forever.
 5. **Smaller, reviewable diffs** — going forward, bug fixes and small features ship as focused patches you can read in a few minutes (like this one), rather than large multi-file drops, so review is actually feasible instead of a leap of faith.
 
 **Setting up git**, if you haven't already — from inside the project folder:

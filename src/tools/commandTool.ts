@@ -85,3 +85,29 @@ export function commandMatchesAutoApprove(command: string, patterns: string[]): 
     }
   });
 }
+
+/**
+ * A small, hard-coded denylist of commands that stay gated behind human
+ * approval no matter what — including in Auto mode ("no human in the loop"),
+ * which otherwise skips approval entirely. This is a deliberate, narrow
+ * exception: Auto mode trusts the agent to recover from ordinary mistakes on
+ * its own, but a handful of actions are destructive enough (wipe the disk,
+ * force-push over the main branch, fork-bomb the machine) that "the agent
+ * will just figure it out" isn't an acceptable risk to take unattended.
+ * Everything else in Auto mode really does run with zero approval.
+ */
+const DANGEROUS_COMMAND_PATTERNS: RegExp[] = [
+  /rm\s+(-\w*r\w*f\w*|-\w*f\w*r\w*)\s+(\/|\/\*|~\/?\s*$|~\/\*)/i, // rm -rf / or ~
+  /:\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:/, // classic shell fork bomb
+  /mkfs(\.\w+)?\s+/i,
+  />\s*\/dev\/(sd|nvme|hd|disk)/i,
+  /dd\s+[^\n]*\bof=\/dev\//i,
+  /git\s+push\s+(-f|--force)\S*\s+\S*\s*(origin\s+)?(main|master)\b/i,
+  /chmod\s+-R\s+777\s+\/(\s|$)/i,
+  /\bshutdown\b|\breboot\b|\bhalt\b/i,
+  /diskutil\s+(erase|reformat|partitiondisk)/i,
+];
+
+export function isDangerousCommand(command: string): boolean {
+  return DANGEROUS_COMMAND_PATTERNS.some((re) => re.test(command));
+}

@@ -5,10 +5,17 @@ import {
   EmbeddingResponse,
   GenerateRequestOptions,
   GenerateStreamChunk,
+  OllamaCallMetrics,
+  OllamaPsResponse,
   OllamaTagInfo,
   OllamaTagsResponse,
 } from './types';
 import { logger } from '../util/logger';
+
+/** `0` in ForgeConfig.keepAliveMinutes means "server default" — translate that to "omit the field" for the wire request. -1 (never unload) and positive minute counts pass through as-is. */
+export function keepAliveOpt(minutes: number): number | undefined {
+  return minutes === 0 ? undefined : minutes;
+}
 
 export class OllamaError extends Error {
   constructor(message: string, public readonly cause?: unknown) {
@@ -46,6 +53,23 @@ export class OllamaClient {
     return data.models || [];
   }
 
+  /**
+   * Currently resident (loaded-in-memory) models, per GET /api/ps — used for
+   * the HW utilization readout (VRAM per model, time until auto-unload).
+   * Best-effort: returns an empty list rather than throwing if the server is
+   * unreachable or the endpoint isn't supported by an older Ollama version.
+   */
+  async ps(): Promise<OllamaPsResponse['models']> {
+    try {
+      const res = await fetch(this.url('/api/ps'));
+      if (!res.ok) return [];
+      const data = (await res.json()) as OllamaPsResponse;
+      return data.models || [];
+    } catch {
+      return [];
+    }
+  }
+
   async embed(model: string, input: string): Promise<number[] | undefined> {
     try {
       const res = await fetch(this.url('/api/embeddings'), {
@@ -68,8 +92,10 @@ export class OllamaClient {
       model: opts.model,
       messages: opts.messages,
       stream: true,
+      ...(opts.keepAliveMinutes !== undefined ? { keep_alive: opts.keepAliveMinutes === -1 ? -1 : `${opts.keepAliveMinutes}m` } : {}),
       options: {
         temperature: opts.temperature ?? 0.2,
+        ...(opts.numCtx ? { num_ctx: opts.numCtx } : {}),
         ...(opts.maxTokens ? { num_predict: opts.maxTokens } : {}),
         ...(opts.stop ? { stop: opts.stop } : {}),
       },
@@ -84,6 +110,12 @@ export class OllamaClient {
         signal: opts.signal,
       });
     } catch (err: any) {
+      // A user-initiated Stop aborts the in-flight fetch, which surfaces here
+      // as a plain AbortError — that's not "Ollama is unreachable", it's the
+      // user clicking Stop, and callers need to be able to tell the two
+      // apart (see agentLoop.ts) instead of showing a misleading "Could not
+      // reach Ollama" toast for something the user did on purpose.
+      if (err?.name === 'AbortError') throw err;
       throw new OllamaError(
         `Could not reach Ollama at ${this.getBaseUrl()}. Is it running? (ollama serve)`,
         err
@@ -102,6 +134,7 @@ export class OllamaClient {
         full += token;
         opts.onToken?.(token);
       }
+      if (chunk.done) opts.onMetrics?.(metricsFromChunk(opts.model, chunk));
     });
     return full;
   }
@@ -112,8 +145,10 @@ export class OllamaClient {
       model: opts.model,
       prompt: opts.prompt,
       stream: true,
+      ...(opts.keepAliveMinutes !== undefined ? { keep_alive: opts.keepAliveMinutes === -1 ? -1 : `${opts.keepAliveMinutes}m` } : {}),
       options: {
         temperature: opts.temperature ?? 0.1,
+        ...(opts.numCtx ? { num_ctx: opts.numCtx } : {}),
         ...(opts.maxTokens ? { num_predict: opts.maxTokens } : {}),
         ...(opts.stop ? { stop: opts.stop } : {}),
       },
@@ -130,6 +165,7 @@ export class OllamaClient {
         signal: opts.signal,
       });
     } catch (err: any) {
+      if (err?.name === 'AbortError') throw err;
       throw new OllamaError(`Could not reach Ollama at ${this.getBaseUrl()}.`, err);
     }
 
@@ -141,9 +177,25 @@ export class OllamaClient {
     let full = '';
     await readNdjson<GenerateStreamChunk>(res.body, (chunk) => {
       if (chunk.response) full += chunk.response;
+      if (chunk.done) opts.onMetrics?.(metricsFromChunk(opts.model, chunk));
     });
     return full;
   }
+}
+
+function metricsFromChunk(model: string, chunk: ChatStreamChunk | GenerateStreamChunk): OllamaCallMetrics {
+  const evalTokens = chunk.eval_count;
+  const evalDurationMs = chunk.eval_duration !== undefined ? chunk.eval_duration / 1e6 : undefined;
+  const tokensPerSecond =
+    evalTokens && evalDurationMs && evalDurationMs > 0 ? Math.round((evalTokens / evalDurationMs) * 1000 * 10) / 10 : undefined;
+  return {
+    model,
+    promptTokens: chunk.prompt_eval_count,
+    evalTokens,
+    tokensPerSecond,
+    totalDurationMs: chunk.total_duration !== undefined ? Math.round(chunk.total_duration / 1e6) : undefined,
+    loadDurationMs: chunk.load_duration !== undefined ? Math.round(chunk.load_duration / 1e6) : undefined,
+  };
 }
 
 async function safeText(res: Response): Promise<string> {

@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { OllamaCallMetrics } from '../ollama/types';
 
 /** Names of every tool the agent may invoke. Kept as a union so callers get exhaustiveness checks. */
 export type ToolName =
@@ -70,8 +71,10 @@ export type AgentEvent =
   | { type: 'pending_edit'; edit: PendingEditSerialized }
   | { type: 'edit_resolved'; id: string; accepted: boolean }
   | { type: 'approval_request'; kind: 'command'; callId: string; detail: string }
-  | { type: 'final'; text: string }
+  | { type: 'final'; text: string; unverifiedClaims?: string[] }
   | { type: 'error'; message: string }
+  | { type: 'metrics'; metrics: OllamaCallMetrics }
+  | { type: 'checkpoint'; id: string; label: string }
   | { type: 'done' }
   | { type: 'aborted' };
 

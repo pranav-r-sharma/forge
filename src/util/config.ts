@@ -8,6 +8,7 @@ export interface ForgeConfig {
   embeddingModel: string;
   temperature: number;
   maxAgentIterations: number;
+  autoModeMaxIterations: number;
   requireApprovalForWrites: boolean;
   requireApprovalForCommands: boolean;
   autoApproveCommands: string[];
@@ -15,6 +16,8 @@ export interface ForgeConfig {
   completionDebounceMs: number;
   contextChunkCount: number;
   maxContextFileKB: number;
+  numCtx: number;
+  keepAliveMinutes: number;
 }
 
 export function getConfig(): ForgeConfig {
@@ -25,7 +28,12 @@ export function getConfig(): ForgeConfig {
     completionModel: cfg.get<string>('completionModel') || '',
     embeddingModel: cfg.get<string>('embeddingModel') || 'nomic-embed-text',
     temperature: cfg.get<number>('temperature') ?? 0.2,
-    maxAgentIterations: cfg.get<number>('maxAgentIterations') ?? 25,
+    // 25 was the only safety net against a thrashing/looping task; the loop
+    // detector (agent/loopDetector.ts) is now the real safety net, so this
+    // can be a much more generous default without silently truncating a
+    // legitimately long task. Auto mode uses its own, far larger cap below.
+    maxAgentIterations: cfg.get<number>('maxAgentIterations') ?? 200,
+    autoModeMaxIterations: cfg.get<number>('autoModeMaxIterations') ?? 100000,
     requireApprovalForWrites: cfg.get<boolean>('requireApprovalForWrites') ?? true,
     requireApprovalForCommands: cfg.get<boolean>('requireApprovalForCommands') ?? true,
     autoApproveCommands: cfg.get<string[]>('autoApproveCommands') || [],
@@ -33,6 +41,14 @@ export function getConfig(): ForgeConfig {
     completionDebounceMs: cfg.get<number>('completionDebounceMs') ?? 250,
     contextChunkCount: cfg.get<number>('contextChunkCount') ?? 8,
     maxContextFileKB: cfg.get<number>('maxContextFileKB') ?? 200,
+    // 0 = let Ollama use its own (small, often silently-truncating) default.
+    // Set this to your model's real max (check `ollama show <model>`) to stop
+    // long agent sessions from quietly losing early context.
+    numCtx: cfg.get<number>('numCtx') ?? 32768,
+    // -1 = never unload the model between messages (avoids paying a full
+    // reload + KV-cache-rebuild cost every time you pause to think).
+    // 0 = server default (~5 min idle unload).
+    keepAliveMinutes: cfg.get<number>('keepAliveMinutes') ?? -1,
   };
 }
 
