@@ -5,7 +5,7 @@ import { PendingEditManager } from '../tools/editApply';
 import { ApprovalBroker } from '../agent/approvalBroker';
 import { runAgentTurn } from '../agent/agentLoop';
 import { AgentEvent } from '../agent/types';
-import { ForgeMode, modeSupportsVerifyCommand } from '../agent/modes';
+import { ForgeMode, isAutonomousMode, modeSupportsVerifyCommand } from '../agent/modes';
 import { CheckpointStore } from '../agent/checkpoints';
 import { CompactionCache } from '../agent/contextManager';
 import { WorkspaceIndex } from '../indexing/workspaceIndex';
@@ -53,10 +53,14 @@ export interface ChatSessionServices {
 export class ChatSession {
   readonly id: string;
   title: string;
+  /** True once the user has explicitly renamed this chat via rename() — guards the first-message auto-title logic in send() from silently overwriting a manual rename. */
+  private titleManuallySet = false;
   mode: ForgeMode = 'agent';
   model = ''; // '' = use the global default chat model
   /** Optional "definition of done" shell command — see modes.ts's modeSupportsVerifyCommand. '' = none configured. */
   verifyCommand = '';
+  /** Per-chat context-window override (item "tweak context limits per chat") — undefined = use the global forge.numCtx default. See setNumCtxOverride(). */
+  numCtxOverride: number | undefined;
   uiHistory: UiTranscriptEntry[] = [];
   modelHistory: ChatMessage[] = [];
   busy = false;
@@ -76,6 +80,8 @@ export class ChatSession {
   private compactionCache: CompactionCache | undefined;
   private beforeWriteSub: vscode.Disposable;
   private turnsSinceMemoryReview = 0;
+  /** Tracks the in-progress 'subagent' transcript entry per nesting depth, so a matching subagent_result event (same depth) can find and update it — see handleAgentEvent's 'subagent_start'/'subagent_result' cases. */
+  private subAgentEntryByDepth = new Map<number, string>();
 
   constructor(
     private services: ChatSessionServices,
@@ -88,10 +94,11 @@ export class ChatSession {
     this.approvalBroker = new ApprovalBroker(
       (e) => this.handleAgentEvent(e),
       () => getConfig().autoApproveCommands,
-      // Auto mode is fully autonomous (item #2) — no command approval gate,
-      // except the hard-coded dangerous-command denylist ApprovalBroker
-      // itself always enforces regardless of this flag.
-      () => (this.mode === 'auto' ? false : getConfig().requireApprovalForCommands)
+      // Auto and Outcome modes are both fully autonomous (item #2, plus the
+      // 0.7.0 fix for Outcome mode silently still requiring approvals) — no
+      // command approval gate, except the hard-coded dangerous-command
+      // denylist ApprovalBroker itself always enforces regardless of this flag.
+      () => (isAutonomousMode(this.mode) ? false : getConfig().requireApprovalForCommands)
     );
     // Item #3: lazily capture each touched file's pre-write content so a
     // checkpoint can be restored later. Registered per-session (not
@@ -115,6 +122,8 @@ export class ChatSession {
     s.compactionCache = stored.compactionCache;
     s.verifyCommand = stored.verifyCommand || '';
     s.turnsSinceMemoryReview = stored.turnsSinceMemoryReview || 0;
+    s.titleManuallySet = stored.titleManuallySet || false;
+    s.numCtxOverride = stored.numCtxOverride;
     return s;
   }
 
@@ -132,6 +141,8 @@ export class ChatSession {
       compactionCache: this.compactionCache,
       verifyCommand: this.verifyCommand || undefined,
       turnsSinceMemoryReview: this.turnsSinceMemoryReview,
+      titleManuallySet: this.titleManuallySet || undefined,
+      numCtxOverride: this.numCtxOverride,
     };
   }
 
@@ -145,6 +156,7 @@ export class ChatSession {
       history: this.uiHistory,
       checkpoints: this.checkpoints.list().map((c) => ({ id: c.id, label: c.label, createdAt: c.createdAt })),
       verifyCommand: this.verifyCommand || undefined,
+      numCtxOverride: this.numCtxOverride,
     };
   }
 
@@ -170,6 +182,21 @@ export class ChatSession {
   /** Sets or clears this session's "definition of done" command (see modes.ts's modeSupportsVerifyCommand) — takes effect on the next send(), no restart needed. */
   setVerifyCommand(command: string) {
     this.verifyCommand = command.trim();
+    this.persist();
+  }
+
+  /** Explicit user rename (item #5) — CHAT_RENAME. Marks the title as manually set so the first-message auto-title in send() never overwrites it again, including on chats renamed before their first message is sent. */
+  rename(title: string) {
+    const clean = title.trim();
+    if (!clean) return;
+    this.title = clean;
+    this.titleManuallySet = true;
+    this.persist();
+  }
+
+  /** Sets (or clears, with undefined/NaN) this chat's own context-window override — see numCtxOverride. Takes effect on the next send(), no restart needed. */
+  setNumCtxOverride(numCtx: number | undefined) {
+    this.numCtxOverride = numCtx && Number.isFinite(numCtx) && numCtx > 0 ? Math.floor(numCtx) : undefined;
     this.persist();
   }
 
@@ -287,7 +314,7 @@ export class ChatSession {
       }
     }
 
-    if (this.uiHistory.length === 0) this.title = deriveTitle(text);
+    if (this.uiHistory.length === 0 && !this.titleManuallySet) this.title = deriveTitle(text);
 
     // Item #3: a checkpoint begins with every turn — nothing is snapshotted
     // yet (see checkpoints.ts), just a marker that "before this point"
@@ -375,6 +402,7 @@ export class ChatSession {
           planContext: opts?.planContext,
           compactionCache: this.compactionCache,
           verifyCommand: modeSupportsVerifyCommand(this.mode) && this.verifyCommand ? this.verifyCommand : undefined,
+          numCtx: this.numCtxOverride,
         }
       );
       this.modelHistory = result.messages;
@@ -526,6 +554,40 @@ export class ChatSession {
       }
       case 'pending_edit':
         return; // PendingEditManager.onDidChange is the source of truth, pushed workspace-wide.
+      case 'status': {
+        // Item "brief messages to indicate what the AI agent and AI model is
+        // doing" — a lightweight, ephemeral line (not persisted to
+        // uiHistory/disk) shown in the composer footer while the agent
+        // works. The webview itself honors forge.showStatusMessages to hide
+        // it entirely if the user doesn't want it.
+        this.post({ type: 'statusUpdate', sessionId: this.id, text: event.text });
+        return;
+      }
+      case 'subagent_start': {
+        this.flush();
+        const id = genId('sa');
+        this.subAgentEntryByDepth.set(event.depth, id);
+        const entry: UiTranscriptEntry = { kind: 'subagent', id, task: event.task, status: 'running', depth: event.depth };
+        this.pushEntry(entry);
+        this.post({ type: 'entry', sessionId: this.id, entry });
+        this.log('tool_call', `spawn_subagent (depth ${event.depth}): ${event.task.slice(0, 200)}`);
+        return;
+      }
+      case 'subagent_result': {
+        const entryId = this.subAgentEntryByDepth.get(event.depth);
+        const idx = entryId ? this.uiHistory.findIndex((e) => e.id === entryId) : -1;
+        if (idx >= 0) {
+          const entry = this.uiHistory[idx] as Extract<UiTranscriptEntry, { kind: 'subagent' }>;
+          entry.status = 'done';
+          entry.ok = event.ok;
+          entry.summary = event.summary;
+          this.pushEntry(entry, true);
+          this.post({ type: 'entryUpdate', sessionId: this.id, entry });
+        }
+        this.subAgentEntryByDepth.delete(event.depth);
+        this.log('tool_result', `spawn_subagent (depth ${event.depth}) ${event.ok ? 'ok' : 'fail'}: ${event.summary.slice(0, 200)}`);
+        return;
+      }
       case 'final': {
         this.flush();
         this.log('final', event.text.slice(0, 300));

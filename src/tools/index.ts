@@ -3,6 +3,7 @@ import { readFileTool, listDirTool, writeFileTool, getProblemsTool } from './fil
 import { searchCodeTool, searchCodebaseTool } from './searchTools';
 import { runCommandTool } from './commandTool';
 import { rememberTool, searchChatHistoryTool } from './memoryTools';
+import { spawnSubAgentTool } from './subAgentTool';
 
 export const TOOL_SPECS: ToolSpec[] = [
   {
@@ -61,6 +62,13 @@ export const TOOL_SPECS: ToolSpec[] = [
       'Semantic search over every past chat session in this workspace (not just this conversation) for a natural-language question. Use this instead of asking the user to repeat themselves when something was likely discussed or decided in an earlier chat.',
     exampleArgs: { query: 'why did we switch away from the old auth flow' },
     run: searchChatHistoryTool,
+  },
+  {
+    name: 'spawn_subagent',
+    describe:
+      'Delegate a self-contained sub-task to a nested, fully autonomous sub-agent (its own bounded tool-call loop, no approvals) and get back a summary of what it did/found. Use this to parallelize-in-spirit a task that splits cleanly into independent pieces (e.g. "investigate why build fails" + "investigate why tests fail" as two separate sub-agents), or to delegate a well-scoped chunk of work without cluttering your own tool-call history with its step-by-step trace. Give it a specific, self-contained task description — it does not see this conversation, only what you put in "task"/"context". Nesting is capped (a sub-agent cannot itself spawn more than one further level of sub-agents).',
+    exampleArgs: { task: 'Find and fix the TypeScript error in src/utils/date.ts', context: 'The error is "Property \'toISO\' does not exist". Likely a typo for toISOString.' },
+    run: spawnSubAgentTool,
   },
 ];
 

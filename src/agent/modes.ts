@@ -22,6 +22,7 @@ const ALL_TOOLS: ToolName[] = [
   'get_problems',
   'remember',
   'search_chat_history',
+  'spawn_subagent',
 ];
 
 // remember/search_chat_history are allowed even in read-only Ask mode: the
@@ -89,4 +90,19 @@ export function toolsAllowedInMode(mode: ForgeMode): ToolName[] {
 /** Whether a mode takes autonomous action at all, and so can meaningfully use a "definition of done" verify command (see ChatSession.verifyCommand / agentLoop's verify-gated final-answer loop). Ask/Plan never touch anything, so a done-check has nothing to check. */
 export function modeSupportsVerifyCommand(mode: ForgeMode): boolean {
   return mode === 'agent' || mode === 'auto' || mode === 'outcome';
+}
+
+/**
+ * Whether a mode is fully autonomous: no approval prompts for writes or
+ * commands, and the generous auto-mode iteration cap. Auto and Outcome are
+ * deliberately kept as distinct modes (different system prompts, labels, and
+ * UI) — Outcome additionally frames the message as a goal to work backward
+ * from — but they share this exact same no-approval, keep-going behavior.
+ * Both `agentLoop.ts` and `chatSession.ts`'s ApprovalBroker wiring must gate
+ * on this helper rather than `mode === 'auto'` directly, or a mode added
+ * here with autonomous behavior will silently still require approvals (this
+ * is exactly the bug that shipped in Outcome mode through 0.6.0).
+ */
+export function isAutonomousMode(mode: ForgeMode): boolean {
+  return mode === 'auto' || mode === 'outcome';
 }

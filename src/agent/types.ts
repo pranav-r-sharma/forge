@@ -11,7 +11,8 @@ export type ToolName =
   | 'run_command'
   | 'get_problems'
   | 'remember'
-  | 'search_chat_history';
+  | 'search_chat_history'
+  | 'spawn_subagent';
 
 export interface ToolCall {
   tool: ToolName | string;
@@ -51,6 +52,16 @@ export interface ToolExecContext {
   rememberFact: (fact: string) => Promise<{ added: boolean; reason?: string }>;
   /** Item "memory": semantic (embedding) or keyword-fallback search over every past chat session's transcript. */
   chatMemorySearch: (query: string, k: number) => Promise<{ sessionId: string; sessionTitle: string; snippet: string; score: number }[]>;
+  /**
+   * Sub-agent spawning (item "ability to spawn sub agents"): runs `task` as
+   * its own bounded, fully-autonomous nested agent turn and reports back a
+   * summary. Implemented as a closure inside agentLoop.ts's runAgentTurn
+   * (see spawnSubAgentTool in tools/subAgentTool.ts) because it needs the
+   * same AgentDeps/cancellation/model-resolution machinery runAgentTurn
+   * itself uses — nesting is capped (see MAX_SUBAGENT_DEPTH in agentLoop.ts)
+   * so a sub-agent can't spawn an unbounded tree of sub-agents.
+   */
+  spawnSubAgent: (task: string, contextHint?: string) => Promise<{ ok: boolean; summary: string }>;
   config: {
     autoApproveCommands: string[];
     requireApprovalForWrites: boolean;
@@ -83,6 +94,9 @@ export type AgentEvent =
   | { type: 'checkpoint'; id: string; label: string }
   | { type: 'verify_start'; command: string; draftText: string }
   | { type: 'verify_result'; command: string; ok: boolean; summary: string }
+  | { type: 'status'; text: string }
+  | { type: 'subagent_start'; task: string; depth: number }
+  | { type: 'subagent_result'; task: string; ok: boolean; summary: string; depth: number }
   | { type: 'done' }
   | { type: 'aborted' };
 

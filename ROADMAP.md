@@ -8,6 +8,10 @@ Everything here is catalogued but not built. Ordered roughly by how much day-to-
 
 **Shipped in 0.5.0**: Outcome mode ("reverse engineering" — state a destination, Forge works backward from it) with an optional definition-of-done command that gates whether a "done" claim is actually accepted, multi-model task routing (`forge.modelRouting` + **Forge: Set Model for Mode**), automatic periodic memory extraction (not just the model-initiated `remember` call), and a search-history cache that stops re-reading every closed chat from disk on every keystroke. See `CHANGELOG.md` for the full entry.
 
+**Shipped in 0.6.0**: chat archive-instead-of-delete (closing a tab now archives, not deletes; a new All Chats panel reopens or permanently deletes) and a fix for the VS Code webview `window.confirm()` reliability limitation.
+
+**Shipped in 0.7.0**: fixed Outcome mode's incomplete autonomy (it was silently still requiring approvals — see `CHANGELOG.md`), sub-agents (`spawn_subagent`, depth-capped, reports back to the parent), expanded HW metrics (context-window usage, RAM, best-effort GPU via `nvidia-smi`), a per-chat context-window override, an in-webview Settings panel, chat rename, and brief agent-activity status messages. See `CHANGELOG.md` for the full entry.
+
 ## 1. Everything else, grouped
 
 **Context & indexing**
@@ -22,6 +26,7 @@ Everything here is catalogued but not built. Ordered roughly by how much day-to-
 - Auto-invoke `get_problems` right after an accepted edit and feed diagnostics back to the agent automatically, instead of relying on it to remember to check.
 - Cursor-style "jump to next suggested edit" for Tab (multi-file-aware prediction) — a bigger lift, lower priority.
 - Cross-tab checkpoint awareness, so restoring one multitask tab's checkpoint doesn't silently clobber a later edit made by another tab to the same file (currently an documented limitation, see README).
+- ~~Sub-agents~~ — shipped in 0.7.0 as `spawn_subagent`. Known limitation carried over from the multitask design: a sub-agent shares the same `PendingEditManager`/workspace as its parent (no worktree-style isolation), so two sub-agents editing the same file concurrently is possible in theory — in practice `spawn_subagent` calls happen one at a time within a single turn today (the model calls one tool per round-trip), so this hasn't come up, but true parallel sub-agents would need the same isolation work as parallel worktree tabs.
 
 **Customization**
 - User-level (global, cross-project) rules, not just project-scoped `.forge/rules/`.

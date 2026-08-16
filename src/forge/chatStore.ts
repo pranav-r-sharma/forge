@@ -23,6 +23,10 @@ export interface StoredSession {
   verifyCommand?: string;
   /** Counts turns since the last automatic memory-extraction review, so it only runs periodically rather than every turn — see ChatSession.maybeReviewForMemory(). */
   turnsSinceMemoryReview?: number;
+  /** True once the user has explicitly renamed this chat (ChatSession.rename()) — guards the first-message auto-title logic in send() from clobbering a manual rename on a later turn. */
+  titleManuallySet?: boolean;
+  /** Per-chat context-window override (item "tweak context limits per chat") — undefined means "use forge.numCtx". See ChatSession.setNumCtxOverride(). */
+  numCtxOverride?: number;
 }
 
 /** One line of the append-only `.forge/chat/<id>.log.jsonl` crash-recovery log — see item "Logging of important decisions/actions". */
@@ -108,6 +112,32 @@ export class ChatStore {
       await this.writeIndex({ sessions: [...others, summary] });
     } catch (err) {
       logger.warn('Failed to persist chat session', String(err));
+    }
+  }
+
+  /**
+   * Renames a chat by id, updating both the index (so the tab strip / All
+   * Chats panel reflect it immediately) and the full session file if it
+   * exists on disk (so the rename survives a reload without waiting for the
+   * next turn to persist it). Used by the "All Chats" panel to rename a
+   * session that isn't currently loaded into a live ChatSession — a live
+   * session should instead call ChatSession.rename(), which also sets
+   * titleManuallySet so a later auto-title never clobbers it.
+   */
+  async rename(id: string, title: string): Promise<void> {
+    const clean = title.trim();
+    if (!clean) return;
+    const idx = await this.readIndex();
+    const target = idx.sessions.find((s) => s.id === id);
+    if (target) {
+      target.title = clean;
+      await this.writeIndex(idx);
+    }
+    const stored = await this.load(id);
+    if (stored) {
+      stored.title = clean;
+      stored.titleManuallySet = true;
+      await this.save(stored);
     }
   }
 

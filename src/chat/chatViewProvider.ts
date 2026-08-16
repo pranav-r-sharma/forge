@@ -10,13 +10,15 @@ import { HookRunner } from '../forge/hooks';
 import { MemoryStore } from '../forge/memory';
 import { ChatStore, SessionSummary } from '../forge/chatStore';
 import { MODES } from '../agent/modes';
-import { getConfig, setChatModel } from '../util/config';
+import { getConfig, setChatModel, setForgeSetting } from '../util/config';
 import { genId } from '../util/ids';
 import { toRelative } from '../util/paths';
 import { WorkspaceEntryIndex } from '../util/fileSearch';
+import { getGpuStatus, getRamStatus } from '../util/hwMetrics';
 import { logger } from '../util/logger';
 import { ChatSession, ChatSessionServices } from './chatSession';
-import { ExtensionToWebviewMessage, HwStatus, InitState, SearchResultItem, UiTranscriptEntry, WebviewToExtensionMessage } from '../webview/protocol';
+import { ExtensionToWebviewMessage, HwStatus, InitState, SearchResultItem, SettingsSnapshot, UiTranscriptEntry, WebviewToExtensionMessage } from '../webview/protocol';
+import { OllamaCallMetrics } from '../ollama/types';
 
 /**
  * Thin webview host + multi-session ("multitask") manager. All the actual
@@ -31,6 +33,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   private activeSessionId: string | undefined;
   private entryIndex: WorkspaceEntryIndex;
   private services: ChatSessionServices;
+  /** Last completed call's metrics per session, so buildHwStatus() can report context-window usage (item "context usage metrics") without threading metrics through every call site. Best-effort/ephemeral — never persisted. */
+  private lastMetricsBySession = new Map<string, OllamaCallMetrics>();
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -102,6 +106,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
   /** Forwards session events to the webview only when that session is the one on screen, with one exception (`busy`) so background tabs can show a spinner. */
   private notify(sessionId: string, msg: ExtensionToWebviewMessage) {
+    if (msg.type === 'metricsUpdate') this.lastMetricsBySession.set(sessionId, msg.metrics);
     if (sessionId === this.activeSessionId) {
       this.post(msg);
       if (msg.type === 'busy') this.pushSessionsList();
@@ -321,7 +326,60 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         this.activeSession()?.setVerifyCommand(msg.command);
         return;
       }
+      case 'renameSession': {
+        // Item "CHAT RENAME": rename whichever session this is, whether it's
+        // currently loaded into memory (use its own rename() so
+        // titleManuallySet is set) or only on disk (rename via ChatStore
+        // directly, from the All Chats panel).
+        const loaded = this.sessions.get(msg.id);
+        if (loaded) loaded.rename(msg.title);
+        else await this.chatStore.rename(msg.id, msg.title);
+        await this.pushSessionsList();
+        await this.pushAllChatsList();
+        if (this.activeSessionId === msg.id) {
+          const active = this.activeSession();
+          if (active) this.post({ type: 'sessionSwitched', session: active.toSummaryState() });
+        }
+        return;
+      }
+      case 'getSettings': {
+        this.post({ type: 'settingsData', settings: this.buildSettingsSnapshot() });
+        return;
+      }
+      case 'updateSetting': {
+        const applied = await setForgeSetting(msg.key, msg.value);
+        if (applied) this.post({ type: 'settingsData', settings: this.buildSettingsSnapshot() });
+        else this.post({ type: 'toast', level: 'error', text: `Unknown or disallowed setting "${msg.key}".` });
+        return;
+      }
+      case 'setSessionNumCtx': {
+        // Item "tweak context limits per chat": a per-session override of
+        // forge.numCtx, so a chat pinned to a small/fast model can use a
+        // bigger context window than the global default without changing
+        // it for every other chat too. null clears the override.
+        const session = this.activeSession();
+        if (!session) return;
+        session.setNumCtxOverride(msg.numCtx === null ? undefined : msg.numCtx);
+        this.post({ type: 'sessionSwitched', session: session.toSummaryState() });
+        return;
+      }
     }
+  }
+
+  /** Snapshot of every setting the in-webview Settings panel can read/write — see util/config.ts's SETTINGS_PANEL_KEYS. */
+  private buildSettingsSnapshot(): SettingsSnapshot {
+    const cfg = getConfig();
+    return {
+      numCtx: cfg.numCtx,
+      temperature: cfg.temperature,
+      requireApprovalForWrites: cfg.requireApprovalForWrites,
+      requireApprovalForCommands: cfg.requireApprovalForCommands,
+      keepAliveMinutes: cfg.keepAliveMinutes,
+      subAgentModel: cfg.subAgentModel,
+      subAgentMaxIterations: cfg.subAgentMaxIterations,
+      maxSubAgentDepth: cfg.maxSubAgentDepth,
+      showStatusMessages: cfg.showStatusMessages,
+    };
   }
 
   /**
@@ -369,9 +427,22 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     return results;
   }
 
-  /** Item #1: HW utilization — currently-loaded model(s) and their VRAM footprint via GET /api/ps. Best-effort; an older/unreachable Ollama just yields an empty list rather than an error. */
+  /**
+   * Item "HWD metrics": currently-loaded model(s) + VRAM footprint via GET
+   * /api/ps (best-effort; an older/unreachable Ollama just yields an empty
+   * list rather than an error), plus system RAM (always available, no
+   * external dependency), best-effort GPU utilization via nvidia-smi (see
+   * hwMetrics.ts — silently empty on non-NVIDIA machines, the common case
+   * for local Ollama), and the active session's context-window usage
+   * (last call's prompt+eval token count vs. its configured ceiling).
+   */
   private async buildHwStatus(): Promise<HwStatus> {
-    const loaded = await this.ollama.ps();
+    const [loaded, gpu] = await Promise.all([this.ollama.ps().catch(() => []), getGpuStatus()]);
+    const cfg = getConfig();
+    const active = this.activeSession();
+    const lastMetrics = this.activeSessionId ? this.lastMetricsBySession.get(this.activeSessionId) : undefined;
+    const maxTokens = active?.numCtxOverride || cfg.numCtx;
+    const usedTokens = lastMetrics ? (lastMetrics.promptTokens || 0) + (lastMetrics.evalTokens || 0) : undefined;
     return {
       loadedModels: loaded.map((m) => ({
         name: m.name,
@@ -379,6 +450,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         vramGB: m.size_vram !== undefined ? Math.round((m.size_vram / 1024 / 1024 / 1024) * 10) / 10 : undefined,
         expiresAt: m.expires_at,
       })),
+      ram: getRamStatus(),
+      gpu: gpu.length ? gpu : undefined,
+      contextWindow: usedTokens !== undefined ? { usedTokens, maxTokens } : undefined,
     };
   }
 

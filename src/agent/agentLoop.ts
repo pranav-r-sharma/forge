@@ -7,7 +7,7 @@ import { parseToolCall } from './toolProtocol';
 import { TOOL_MAP } from '../tools';
 import { PendingEditManager } from '../tools/editApply';
 import { ApprovalBroker } from './approvalBroker';
-import { ForgeMode, toolsAllowedInMode } from './modes';
+import { ForgeMode, isAutonomousMode, toolsAllowedInMode } from './modes';
 import { HookRunner } from '../forge/hooks';
 import { getConfig } from '../util/config';
 import { logger } from '../util/logger';
@@ -45,6 +45,28 @@ export interface AgentTurnOptions {
    * promise real instead of just a prompt asking the model to be honest.
    */
   verifyCommand?: string;
+  /**
+   * Nesting depth for spawn_subagent recursion — 0 (or unset) is a normal,
+   * top-level user turn. Each spawn_subagent call increments this by 1 for
+   * the nested runAgentTurn; once it reaches MAX_SUBAGENT_DEPTH, the
+   * spawnSubAgent closure below refuses to nest any further, so a runaway
+   * "sub-agent spawns a sub-agent spawns a sub-agent…" chain can't happen.
+   */
+  subAgentDepth?: number;
+  /**
+   * Overrides the mode-derived iteration cap (cfg.autoModeMaxIterations /
+   * cfg.maxAgentIterations). Used to give a sub-agent turn its own, tighter
+   * budget (forge.subAgentMaxIterations) instead of inheriting Auto mode's
+   * effectively-unbounded cap.
+   */
+  maxIterationsOverride?: number;
+  /**
+   * Overrides forge.numCtx for this turn only — the per-chat "context limit"
+   * setting (item "tweak context limits per chat"): a session using a small,
+   * fast model can afford a larger context window than the global default,
+   * since it leaves more memory/VRAM headroom than a larger model would.
+   */
+  numCtx?: number;
 }
 
 export interface AgentTurnResult {
@@ -56,6 +78,47 @@ let callCounter = 0;
 function nextCallId(): string {
   callCounter += 1;
   return `call_${Date.now().toString(36)}_${callCounter}`;
+}
+
+/**
+ * Absolute hard cap on spawn_subagent nesting depth, regardless of the
+ * user-configurable `forge.maxSubAgentDepth` setting (see config.ts) — a
+ * safety bound independent of the loop detector, so no setting value can
+ * make a misbehaving model spawn sub-agents that spawn sub-agents forever.
+ */
+export const HARD_MAX_SUBAGENT_DEPTH = 4;
+
+/** Short, human-readable one-liner for what a tool call is about to do — item "brief messages to indicate what the AI agent/model is doing". Deliberately terse; the full detail is still in the tool card that follows. */
+function describeToolCall(tool: string, args: Record<string, any>): string {
+  switch (tool) {
+    case 'read_file':
+      return `Reading ${args?.path ?? 'a file'}…`;
+    case 'list_dir':
+      return `Listing ${args?.path ?? 'workspace'}…`;
+    case 'search_code':
+      return `Searching code for "${args?.query ?? ''}"…`;
+    case 'search_codebase':
+      return `Searching the codebase for "${args?.query ?? ''}"…`;
+    case 'write_file':
+      return args?.delete ? `Deleting ${args?.path ?? 'a file'}…` : `Writing ${args?.path ?? 'a file'}…`;
+    case 'run_command':
+      return `Running \`${args?.command ?? ''}\`…`;
+    case 'get_problems':
+      return `Checking diagnostics${args?.path ? ` for ${args.path}` : ''}…`;
+    case 'remember':
+      return 'Saving a fact to memory…';
+    case 'search_chat_history':
+      return `Searching past chats for "${args?.query ?? ''}"…`;
+    case 'spawn_subagent':
+      return `Delegating to a sub-agent: ${truncateOneLine(String(args?.task ?? ''), 80)}`;
+    default:
+      return `Calling ${tool}…`;
+  }
+}
+
+function truncateOneLine(s: string, maxLen: number): string {
+  const oneLine = s.replace(/\s+/g, ' ').trim();
+  return oneLine.length > maxLen ? oneLine.slice(0, maxLen) + '…' : oneLine;
 }
 
 /**
@@ -78,13 +141,20 @@ export async function runAgentTurn(
   options: AgentTurnOptions
 ): Promise<AgentTurnResult> {
   const cfg = getConfig();
-  const autoMode = options.mode === 'auto';
-  // Auto mode is fully autonomous (item #2): no approval gate for writes.
-  // Command approval is handled by ApprovalBroker itself (ChatSession wires
-  // its getRequireApproval() to be mode-aware) — the dangerous-command
-  // denylist in commandTool.ts still applies there regardless of mode.
+  const autoMode = isAutonomousMode(options.mode);
+  // Auto and Outcome modes are fully autonomous (item #2, and the 0.7.0 fix
+  // for Outcome mode silently still requiring approvals): no approval gate
+  // for writes. Command approval is handled by ApprovalBroker itself
+  // (ChatSession wires its getRequireApproval() to be mode-aware) — the
+  // dangerous-command denylist in commandTool.ts still applies there
+  // regardless of mode.
   const requireApprovalForWrites = autoMode ? false : cfg.requireApprovalForWrites;
-  const maxIterations = autoMode ? cfg.autoModeMaxIterations : cfg.maxAgentIterations;
+  const maxIterations = options.maxIterationsOverride ?? (autoMode ? cfg.autoModeMaxIterations : cfg.maxAgentIterations);
+  // Per-chat context-limit override (item "tweak context limits per chat" —
+  // a session pinned to a light/small model can afford a bigger window than
+  // the global default since it leaves more memory/VRAM headroom).
+  const numCtx = options.numCtx ?? cfg.numCtx;
+  const subAgentDepth = options.subAgentDepth ?? 0;
 
   const messages: ChatMessage[] = [...history];
   const allowedTools = new Set(toolsAllowedInMode(options.mode));
@@ -115,6 +185,62 @@ export async function runAgentTurn(
     codebaseSearch: deps.codebaseSearch,
     rememberFact: deps.rememberFact,
     chatMemorySearch: deps.chatMemorySearch,
+    spawnSubAgent: async (task, contextHint) => {
+      const configuredMaxDepth = Math.min(Math.max(1, cfg.maxSubAgentDepth), HARD_MAX_SUBAGENT_DEPTH);
+      if (subAgentDepth >= configuredMaxDepth) {
+        return {
+          ok: false,
+          summary: `Refused: sub-agent nesting depth limit (${configuredMaxDepth}, see forge.maxSubAgentDepth) reached. Do this work directly instead of spawning another sub-agent.`,
+        };
+      }
+      const subCfg = getConfig();
+      const subModel = subCfg.subAgentModel || model;
+      emit({ type: 'subagent_start', task, depth: subAgentDepth + 1 });
+      emit({ type: 'status', text: `Sub-agent (depth ${subAgentDepth + 1}) starting: ${truncateOneLine(task, 90)}` });
+      const subUserMessage = contextHint ? `${task}\n\n[Context from parent agent]\n${contextHint}` : task;
+      // Sub-agents only ever report their final answer back to the parent —
+      // their own tool-call chatter is real (it still shows up via `emit`
+      // as ordinary events, tagged nowhere as "sub" today, which is a known
+      // simplification — see CHANGELOG) but what matters for the parent's
+      // transcript is just the outcome, captured below from 'final'/'error'/
+      // 'aborted'.
+      let outcome: { ok: boolean; summary: string } = { ok: false, summary: 'Sub-agent produced no result.' };
+      try {
+        await runAgentTurn(
+          [],
+          subUserMessage,
+          deps,
+          (subEvent) => {
+            if (subEvent.type === 'final') {
+              outcome = { ok: true, summary: subEvent.text };
+            } else if (subEvent.type === 'error') {
+              outcome = { ok: false, summary: subEvent.message };
+            } else if (subEvent.type === 'aborted') {
+              outcome = { ok: false, summary: 'Sub-agent was stopped before finishing.' };
+            }
+            // Sub-agent tool calls/tokens are intentionally not forwarded to
+            // the parent's transcript — only start/result and this progress
+            // status are, so a sub-agent's own step-by-step trace doesn't
+            // flood the parent conversation. The full trace is still visible
+            // if you open the sub-agent's own emitted events in dev tools.
+          },
+          cancellation, // shared token: a user Stop on the parent also stops any in-flight sub-agent.
+          subModel,
+          {
+            mode: 'auto', // sub-agents are always fully autonomous — no approval prompts (see isAutonomousMode).
+            rulesText: options.rulesText,
+            memoryText: options.memoryText,
+            subAgentDepth: subAgentDepth + 1,
+            maxIterationsOverride: subCfg.subAgentMaxIterations,
+            numCtx,
+          }
+        );
+      } catch (err: any) {
+        outcome = { ok: false, summary: `Sub-agent crashed: ${err?.message || err}` };
+      }
+      emit({ type: 'subagent_result', task, ok: outcome.ok, summary: outcome.summary, depth: subAgentDepth + 1 });
+      return outcome;
+    },
     config: {
       autoApproveCommands: cfg.autoApproveCommands,
       requireApprovalForWrites,
@@ -126,7 +252,7 @@ export async function runAgentTurn(
   /** Builds the trimmed view actually sent to Ollama — never mutates `messages`, the archival/persisted transcript. See contextManager.ts. */
   async function buildPromptView(): Promise<ChatMessage[]> {
     const pruned = pruneStaleReadsView(messages);
-    const compacted = await maybeCompact(pruned, compactionCache, model, cfg.numCtx, deps.ollama, cancellationToAbortSignal(cancellation));
+    const compacted = await maybeCompact(pruned, compactionCache, model, numCtx, deps.ollama, cancellationToAbortSignal(cancellation));
     compactionCache = compacted.cache;
     return hardCapOversizedMessages(compacted.promptMessages);
   }
@@ -142,6 +268,10 @@ export async function runAgentTurn(
     const promptView = await buildPromptView();
 
     emit({ type: 'thought_start' });
+    // Item "brief messages indicating what the AI agent/model is doing":
+    // announce the model doing the thinking before the (potentially slow)
+    // call starts, not just after a tool call is chosen.
+    emit({ type: 'status', text: subAgentDepth > 0 ? `Sub-agent thinking with ${model}…` : `Thinking with ${model}…` });
     let fullText = '';
     try {
       fullText = await deps.ollama.chat({
@@ -149,7 +279,7 @@ export async function runAgentTurn(
         messages: promptView,
         temperature: cfg.temperature,
         signal: cancellationToAbortSignal(cancellation),
-        numCtx: cfg.numCtx,
+        numCtx,
         keepAliveMinutes: keepAliveOpt(cfg.keepAliveMinutes),
         onToken: (token) => emit({ type: 'token', text: token }),
         onMetrics: (metrics) => emit({ type: 'metrics', metrics }),
@@ -195,6 +325,7 @@ export async function runAgentTurn(
       // check gets fed straight back in as evidence and the loop continues,
       // which is what makes OUTCOME mode's iterate-until-true promise real.
       if (options.verifyCommand) {
+        emit({ type: 'status', text: `Verifying: ${truncateOneLine(options.verifyCommand, 80)}…` });
         emit({ type: 'verify_start', command: options.verifyCommand, draftText: fullText.trim() });
         const verify = await runVerifyCommand(options.verifyCommand, deps.workspaceRoot.fsPath, cancellation);
         emit({ type: 'verify_result', command: options.verifyCommand, ok: verify.ok, summary: summarize(verify.output) });
@@ -223,6 +354,7 @@ export async function runAgentTurn(
 
     const spec = TOOL_MAP[call.tool];
     const callId = nextCallId();
+    emit({ type: 'status', text: describeToolCall(call.tool, call.args) });
     emit({ type: 'tool_call', tool: call.tool, args: call.args, callId });
 
     if (!spec) {

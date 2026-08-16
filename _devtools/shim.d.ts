@@ -123,6 +123,7 @@ declare module 'path' { const m: any; export = m; }
 declare module 'child_process' {
   export function spawn(command: string, options?: any): any;
   export function exec(command: string, callback?: any): any;
+  export function execFile(command: string, args?: any, options?: any, callback?: any): any;
   const m: any;
   export default m;
 }

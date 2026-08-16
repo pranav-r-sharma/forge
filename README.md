@@ -7,8 +7,11 @@ See `CURSOR_PARITY.md` for a full feature-by-feature map against Cursor, and `RO
 ## What you get
 
 - **Agent / Ask / Plan / Auto / Outcome modes** — Agent has full read/write/run autonomy; Ask is read-only Q&A with no side effects; Plan drafts a step-by-step plan for you to review before anything runs; Auto is fully autonomous with no approvals; Outcome is "reverse engineering" — state a destination and Forge works backward from it, with an optional command that automatically verifies "done" instead of taking the model's word for it. Switch anytime from the mode strip above the message box.
-- **Multitask chat tabs** — run several conversations at once (e.g. one investigating a bug while another refactors something unrelated); background tabs keep working and show a spinner until you switch to them.
+- **Multitask chat tabs** — run several conversations at once (e.g. one investigating a bug while another refactors something unrelated); background tabs keep working and show a spinner until you switch to them. Double-click a tab title to rename it.
+- **Sub-agents** — the agent can delegate a self-contained sub-task to a nested, fully autonomous agent turn (`spawn_subagent`) and get a summary back, instead of doing everything inline in one long tool-call chain. Depth-capped, shares the parent's Stop button.
 - **Chat history stored in your repo** — every session is a JSON file under `.forge/chat/`, not hidden app-support state, so it travels with the project.
+- **In-chat Settings panel** — tweak context-window size (globally or per-chat), temperature, approval toggles, sub-agent model/budget, and status-message visibility without leaving the chat view.
+- **HW metrics** — tokens/sec, context-window usage, system RAM, loaded-model VRAM, and best-effort GPU utilization, live in the composer footer.
 - **Project rules** (`.forge/rules/*.md`) — always-on or file-glob-scoped instructions injected into the agent's system prompt, Cursor `.cursor/rules` equivalent. **Forge: New Rule** scaffolds one.
 - **Skills / slash commands** (`.forge/skills/*.md`) — reusable prompt templates invoked as `/name` in chat, Cursor custom-commands equivalent. **Forge: New Skill** scaffolds one.
 - **Hooks** (`.forge/hooks/<event>`) — executable scripts run at `session-start`, `before-write`, `after-write`, `before-command`, `after-command`; the two `before-*` hooks can block the action. **Forge: Open Hooks Folder** shows the contract.
@@ -51,7 +54,7 @@ Prefer to do it by hand, or the script hits an issue?
 npm install
 npm run compile
 npx @vscode/vsce package --no-dependencies --allow-missing-repository
-code --install-extension forge-local-agent-0.2.0.vsix
+code --install-extension forge-local-agent-0.7.0.vsix
 ```
 
 Or skip the CLI entirely: in VS Code, open the Extensions view → "…" menu (top right) → **Install from VSIX...** → pick the `.vsix` file that `npm run package` produced.
@@ -90,7 +93,7 @@ The pill strip above the message box switches modes per chat tab:
 - **Ask** — read-only. The agent can `read_file` / `search_code` / `search_codebase` / `get_problems` to investigate, but `write_file` and `run_command` are refused. Good for "explain this" / "where does X happen" without any risk of it touching files.
 - **Plan** — no tools at all; the model reads only what's already in the conversation/attached files and produces a numbered plan. Review it, then click **Execute plan** on the plan card to hand off to Agent mode, which executes it step by step with the plan pinned into its context.
 - **Auto** (new in 0.3.0) — fully autonomous: every file edit and shell command runs immediately, with **no approval prompts at all**, except a small hard-coded denylist of genuinely destructive commands (`rm -rf /`, force-pushing over `main`/`master`, disk-format commands, fork bombs, etc.) that always still ask, even in Auto mode. Switching to it shows a confirmation dialog explaining this. Because nothing pauses for your review, two things back it up: a **checkpoint is saved automatically before every turn** (see below — one click undoes everything from that point on), and a **loop detector** watches for the agent repeating the same failing action and stops the turn with an explanation instead of grinding forever. On a genuine failure, Auto mode is instructed to diagnose and try a different approach rather than stopping to ask — that's the point of it — but it will still stop and explain itself if it's truly stuck or the task is done.
-- **Outcome** (new in 0.5.0) — "reverse engineering": you describe a destination, not steps, and Forge works backward from it. See below for the details — it's autonomous the same way Auto mode is, plus a mechanism that keeps it honest about when the goal is actually met.
+- **Outcome** (new in 0.5.0) — "reverse engineering": you describe a destination, not steps, and Forge works backward from it. See below for the details — it's autonomous the same way Auto mode is (as of 0.7.0 this is actually enforced in code, not just claimed in the prompt — see the Changelog), plus a mechanism that keeps it honest about when the goal is actually met.
 
 ### Outcome mode — state the destination, not the steps
 
@@ -135,7 +138,25 @@ One model doing chat, planning, and Tab autocomplete is a real compromise — lo
 
 ### HW utilization
 
-The composer footer shows live tokens/sec for the last response and how many models Ollama currently has loaded (and their VRAM footprint), refreshed automatically after each turn — click it, or run **Forge: Show HW Utilization**, to refresh on demand. Backed by Ollama's `/api/ps`.
+The composer footer shows live tokens/sec for the last response, context-window usage (last call's prompt+eval tokens vs. this chat's configured ceiling), system RAM, and how many models Ollama currently has loaded (and their VRAM footprint) — refreshed automatically after each turn, or click it / run **Forge: Show HW Utilization** to refresh on demand. RAM is always available (`os.totalmem()`/`freemem()`); loaded-model VRAM comes from Ollama's `/api/ps`. GPU utilization/VRAM (added 0.7.0) is best-effort via `nvidia-smi` and is silently omitted on machines without an NVIDIA GPU or without `nvidia-smi` on `PATH` — Apple Silicon, AMD, no discrete GPU — which is the common case for a local-Ollama laptop and not itself an error.
+
+### Sub-agents — delegate a sub-task, get a summary back
+
+The agent can call `spawn_subagent` to hand off a self-contained piece of work to a nested, fully autonomous agent turn (its own bounded tool-call budget, no approval prompts) instead of doing everything inline. You'll see it as its own card in the transcript — "↳ Sub-agent: <task>" — that updates once the sub-agent finishes with a summary of what it found/did; the sub-agent's own step-by-step tool calls stay out of your main transcript so a long delegated investigation doesn't flood the chat. Nesting is capped at `forge.maxSubAgentDepth` (default 2, hard-ceilinged at 4) so a sub-agent can't spawn an unbounded chain of further sub-agents. Stopping the parent turn also stops any in-flight sub-agent — they share the same cancellation token. Configure which model runs sub-agent turns (`forge.subAgentModel`, blank = reuse the parent's) and their step budget (`forge.subAgentMaxIterations`) from the Settings panel below.
+
+### Settings panel
+
+Click the ⚙ icon in the header for an in-chat settings panel — the ones worth tweaking per-chat or often, without leaving the chat view or hand-editing `settings.json`: this chat's own context-window override, the global context window/temperature/keep-alive/approval toggles, whether brief status messages show, and the sub-agent model/step-budget/nesting-depth settings. Everything else is still a plain `forge.*` VS Code setting (see the table below).
+
+**Per-chat context window.** A chat pinned to a light/fast model can usually afford a bigger context window than your global default, since a smaller model leaves more memory/VRAM headroom than a bigger one would — set it per-chat in the Settings panel instead of raising `forge.numCtx` for every chat. Leave it blank to use the global default.
+
+### Chat rename
+
+Double-click a chat's tab title, or click the ✎ icon next to a chat in the **All Chats** panel, to rename it. A manually-set title is remembered and never gets silently overwritten by the normal first-message auto-title behavior.
+
+### Brief status messages
+
+While the agent is working, a short line above the message box shows what it's doing right now — "Thinking with qwen2.5-coder:14b…", "Reading src/foo.ts…", "Running `npm test`…", "Delegating to a sub-agent: …" — so a long autonomous run (especially Auto/Outcome mode) doesn't look like it's just silently spinning. Toggle it off with `forge.showStatusMessages` or from the Settings panel if you'd rather only see the full tool-call trace.
 
 ### Project rules — `.forge/rules/`
 
@@ -204,6 +225,12 @@ All under `Settings → Extensions → Forge` (or search `forge.` in Settings):
 | `forge.completionDebounceMs` | `250` | Delay before requesting a completion |
 | `forge.contextChunkCount` | `8` | How many chunks `@codebase` returns |
 | `forge.maxContextFileKB` | `200` | Skip huge files when reading/indexing |
+| `forge.subAgentModel` | *(same as parent)* | Model used for `spawn_subagent` turns |
+| `forge.subAgentMaxIterations` | `40` | Tool-call step cap per sub-agent task |
+| `forge.maxSubAgentDepth` | `2` | Max sub-agent nesting depth (hard-ceilinged at 4 regardless) |
+| `forge.showStatusMessages` | `true` | Show the brief "what's it doing right now" line while the agent works |
+
+Most of the settings above (context window, temperature, keep-alive, approval toggles, status messages, sub-agent model/budget/depth) are also editable from the in-chat **Settings panel** (⚙ in the header) — see above.
 
 ## How it works, briefly
 
@@ -211,9 +238,11 @@ Rather than relying on any one model's native function-calling format (inconsist
 
 File edits go through an in-memory "pending edit" overlay: the agent's own view of a file it just edited is immediately the new version (so it can make several dependent edits in one turn), but nothing touches your disk until you accept it. Tab autocomplete uses Ollama's `/api/generate` with `prompt`/`suffix` (fill-in-middle) and lets Ollama apply each model's own FIM template, so it works across qwen2.5-coder, deepseek-coder, starcoder2, codegemma, codellama, etc. without hand-maintaining per-model special tokens.
 
-## Known limitations (0.6.0)
+## Known limitations (0.7.0)
 
 - **The 0.6.0 confirm-dialog fix (window.confirm → an in-DOM modal) is a best-effort fix for a real, documented VS Code webview limitation, but this sandbox cannot run the actual extension host to confirm it fixes what you saw.** If Auto mode (or anything else that used to call `window.confirm`) still doesn't work after updating, it's a different bug — please retest and report the exact symptom, an error toast if one appears, or what shows up in **Developer: Open Webview Developer Tools** (Command Palette → search for it) so it's diagnosable.
+- **Sub-agents share the same workspace and `PendingEditManager` as their parent — there's no worktree-style isolation.** In practice this hasn't caused a conflict because a model only calls one tool (including `spawn_subagent`) at a time, so sub-agent turns run one after another, not truly concurrently — but if that ever changes, two sub-agents editing the same file could clobber each other the same way two multitask tabs already can (see below).
+- **GPU utilization is NVIDIA-only, via `nvidia-smi`.** No metric is shown at all on Apple Silicon, AMD GPUs, or any machine without `nvidia-smi` on `PATH` — this is silent-by-design (see HW utilization above), not a bug, but it does mean the GPU readout won't appear for a lot of local-Ollama setups.
 - Inline edit (Cmd+K) uses a simple input box for the instruction rather than a floating in-editor widget, and supports one pending inline edit at a time.
 - No multi-root workspace support — Forge uses the first workspace folder.
 - The semantic index is a flat cosine-similarity search over line-chunked files (no AST-aware chunking) — good for "what file handles X", not a replacement for `search_code` on exact symbols.

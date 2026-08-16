@@ -29,6 +29,10 @@
     mentionSelectedIndex: -1,
     searchOpen: false,
     allChatsOpen: false,
+    settingsOpen: false,
+    settings: null, // populated lazily from 'settingsData' the first time the panel is opened
+    numCtxOverride: undefined, // active session's per-chat context override, if any
+    statusText: '', // brief "what is the agent doing" line — item "brief status messages"
   };
 
   const root = document.getElementById('root');
@@ -39,6 +43,7 @@
         <div class="forge-header-actions">
           <button id="btn-search" class="icon-btn" title="Search all chats">&#128269;</button>
           <button id="btn-all-chats" class="icon-btn" title="All chats (including closed ones)">&#128193;</button>
+          <button id="btn-settings" class="icon-btn" title="Settings">&#9881;</button>
           <button id="btn-index" class="icon-btn" title="Index workspace for @codebase search">&#8635;</button>
           <button id="btn-new-chat" class="icon-btn" title="New chat">+</button>
         </div>
@@ -52,12 +57,26 @@
         <div class="all-chats-header">All chats <span class="all-chats-hint">closed chats are still saved — click to reopen</span></div>
         <div id="all-chats-list" class="search-results"></div>
       </div>
+      <div id="settings-panel" class="forge-search-panel forge-settings-panel" style="display:none;">
+        <div class="all-chats-header">Settings</div>
+        <div id="settings-body" class="settings-body"></div>
+      </div>
       <div id="confirm-overlay" class="forge-modal-overlay" style="display:none;">
         <div class="forge-modal">
           <div id="confirm-modal-text" class="forge-modal-text"></div>
           <div class="forge-modal-actions">
             <button id="confirm-modal-cancel" class="link-btn">Cancel</button>
             <button id="confirm-modal-ok" class="deny-btn">Confirm</button>
+          </div>
+        </div>
+      </div>
+      <div id="prompt-overlay" class="forge-modal-overlay" style="display:none;">
+        <div class="forge-modal">
+          <div id="prompt-modal-text" class="forge-modal-text"></div>
+          <input id="prompt-modal-input" type="text" class="forge-modal-input" />
+          <div class="forge-modal-actions">
+            <button id="prompt-modal-cancel" class="link-btn">Cancel</button>
+            <button id="prompt-modal-ok" class="approve-btn">Save</button>
           </div>
         </div>
       </div>
@@ -81,6 +100,7 @@
         </div>
         <div id="chips" class="forge-chips"></div>
         <div id="mention-dropdown" class="forge-mention-dropdown" style="display:none;"></div>
+        <div id="status-line" class="forge-status-line" style="display:none;"></div>
         <textarea id="input" class="forge-input" rows="3" placeholder="Ask Forge, @ to attach a file, / for a skill… (Enter to send, Shift+Enter for newline)"></textarea>
         <div class="forge-composer-footer">
           <button id="btn-model" class="model-btn" title="Change model"></button>
@@ -128,6 +148,15 @@
     confirmText: document.getElementById('confirm-modal-text'),
     confirmOk: document.getElementById('confirm-modal-ok'),
     confirmCancel: document.getElementById('confirm-modal-cancel'),
+    promptOverlay: document.getElementById('prompt-overlay'),
+    promptText: document.getElementById('prompt-modal-text'),
+    promptInput: /** @type {HTMLInputElement} */ (document.getElementById('prompt-modal-input')),
+    promptOk: document.getElementById('prompt-modal-ok'),
+    promptCancel: document.getElementById('prompt-modal-cancel'),
+    settingsBtn: document.getElementById('btn-settings'),
+    settingsPanel: document.getElementById('settings-panel'),
+    settingsBody: document.getElementById('settings-body'),
+    statusLine: document.getElementById('status-line'),
   };
 
   // ---------- custom confirm dialog ----------
@@ -158,6 +187,44 @@
   });
   document.addEventListener('keydown', (e) => {
     if (el.confirmOverlay.style.display !== 'none' && e.key === 'Escape') settleConfirm(false);
+  });
+
+  // ---------- custom text-prompt dialog ----------
+  // Same rationale as confirmDialog above: window.prompt() has the identical
+  // VS Code webview reliability problem as window.confirm(), so chat rename
+  // (item "CHAT RENAME option") uses this in-DOM equivalent instead of ever
+  // calling window.prompt().
+  let promptResolve = null;
+  function textPromptDialog(message, defaultValue) {
+    return new Promise((resolve) => {
+      promptResolve = resolve;
+      el.promptText.textContent = message;
+      el.promptInput.value = defaultValue || '';
+      el.promptOverlay.style.display = 'flex';
+      setTimeout(() => {
+        el.promptInput.focus();
+        el.promptInput.select();
+      }, 0);
+    });
+  }
+  function settlePrompt(result) {
+    el.promptOverlay.style.display = 'none';
+    const resolve = promptResolve;
+    promptResolve = null;
+    if (resolve) resolve(result);
+  }
+  el.promptOk.addEventListener('click', () => settlePrompt(el.promptInput.value.trim() || null));
+  el.promptCancel.addEventListener('click', () => settlePrompt(null));
+  el.promptOverlay.addEventListener('click', (e) => {
+    if (e.target === el.promptOverlay) settlePrompt(null);
+  });
+  el.promptInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      settlePrompt(el.promptInput.value.trim() || null);
+    } else if (e.key === 'Escape') {
+      settlePrompt(null);
+    }
   });
 
   // A JS error anywhere in this file (a bad message shape, a null ref in a
@@ -261,6 +328,7 @@
           <span class="all-chats-title">${escapeHtml(s.title || 'New chat')}</span>
           ${s.closed ? '<span class="all-chats-badge">closed</span>' : ''}
           <span class="spacer"></span>
+          <button class="link-btn all-chats-rename" title="Rename">&#9998;</button>
           <button class="link-btn all-chats-delete" title="Delete permanently">&#128465;</button>
         </div>
       `;
@@ -268,6 +336,12 @@
         vscodeApi.postMessage({ type: 'switchSession', id: s.id });
         state.allChatsOpen = false;
         el.allChatsPanel.style.display = 'none';
+      });
+      item.querySelector('.all-chats-rename').addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const next = await textPromptDialog('Rename chat', s.title || 'New chat');
+        if (!next) return;
+        vscodeApi.postMessage({ type: 'renameSession', id: s.id, title: next });
       });
       item.querySelector('.all-chats-delete').addEventListener('click', async (e) => {
         e.stopPropagation();
@@ -277,6 +351,77 @@
       });
       el.allChatsList.appendChild(item);
     }
+  }
+
+  // ---------- settings panel (item "a new setting pane") ----------
+  el.settingsBtn.addEventListener('click', () => {
+    state.settingsOpen = !state.settingsOpen;
+    el.settingsPanel.style.display = state.settingsOpen ? 'flex' : 'none';
+    if (state.settingsOpen) {
+      if (state.searchOpen) {
+        state.searchOpen = false;
+        el.searchPanel.style.display = 'none';
+      }
+      if (state.allChatsOpen) {
+        state.allChatsOpen = false;
+        el.allChatsPanel.style.display = 'none';
+      }
+      vscodeApi.postMessage({ type: 'getSettings' });
+    }
+  });
+
+  function settingRow(label, hint, inputHtml) {
+    return `<div class="setting-row"><div class="setting-label">${escapeHtml(label)}${hint ? `<div class="setting-hint">${escapeHtml(hint)}</div>` : ''}</div><div class="setting-control">${inputHtml}</div></div>`;
+  }
+
+  function renderSettings() {
+    const s = state.settings;
+    if (!s) {
+      el.settingsBody.innerHTML = '<div class="search-empty">Loading…</div>';
+      return;
+    }
+    el.settingsBody.innerHTML = `
+      <div class="settings-section-title">This chat</div>
+      ${settingRow(
+        'Context window override',
+        'Tokens this chat may use — blank uses the global default below. A lighter/faster model leaves more memory headroom, so it can often afford a larger number here than a big model could.',
+        `<input id="set-session-numctx" type="number" min="512" step="512" placeholder="${s.numCtx}" value="${state.numCtxOverride || ''}" />`
+      )}
+      <div class="settings-section-title">Global defaults</div>
+      ${settingRow('Context window (forge.numCtx)', 'Applies to every chat without its own override.', `<input id="set-numCtx" type="number" min="512" step="512" value="${s.numCtx}" />`)}
+      ${settingRow('Temperature', '', `<input id="set-temperature" type="number" min="0" max="2" step="0.1" value="${s.temperature}" />`)}
+      ${settingRow('Keep model loaded (minutes)', '-1 = never unload between messages, 0 = Ollama default (~5 min).', `<input id="set-keepAliveMinutes" type="number" step="1" value="${s.keepAliveMinutes}" />`)}
+      ${settingRow('Require approval for file edits', '', `<input id="set-requireApprovalForWrites" type="checkbox" ${s.requireApprovalForWrites ? 'checked' : ''} />`)}
+      ${settingRow('Require approval for commands', '', `<input id="set-requireApprovalForCommands" type="checkbox" ${s.requireApprovalForCommands ? 'checked' : ''} />`)}
+      ${settingRow('Show brief status messages', 'e.g. "Reading foo.ts…" while the agent works.', `<input id="set-showStatusMessages" type="checkbox" ${s.showStatusMessages ? 'checked' : ''} />`)}
+      <div class="settings-section-title">Sub-agents</div>
+      ${settingRow(
+        'Sub-agent model',
+        'Model used for spawn_subagent tasks. Blank reuses whichever model is running the parent turn.',
+        `<select id="set-subAgentModel"><option value="">(same as parent)</option>${state.models.map((m) => `<option value="${escapeAttr(m.name)}" ${m.name === s.subAgentModel ? 'selected' : ''}>${escapeHtml(m.name)}</option>`).join('')}</select>`
+      )}
+      ${settingRow('Sub-agent max steps', 'Tool-call cap per sub-agent task.', `<input id="set-subAgentMaxIterations" type="number" min="1" step="1" value="${s.subAgentMaxIterations}" />`)}
+      ${settingRow('Max sub-agent nesting depth', 'How many levels deep a sub-agent may spawn further sub-agents.', `<input id="set-maxSubAgentDepth" type="number" min="1" max="4" step="1" value="${s.maxSubAgentDepth}" />`)}
+    `;
+
+    document.getElementById('set-session-numctx').addEventListener('change', (e) => {
+      const v = e.target.value.trim();
+      vscodeApi.postMessage({ type: 'setSessionNumCtx', numCtx: v ? parseInt(v, 10) : null });
+    });
+    for (const key of ['numCtx', 'temperature', 'keepAliveMinutes', 'subAgentMaxIterations', 'maxSubAgentDepth']) {
+      document.getElementById(`set-${key}`).addEventListener('change', (e) => {
+        const num = parseFloat(e.target.value);
+        if (Number.isFinite(num)) vscodeApi.postMessage({ type: 'updateSetting', key, value: num });
+      });
+    }
+    for (const key of ['requireApprovalForWrites', 'requireApprovalForCommands', 'showStatusMessages']) {
+      document.getElementById(`set-${key}`).addEventListener('change', (e) => {
+        vscodeApi.postMessage({ type: 'updateSetting', key, value: e.target.checked });
+      });
+    }
+    document.getElementById('set-subAgentModel').addEventListener('change', (e) => {
+      vscodeApi.postMessage({ type: 'updateSetting', key: 'subAgentModel', value: e.target.value });
+    });
   }
 
   // ---------- mode strip ----------
@@ -360,11 +505,18 @@
       const busy = !!state.busyBySession[s.id];
       tab.innerHTML = `
         ${busy ? '<span class="tab-spinner"></span>' : ''}
-        <span class="tab-title">${escapeHtml(s.title || 'New chat')}</span>
+        <span class="tab-title" title="Double-click to rename">${escapeHtml(s.title || 'New chat')}</span>
         <span class="tab-close" title="Close (still saved — reopen from All Chats)">&times;</span>
       `;
       tab.querySelector('.tab-title').addEventListener('click', () => {
         if (s.id !== state.activeSessionId) vscodeApi.postMessage({ type: 'switchSession', id: s.id });
+      });
+      // Item "CHAT RENAME option": double-click a tab title to rename it in place.
+      tab.querySelector('.tab-title').addEventListener('dblclick', async (e) => {
+        e.stopPropagation();
+        const next = await textPromptDialog('Rename chat', s.title || 'New chat');
+        if (!next) return;
+        vscodeApi.postMessage({ type: 'renameSession', id: s.id, title: next });
       });
       tab.querySelector('.tab-close').addEventListener('click', (e) => {
         e.stopPropagation();
@@ -687,6 +839,20 @@
       return wrap;
     }
 
+    if (entry.kind === 'subagent') {
+      wrap.className = 'tool-card subagent-card ' + (entry.status === 'running' ? 'running' : entry.ok ? 'ok' : 'fail');
+      const icon = entry.status === 'running' ? spinnerSvg() : entry.ok ? '&#10003;' : '&#10007;';
+      wrap.innerHTML = `
+        <div class="tool-card-head">
+          <span class="tool-icon">${icon}</span>
+          <span class="tool-name">Sub-agent${entry.depth > 1 ? ` (depth ${entry.depth})` : ''}</span>
+          <span class="tool-args">${escapeHtml(truncateMiddleText(entry.task, 100))}</span>
+        </div>
+        ${entry.status === 'running' ? '<div class="tool-summary">Working…</div>' : `<div class="tool-summary">${escapeHtml(entry.summary || '')}</div>`}
+      `;
+      return wrap;
+    }
+
     if (entry.kind === 'verify') {
       wrap.className = 'tool-card verify-card ' + (entry.status === 'running' ? 'running' : entry.ok ? 'ok' : 'fail');
       const icon = entry.status === 'running' ? spinnerSvg() : entry.ok ? '&#10003;' : '&#10007;';
@@ -782,6 +948,9 @@
     state.history = session.history;
     state.checkpoints = session.checkpoints || [];
     state.verifyCommand = session.verifyCommand || '';
+    state.numCtxOverride = session.numCtxOverride;
+    state.statusText = '';
+    renderStatusLine();
     renderModeStrip();
     renderAutoBanner();
     renderVerifyRow();
@@ -802,17 +971,35 @@
 
   function renderHwReadout() {
     const m = state.lastMetrics;
-    const loaded = state.hwStatus.loadedModels || [];
+    const hw = state.hwStatus || {};
+    const loaded = hw.loadedModels || [];
     const parts = [];
     if (m && m.tokensPerSecond) parts.push(`${m.tokensPerSecond.toFixed(1)} tok/s`);
+    if (hw.contextWindow && hw.contextWindow.maxTokens) {
+      const pct = Math.round((hw.contextWindow.usedTokens / hw.contextWindow.maxTokens) * 100);
+      parts.push(`ctx ${hw.contextWindow.usedTokens}/${hw.contextWindow.maxTokens} (${pct}%)`);
+    }
     if (loaded.length) {
       const vram = loaded.reduce((n, x) => n + (x.vramGB || x.sizeGB || 0), 0);
       parts.push(`${loaded.length} model${loaded.length === 1 ? '' : 's'} loaded (${vram.toFixed(1)}GB)`);
     }
+    if (hw.ram) parts.push(`RAM ${hw.ram.usedGB}/${hw.ram.totalGB}GB`);
+    if (hw.gpu && hw.gpu.length) {
+      const g = hw.gpu[0];
+      parts.push(`GPU ${g.utilizationPct}% (${g.usedVramGB}/${g.totalVramGB}GB)`);
+    }
     el.hwReadout.textContent = parts.join(' · ');
-    el.hwReadout.title = loaded.length
-      ? loaded.map((x) => `${x.name}: ${x.sizeGB}GB${x.vramGB !== undefined ? ` (${x.vramGB}GB VRAM)` : ''}`).join('\n')
-      : 'Click to check what Ollama currently has loaded';
+    const titleLines = [];
+    if (loaded.length) titleLines.push(...loaded.map((x) => `${x.name}: ${x.sizeGB}GB${x.vramGB !== undefined ? ` (${x.vramGB}GB VRAM)` : ''}`));
+    if (hw.gpu && hw.gpu.length) titleLines.push(...hw.gpu.map((g) => `GPU: ${g.name}`));
+    el.hwReadout.title = titleLines.length ? titleLines.join('\n') : 'Click to check what Ollama currently has loaded';
+  }
+
+  // ---------- brief status line (item "brief messages…") ----------
+  function renderStatusLine() {
+    const show = !!state.statusText && (!state.settings || state.settings.showStatusMessages !== false);
+    el.statusLine.style.display = show ? 'block' : 'none';
+    el.statusLine.textContent = state.statusText || '';
   }
 
   // ---------- message handling ----------
@@ -882,8 +1069,26 @@
       }
       case 'busy': {
         state.busyBySession[msg.sessionId] = msg.busy;
-        if (msg.sessionId === state.activeSessionId) renderBusy();
+        if (msg.sessionId === state.activeSessionId) {
+          renderBusy();
+          if (!msg.busy) {
+            state.statusText = '';
+            renderStatusLine();
+          }
+        }
         renderTabStrip();
+        break;
+      }
+      case 'statusUpdate': {
+        if (msg.sessionId !== state.activeSessionId) break;
+        state.statusText = msg.text;
+        renderStatusLine();
+        break;
+      }
+      case 'settingsData': {
+        state.settings = msg.settings;
+        renderSettings();
+        renderStatusLine();
         break;
       }
       case 'filesResult': {
@@ -990,6 +1195,10 @@
   }
   function escapeAttr(s) {
     return escapeHtml(s).replace(/"/g, '&quot;');
+  }
+  function truncateMiddleText(s, maxLen) {
+    const oneLine = String(s || '').replace(/\s+/g, ' ').trim();
+    return oneLine.length > maxLen ? oneLine.slice(0, maxLen) + '…' : oneLine;
   }
   function shortenPath(p) {
     if (p.length <= 46) return p;

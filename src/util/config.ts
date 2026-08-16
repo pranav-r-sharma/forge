@@ -21,6 +21,14 @@ export interface ForgeConfig {
   keepAliveMinutes: number;
   /** Per-mode model overrides (Agent/Ask/Plan/Auto/Outcome) — see resolveModelForMode(). An empty/missing entry for a mode falls back to `chatModel`. */
   modelRouting: Partial<Record<ForgeMode, string>>;
+  /** Model tag used for spawn_subagent turns (item "sub agents"). Empty = reuse whatever model the spawning turn itself is using. */
+  subAgentModel: string;
+  /** Tool-call step cap for a single spawn_subagent turn — deliberately its own, tighter budget than forge.autoModeMaxIterations so a sub-task can't silently run forever. */
+  subAgentMaxIterations: number;
+  /** Maximum spawn_subagent nesting depth (a sub-agent spawning a sub-agent, etc.) — clamped server-side to a small hard ceiling regardless of this value (see agentLoop.ts's HARD_MAX_SUBAGENT_DEPTH). */
+  maxSubAgentDepth: number;
+  /** Whether to show the brief "Reading foo.ts…" / "Thinking with <model>…" activity line in the composer footer while the agent works. */
+  showStatusMessages: boolean;
 }
 
 export function getConfig(): ForgeConfig {
@@ -53,6 +61,10 @@ export function getConfig(): ForgeConfig {
     // 0 = server default (~5 min idle unload).
     keepAliveMinutes: cfg.get<number>('keepAliveMinutes') ?? -1,
     modelRouting: cfg.get<Partial<Record<ForgeMode, string>>>('modelRouting') || {},
+    subAgentModel: cfg.get<string>('subAgentModel') || '',
+    subAgentMaxIterations: cfg.get<number>('subAgentMaxIterations') ?? 40,
+    maxSubAgentDepth: cfg.get<number>('maxSubAgentDepth') ?? 2,
+    showStatusMessages: cfg.get<boolean>('showStatusMessages') ?? true,
   };
 }
 
@@ -62,6 +74,33 @@ export async function setChatModel(model: string) {
 
 export async function setCompletionModel(model: string) {
   await vscode.workspace.getConfiguration('forge').update('completionModel', model, vscode.ConfigurationTarget.Global);
+}
+
+/**
+ * Keys the in-webview Settings panel (item "a new setting pane") is allowed
+ * to write directly via a generic {key, value} message, instead of needing a
+ * bespoke message type + handler per setting. Deliberately an allowlist —
+ * anything not in this set is rejected by setForgeSetting() so a webview
+ * message can never blind-write an arbitrary VS Code setting.
+ */
+export const SETTINGS_PANEL_KEYS = [
+  'numCtx',
+  'temperature',
+  'requireApprovalForWrites',
+  'requireApprovalForCommands',
+  'keepAliveMinutes',
+  'subAgentModel',
+  'subAgentMaxIterations',
+  'maxSubAgentDepth',
+  'showStatusMessages',
+] as const;
+export type SettingsPanelKey = (typeof SETTINGS_PANEL_KEYS)[number];
+
+/** Generic setting writer backing the Settings panel — see SETTINGS_PANEL_KEYS. */
+export async function setForgeSetting(key: string, value: unknown): Promise<boolean> {
+  if (!(SETTINGS_PANEL_KEYS as readonly string[]).includes(key)) return false;
+  await vscode.workspace.getConfiguration('forge').update(key, value, vscode.ConfigurationTarget.Global);
+  return true;
 }
 
 /** Sets (or clears, with model === '') the model routed to one specific mode — see forge.modelRouting and resolveModelForMode(). */

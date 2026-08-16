@@ -2,7 +2,7 @@
   "name": "forge-local-agent",
   "displayName": "Forge — Local AI Coding Agent",
   "description": "A Cursor-style agentic coding assistant that runs entirely on local Ollama models. Agent/Ask/Plan modes, multitask chat tabs, .forge/rules + .forge/skills + .forge/hooks, repo-stored chat history, multi-file agent edits, inline Cmd+K editing, and Tab autocomplete — no cloud, no API keys.",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "publisher": "local-forge",
   "private": true,
   "engines": {
@@ -170,6 +170,26 @@
           "type": "number",
           "default": 200,
           "description": "Skip indexing/reading files larger than this size (KB) to keep context tight."
+        },
+        "forge.subAgentModel": {
+          "type": "string",
+          "default": "",
+          "description": "Ollama model tag used for spawn_subagent turns (the 'ability to spawn sub agents' feature). Leave empty to reuse whichever model the spawning turn itself is using — a good default is a smaller/faster model here, since sub-agents run tightly-scoped tasks."
+        },
+        "forge.subAgentMaxIterations": {
+          "type": "number",
+          "default": 40,
+          "description": "Tool-call step cap for a single spawn_subagent turn — its own, tighter budget than forge.autoModeMaxIterations so a delegated sub-task can't silently run forever."
+        },
+        "forge.maxSubAgentDepth": {
+          "type": "number",
+          "default": 2,
+          "description": "Maximum spawn_subagent nesting depth (a sub-agent spawning its own sub-agent, etc.). Clamped to a small hard ceiling regardless of this value as a safety backstop."
+        },
+        "forge.showStatusMessages": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show a brief, live activity line (e.g. \"Reading src/foo.ts…\", \"Thinking with qwen2.5-coder:14b…\") in the composer footer while the agent is working."
         }
       }
     }

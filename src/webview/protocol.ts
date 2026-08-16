@@ -14,7 +14,8 @@ export type UiTranscriptEntry =
   | { kind: 'plan'; id: string; text: string; executed?: boolean }
   | { kind: 'error'; id: string; text: string }
   | { kind: 'system'; id: string; text: string }
-  | { kind: 'verify'; id: string; command: string; status: 'running' | 'done'; ok?: boolean; summary?: string };
+  | { kind: 'verify'; id: string; command: string; status: 'running' | 'done'; ok?: boolean; summary?: string }
+  | { kind: 'subagent'; id: string; task: string; status: 'running' | 'done'; ok?: boolean; summary?: string; depth: number };
 
 export interface ModelInfo {
   name: string;
@@ -50,6 +51,21 @@ export interface SessionState {
   checkpoints: CheckpointInfo[];
   /** Optional "definition of done" command — see modes.ts's modeSupportsVerifyCommand. */
   verifyCommand?: string;
+  /** Per-chat context-window override — see ChatSession.numCtxOverride. undefined = use the global forge.numCtx default. */
+  numCtxOverride?: number;
+}
+
+/** Snapshot of the settings the in-webview Settings panel can read/write (item "a new setting pane") — see util/config.ts's SETTINGS_PANEL_KEYS. */
+export interface SettingsSnapshot {
+  numCtx: number;
+  temperature: number;
+  requireApprovalForWrites: boolean;
+  requireApprovalForCommands: boolean;
+  keepAliveMinutes: number;
+  subAgentModel: string;
+  subAgentMaxIterations: number;
+  maxSubAgentDepth: number;
+  showStatusMessages: boolean;
 }
 
 export interface SearchResultItem {
@@ -63,6 +79,12 @@ export interface SearchResultItem {
 export interface HwStatus {
   lastCallMetrics?: OllamaCallMetrics;
   loadedModels: { name: string; sizeGB: number; vramGB?: number; expiresAt?: string }[];
+  /** Most recent call's context-window usage vs. the active chat's configured ceiling (session override or forge.numCtx) — see item "context usage metrics". Undefined until at least one call has completed. */
+  contextWindow?: { usedTokens: number; maxTokens: number };
+  /** System RAM, best-effort via os.totalmem()/os.freemem() — always available (no external dependency). */
+  ram?: { usedGB: number; totalGB: number };
+  /** GPU utilization/VRAM, best-effort via `nvidia-smi` — absent entirely on machines without an NVIDIA GPU or without nvidia-smi on PATH (e.g. Apple Silicon, AMD), which is the common case for a local-Ollama setup and not an error. */
+  gpu?: { name: string; usedVramGB: number; totalVramGB: number; utilizationPct: number }[];
 }
 
 export interface InitState {
@@ -99,7 +121,9 @@ export type ExtensionToWebviewMessage =
   | { type: 'metricsUpdate'; sessionId: string; metrics: OllamaCallMetrics }
   | { type: 'checkpointRestored'; sessionId: string; message: string; ok: boolean }
   | { type: 'searchResults'; query: string; results: SearchResultItem[] }
-  | { type: 'allChatsList'; sessions: SessionSummary[] };
+  | { type: 'allChatsList'; sessions: SessionSummary[] }
+  | { type: 'statusUpdate'; sessionId: string; text: string }
+  | { type: 'settingsData'; settings: SettingsSnapshot };
 
 export type WebviewToExtensionMessage =
   | { type: 'ready' }
@@ -126,4 +150,8 @@ export type WebviewToExtensionMessage =
   | { type: 'refreshHwStatus' }
   | { type: 'setVerifyCommand'; command: string }
   | { type: 'deleteSession'; id: string }
-  | { type: 'listAllChats' };
+  | { type: 'listAllChats' }
+  | { type: 'renameSession'; id: string; title: string }
+  | { type: 'getSettings' }
+  | { type: 'updateSetting'; key: string; value: any }
+  | { type: 'setSessionNumCtx'; numCtx: number | null };
