@@ -24,6 +24,9 @@ export interface AgentDeps {
   codebaseSearch: (query: string, k: number) => Promise<{ path: string; snippet: string; score: number }[]>;
   rememberFact: (fact: string) => Promise<{ added: boolean; reason?: string }>;
   chatMemorySearch: (query: string, k: number) => Promise<{ sessionId: string; sessionTitle: string; snippet: string; score: number }[]>;
+  /** Undefined when forge.webSearch.enabled is false — see ToolExecContext.webSearch's doc comment in agent/types.ts. */
+  webSearch?: (query: string) => Promise<{ results: import('../websearch/types').WebSearchResult[]; providerUsed?: string; warnings: string[] }>;
+  webFetch?: (url: string, offset?: number, length?: number) => Promise<import('../websearch/types').WebFetchResult>;
   workspaceRoot: vscode.Uri;
   workspaceName: string;
 }
@@ -111,6 +114,10 @@ function describeToolCall(tool: string, args: Record<string, any>): string {
       return `Searching past chats for "${args?.query ?? ''}"…`;
     case 'spawn_subagent':
       return `Delegating to a sub-agent: ${truncateOneLine(String(args?.task ?? ''), 80)}`;
+    case 'web_search':
+      return `Searching the web for "${truncateOneLine(String(args?.query ?? ''), 70)}"…`;
+    case 'web_fetch':
+      return `Fetching ${truncateOneLine(String(args?.url ?? ''), 80)}…`;
     default:
       return `Calling ${tool}…`;
   }
@@ -185,6 +192,8 @@ export async function runAgentTurn(
     codebaseSearch: deps.codebaseSearch,
     rememberFact: deps.rememberFact,
     chatMemorySearch: deps.chatMemorySearch,
+    webSearch: deps.webSearch,
+    webFetch: deps.webFetch,
     spawnSubAgent: async (task, contextHint) => {
       const configuredMaxDepth = Math.min(Math.max(1, cfg.maxSubAgentDepth), HARD_MAX_SUBAGENT_DEPTH);
       if (subAgentDepth >= configuredMaxDepth) {

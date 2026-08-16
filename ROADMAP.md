@@ -12,14 +12,16 @@ Everything here is catalogued but not built. Ordered roughly by how much day-to-
 
 **Shipped in 0.7.0**: fixed Outcome mode's incomplete autonomy (it was silently still requiring approvals — see `CHANGELOG.md`), sub-agents (`spawn_subagent`, depth-capped, reports back to the parent), expanded HW metrics (context-window usage, RAM, best-effort GPU via `nvidia-smi`), a per-chat context-window override, an in-webview Settings panel, chat rename, and brief agent-activity status messages. See `CHANGELOG.md` for the full entry.
 
+**Shipped in 0.8.0**: `web_search` + `web_fetch` (opt-in, `forge.webSearch.enabled`, off by default — this is the one Forge feature that reaches the open internet). Five providers (Tavily/Brave/Google/SearXNG/DuckDuckGo, with `auto` fallback across whichever are configured), API keys in `vscode.SecretStorage` not `settings.json`, robots.txt-respecting fetch with readable-text extraction and character-offset paging, retry/cache/dedupe/domain-blocking. This is what used to be listed below as "`@web` — a `web_search` tool"; it's now built, not catalogued. See `CHANGELOG.md` for the full entry.
+
 ## 1. Everything else, grouped
 
 **Context & indexing**
 - `@`-mention a specific symbol/function, not just a whole file/folder (needs a lightweight per-language symbol index — VS Code's own `DocumentSymbolProvider` API can supply this for free for any language with a symbol provider installed).
 - Auto-index on workspace open + incremental re-index on save, instead of the manual **Forge: Index Workspace** command.
 - `.forgeignore` (mirrors `.gitignore` syntax) to control what the indexer and file tools ever see, beyond the current fixed ignore list.
-- `@docs` — point Forge at a doc site URL, fetch + chunk + embed it alongside the codebase index.
-- `@web` — a `web_search` tool, useful for "what's the current API for X library" style questions; needs a local-friendly search backend (e.g. a user-supplied SearX instance or API key) since there's no built-in web index to call.
+- `@docs` — point Forge at a doc site URL, fetch + chunk + embed it alongside the codebase index (`web_fetch`, shipped in 0.8.0, is the fetch-a-single-page primitive this would build on; this item is specifically the indexing/chunking layer on top, still not built).
+- ~~`@web`~~ — shipped in 0.8.0 as `web_search` + `web_fetch` (opt-in, off by default — see README → "Web search"). Possible follow-up: an explicit `@web` chat mention (today the model calls the tool itself when it decides to, there's no manual "attach a live search result to this message" UI action).
 - Chat search's per-session substring scan is now cached (0.5.0), but it's still a linear scan across messages within a session and across all sessions' summaries — a real inverted index would help if the number of saved chats grows very large.
 
 **Editing & review**

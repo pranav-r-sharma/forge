@@ -66,6 +66,13 @@ export interface SettingsSnapshot {
   subAgentMaxIterations: number;
   maxSubAgentDepth: number;
   showStatusMessages: boolean;
+  webSearchEnabled: boolean;
+  webSearchProvider: string;
+  webSearchMaxResults: number;
+  webSearchRespectRobotsTxt: boolean;
+  webSearchSearxngUrl: string;
+  /** Every known provider id + display name + whether it currently has usable credentials (a key stored in SecretStorage, or — for SearXNG — a configured instance URL). DuckDuckGo is always "configured" since it needs no credentials. Never includes the actual secret values. */
+  webSearchProviders: { id: string; displayName: string; requiresApiKey: boolean; configured: boolean }[];
 }
 
 export interface SearchResultItem {
@@ -154,4 +161,6 @@ export type WebviewToExtensionMessage =
   | { type: 'renameSession'; id: string; title: string }
   | { type: 'getSettings' }
   | { type: 'updateSetting'; key: string; value: any }
-  | { type: 'setSessionNumCtx'; numCtx: number | null };
+  | { type: 'setSessionNumCtx'; numCtx: number | null }
+  | { type: 'setWebSearchApiKey' }
+  | { type: 'clearWebSearchApiKey'; providerId: string };

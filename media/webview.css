@@ -946,3 +946,36 @@ body {
 .subagent-card .tool-name::before {
   content: '\21B3 ';
 }
+
+/* ---------- web search provider status (Settings panel) ---------- */
+.websearch-providers {
+  margin-top: 8px;
+  border-top: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.15));
+  padding-top: 4px;
+}
+.wsp-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 0;
+  font-size: 12px;
+}
+.wsp-name {
+  min-width: 0;
+}
+.wsp-status {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  white-space: nowrap;
+}
+.wsp-configured {
+  background: var(--vscode-gitDecoration-addedResourceForeground, #3fb950);
+  color: #04260f;
+  opacity: 0.85;
+}
+.wsp-missing {
+  background: var(--vscode-badge-background, rgba(128, 128, 128, 0.3));
+  color: var(--vscode-badge-foreground, inherit);
+  opacity: 0.75;
+}

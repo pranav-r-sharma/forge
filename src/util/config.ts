@@ -29,6 +29,24 @@ export interface ForgeConfig {
   maxSubAgentDepth: number;
   /** Whether to show the brief "Reading foo.ts…" / "Thinking with <model>…" activity line in the composer footer while the agent works. */
   showStatusMessages: boolean;
+
+  // ---------- web search (item "a terrific web search tool") ----------
+  // Off by default deliberately — this is the one Forge feature that
+  // inherently sends data outside your machine (a query has to reach a
+  // search provider, fetched pages come from third-party servers). See
+  // websearch/types.ts's doc comment.
+  webSearchEnabled: boolean;
+  /** 'auto' (try configured providers in priority order, falling back to the no-key DuckDuckGo scrape) or a specific provider id. */
+  webSearchProvider: string;
+  webSearchMaxResults: number;
+  webSearchTimeoutMs: number;
+  webSearchCacheTtlMinutes: number;
+  webSearchBlockedDomains: string[];
+  webSearchRespectRobotsTxt: boolean;
+  /** Approximate character cap on a single fetched page's raw body before extraction — see WebFetchServiceConfig.maxFetchChars. */
+  webSearchMaxFetchChars: number;
+  /** Base URL of a self-hosted SearXNG instance (not a secret — see keyStore.ts for why API keys are handled differently). */
+  webSearchSearxngUrl: string;
 }
 
 export function getConfig(): ForgeConfig {
@@ -65,6 +83,15 @@ export function getConfig(): ForgeConfig {
     subAgentMaxIterations: cfg.get<number>('subAgentMaxIterations') ?? 40,
     maxSubAgentDepth: cfg.get<number>('maxSubAgentDepth') ?? 2,
     showStatusMessages: cfg.get<boolean>('showStatusMessages') ?? true,
+    webSearchEnabled: cfg.get<boolean>('webSearch.enabled') ?? false,
+    webSearchProvider: cfg.get<string>('webSearch.provider') || 'auto',
+    webSearchMaxResults: cfg.get<number>('webSearch.maxResults') ?? 8,
+    webSearchTimeoutMs: cfg.get<number>('webSearch.timeoutMs') ?? 15000,
+    webSearchCacheTtlMinutes: cfg.get<number>('webSearch.cacheTtlMinutes') ?? 10,
+    webSearchBlockedDomains: cfg.get<string[]>('webSearch.blockedDomains') || [],
+    webSearchRespectRobotsTxt: cfg.get<boolean>('webSearch.respectRobotsTxt') ?? true,
+    webSearchMaxFetchChars: cfg.get<number>('webSearch.maxFetchChars') ?? 500_000,
+    webSearchSearxngUrl: cfg.get<string>('webSearch.searxngUrl') || '',
   };
 }
 
@@ -93,6 +120,11 @@ export const SETTINGS_PANEL_KEYS = [
   'subAgentMaxIterations',
   'maxSubAgentDepth',
   'showStatusMessages',
+  'webSearch.enabled',
+  'webSearch.provider',
+  'webSearch.maxResults',
+  'webSearch.respectRobotsTxt',
+  'webSearch.searxngUrl',
 ] as const;
 export type SettingsPanelKey = (typeof SETTINGS_PANEL_KEYS)[number];
 

@@ -80,6 +80,13 @@ declare module 'vscode' {
     [key: string]: any;
   };
 
+  export type SecretStorage = {
+    get(key: string): Thenable<string | undefined>;
+    store(key: string, value: string): Thenable<void>;
+    delete(key: string): Thenable<void>;
+    onDidChange: Event<{ key: string }>;
+  };
+
   export type ExtensionContext = {
     subscriptions: Disposable[];
     extensionUri: Uri;
@@ -88,6 +95,7 @@ declare module 'vscode' {
     globalStorageUri: Uri;
     workspaceState: Memento;
     globalState: Memento;
+    secrets: SecretStorage;
     [key: string]: any;
   };
 
@@ -154,7 +162,26 @@ declare var setTimeout: any;
 declare var clearTimeout: any;
 declare var setInterval: any;
 declare var clearInterval: any;
-declare var URL: any;
+// Real declarations (not `declare var URL: any`) since websearch/*.ts uses
+// `new URL(...)` both as a value (constructor) and as a type annotation
+// (`let u: URL`) — a `var`-only declaration only covers the value position.
+declare class URLSearchParams {
+  constructor(init?: any);
+  get(name: string): string | null;
+  set(name: string, value: string): void;
+  toString(): string;
+}
+declare class URL {
+  constructor(input: string, base?: string | URL);
+  href: string;
+  origin: string;
+  protocol: string;
+  hostname: string;
+  pathname: string;
+  search: string;
+  searchParams: URLSearchParams;
+  toString(): string;
+}
 declare var TextEncoder: any;
 declare var TextDecoder: any;
 declare var global: any;

@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { OllamaCallMetrics } from '../ollama/types';
+import { WebFetchResult, WebSearchResult } from '../websearch/types';
 
 /** Names of every tool the agent may invoke. Kept as a union so callers get exhaustiveness checks. */
 export type ToolName =
@@ -12,7 +13,9 @@ export type ToolName =
   | 'get_problems'
   | 'remember'
   | 'search_chat_history'
-  | 'spawn_subagent';
+  | 'spawn_subagent'
+  | 'web_search'
+  | 'web_fetch';
 
 export interface ToolCall {
   tool: ToolName | string;
@@ -62,6 +65,16 @@ export interface ToolExecContext {
    * so a sub-agent can't spawn an unbounded tree of sub-agents.
    */
   spawnSubAgent: (task: string, contextHint?: string) => Promise<{ ok: boolean; summary: string }>;
+  /**
+   * Web search (item "a terrific web search tool"). Undefined when
+   * forge.webSearch.enabled is false — the web_search/web_fetch tool
+   * wrappers check for this and return a clear "not enabled" message rather
+   * than the model getting a confusing crash, since this is the one
+   * category of tool that's off by default (see websearch/types.ts's doc
+   * comment for why).
+   */
+  webSearch?: (query: string) => Promise<{ results: WebSearchResult[]; providerUsed?: string; warnings: string[] }>;
+  webFetch?: (url: string, offset?: number, length?: number) => Promise<WebFetchResult>;
   config: {
     autoApproveCommands: string[];
     requireApprovalForWrites: boolean;

@@ -2,6 +2,8 @@
 
 Forge is a VS Code extension that gives you a Cursor-style AI coding experience — modes, multitask chat, project rules/skills/hooks, multi-file agent edits, inline Cmd+K editing, and Tab autocomplete — running **entirely on your Mac** against a local [Ollama](https://ollama.com) model. No API keys, no cloud calls, no telemetry. Everything (code, prompts, file contents, chat history) stays on your machine, in your repo.
 
+**One deliberate exception, and it's off by default:** web search (0.8.0). Nothing else in Forge can honor the "stays on your machine" promise once you ask it to search the live internet — a query has to leave your machine, and fetched pages come from third-party servers. `forge.webSearch.enabled` defaults to `false` specifically because of that; turn it on only when you want it, see "Web search" below for exactly what that does and doesn't send where.
+
 See `CURSOR_PARITY.md` for a full feature-by-feature map against Cursor, and `ROADMAP.md` for what's planned next.
 
 ## What you get
@@ -23,6 +25,7 @@ See `CURSOR_PARITY.md` for a full feature-by-feature map against Cursor, and `RO
 - **@codebase search** — semantic search over your workspace if you've pulled an embedding model (`nomic-embed-text`), with an automatic keyword-search fallback if you haven't.
 - **Memory** — a curated durable-facts file (`.forge/memory.md`) injected into every prompt, plus semantic search over every past chat (`search_chat_history`) so a long-running project's history is retrievable on demand instead of having to fit in one prompt. See "Memory" below.
 - **Model picker + per-mode routing** — auto-detects installed Ollama models and recommends a good default (qwen2.5-coder, deepseek-coder, etc.); switch anytime from the status bar, and optionally route different modes to different models (`forge.modelRouting` / **Forge: Set Model for Mode**) since a reasoning model for Plan and a strong coder for Agent are genuinely different jobs.
+- **Web search + fetch** (opt-in, off by default) — `web_search` queries a real search backend (Tavily, Brave, Google Programmable Search, a self-hosted SearXNG instance, or a no-key DuckDuckGo scrape fallback) and `web_fetch` pulls a specific page's readable text, robots.txt-respecting, paged by character offset for long articles. The one Forge feature that reaches the open internet — see "Web search" below.
 
 Zero runtime npm dependencies — the whole extension is hand-written TypeScript talking to Ollama's HTTP API with Node's built-in `fetch`.
 
@@ -54,7 +57,7 @@ Prefer to do it by hand, or the script hits an issue?
 npm install
 npm run compile
 npx @vscode/vsce package --no-dependencies --allow-missing-repository
-code --install-extension forge-local-agent-0.7.0.vsix
+code --install-extension forge-local-agent-0.8.0.vsix
 ```
 
 Or skip the CLI entirely: in VS Code, open the Extensions view → "…" menu (top right) → **Install from VSIX...** → pick the `.vsix` file that `npm run package` produced.
@@ -158,6 +161,34 @@ Double-click a chat's tab title, or click the ✎ icon next to a chat in the **A
 
 While the agent is working, a short line above the message box shows what it's doing right now — "Thinking with qwen2.5-coder:14b…", "Reading src/foo.ts…", "Running `npm test`…", "Delegating to a sub-agent: …" — so a long autonomous run (especially Auto/Outcome mode) doesn't look like it's just silently spinning. Toggle it off with `forge.showStatusMessages` or from the Settings panel if you'd rather only see the full tool-call trace.
 
+### Web search — `web_search` + `web_fetch` (opt-in, new in 0.8.0)
+
+Everything else in Forge works entirely offline against your local Ollama model. Web search is the one deliberate exception, because it has to be: answering "what's the current API for library X" or "what does this error mean" sometimes needs information that isn't in the model's training data or your codebase, and getting it means a query leaving your machine and pages coming back from third-party servers. Rather than quietly compromise the "no cloud" claim the rest of this README makes, it's **off by default** (`forge.webSearch.enabled`) and every place that setting is described says exactly what turning it on means.
+
+**Turning it on**: flip `forge.webSearch.enabled` in Settings (or the ⚙ Settings panel's new "Web search" section) — no restart needed. With it on, the agent gets two new tools, in every mode including Ask (both are read-only — no side effects on your code):
+
+- **`web_search`** — a natural-language query, gets back titles/URLs/snippets from a real search backend.
+- **`web_fetch`** — a specific URL (typically one from a `web_search` result), gets back that page's extracted readable text — scripts/styles/nav/header/footer stripped, not a raw HTML dump. Long pages are paged by character offset (same idea as `read_file`'s line ranges) so one page can't blow the whole context window; the tool result tells the model how to keep reading if there's more.
+
+**Providers**: `forge.webSearch.provider` picks the backend, default `auto`:
+
+| Provider | Needs | Notes |
+|---|---|---|
+| `auto` (default) | — | Tries, in order, whichever of the below are actually configured: Tavily → Brave → Google → SearXNG → DuckDuckGo. Falls through to the next on failure. DuckDuckGo needs no setup, so `auto` always has something to fall back to even with zero configuration. |
+| `tavily` | API key | Purpose-built for LLM/agent consumption — results come pre-cleaned. Good default choice if you're setting up exactly one key. |
+| `brave` | API key | Brave Search API. |
+| `google` | API key **and** a Search Engine ID (`cx`) | Google Programmable Search Engine — most setup (create one at [programmablesearchengine.google.com](https://programmablesearchengine.google.com), configure it to search the whole web), free tier 100 queries/day. |
+| `searxng` | An instance URL (`forge.webSearch.searxngUrl`) | Self-hosted, no third-party API key at all if you run your own instance — closest fit to Forge's local-first ethos. The instance needs `json` enabled under its `search:formats` config (most public instances disable this; use one you control). |
+| `duckduckgo` | Nothing | Always available, zero setup, used automatically as the last resort in `auto`. Scrapes DuckDuckGo's no-JS HTML results page rather than calling a real API — there is no public, documented DuckDuckGo search API, so this is inherently more fragile than the others (breaks if DuckDuckGo changes that page's markup). Fine for occasional use; configure a real provider above for anything more than that. |
+
+**API keys are stored in `vscode.SecretStorage`** (your OS keychain), not in `settings.json` — the one deliberate exception to "everything is a plain `forge.*` setting" in this extension, because credentials shouldn't sit in a plain-text file that might get synced or committed. Set them via **Forge: Set Web Search API Key** (Command Palette) or the Settings panel's "Web search" section, which shows each provider's configured/not-configured status without ever displaying the key itself.
+
+**robots.txt** is respected by default (`forge.webSearch.respectRobotsTxt`, default `true`) — `web_fetch` checks the target site's `robots.txt` before fetching and refuses a disallowed path with an explanation, the same courtesy any well-behaved crawler extends. A missing or unreachable `robots.txt` fails open (allowed), per the spec's own default — a network hiccup fetching `robots.txt` should never block a legitimate fetch.
+
+**Other settings** (`forge.webSearch.*`): `maxResults` (default 8), `timeoutMs` (default 15000), `cacheTtlMinutes` (default 10 — repeated identical queries/pages within this window don't re-hit the network or burn paid-API quota), `blockedDomains` (default none — hostnames to always filter out of results), `maxFetchChars` (default 500000 — caps how much of a page's raw body gets read).
+
+**Known limitations**: the HTML→text extraction (`web_fetch`) is a hand-written regex/string-scan pipeline, not a real DOM-based parser (Forge ships zero runtime npm dependencies — see below — so it can't reach for cheerio/jsdom/@mozilla/readability) — it handles normal articles/docs pages well and will do worse than a real readability library on adversarial or unusual markup. PDFs and other binary content types are honestly rejected with an explanation rather than mis-extracted as garbage text — no PDF-parsing library is bundled, for the same dependency-free reason. The DuckDuckGo fallback specifically is an unofficial HTML scrape, not an API, and is the most likely piece to break first if its markup changes.
+
 ### Project rules — `.forge/rules/`
 
 Run **Forge: New Rule** (Command Palette) to scaffold `.forge/rules/<name>.md`:
@@ -229,17 +260,32 @@ All under `Settings → Extensions → Forge` (or search `forge.` in Settings):
 | `forge.subAgentMaxIterations` | `40` | Tool-call step cap per sub-agent task |
 | `forge.maxSubAgentDepth` | `2` | Max sub-agent nesting depth (hard-ceilinged at 4 regardless) |
 | `forge.showStatusMessages` | `true` | Show the brief "what's it doing right now" line while the agent works |
+| `forge.webSearch.enabled` | `false` | Turns on the `web_search`/`web_fetch` tools — the one setting that lets Forge reach the open internet, see "Web search" above |
+| `forge.webSearch.provider` | `auto` | Which backend to use: `auto`, `tavily`, `brave`, `google`, `searxng`, or `duckduckgo` |
+| `forge.webSearch.maxResults` | `8` | Results requested per `web_search` call |
+| `forge.webSearch.timeoutMs` | `15000` | Per-request timeout for search/fetch calls |
+| `forge.webSearch.cacheTtlMinutes` | `10` | How long identical queries/pages are served from cache instead of hitting the network again |
+| `forge.webSearch.blockedDomains` | *(none)* | Hostnames always filtered out of search results |
+| `forge.webSearch.respectRobotsTxt` | `true` | Whether `web_fetch` checks and honors the target site's `robots.txt` |
+| `forge.webSearch.maxFetchChars` | `500000` | Cap on how much of a fetched page's raw body is read before extraction |
+| `forge.webSearch.searxngUrl` | *(none)* | Your SearXNG instance URL, only used when `provider` is `searxng` or as part of the `auto` chain |
 
-Most of the settings above (context window, temperature, keep-alive, approval toggles, status messages, sub-agent model/budget/depth) are also editable from the in-chat **Settings panel** (⚙ in the header) — see above.
+API keys for `tavily`/`brave`/`google` are NOT in this table — they're stored in `vscode.SecretStorage`, set via **Forge: Set Web Search API Key** or the Settings panel, not `settings.json`. See "Web search" above.
+
+Most of the settings above (context window, temperature, keep-alive, approval toggles, status messages, sub-agent model/budget/depth, and the core web-search toggle/provider/max-results/robots.txt/SearXNG-URL settings) are also editable from the in-chat **Settings panel** (⚙ in the header) — see above.
 
 ## How it works, briefly
 
-Rather than relying on any one model's native function-calling format (inconsistent across local models), Forge defines a small text contract: the model replies with a single fenced ` ```forge_action ` JSON block to call a tool (`read_file`, `list_dir`, `search_code`, `search_codebase`, `write_file`, `run_command`, `get_problems`), or plain text when it's done. The extension executes the tool, feeds the result back, and repeats — a classic ReAct loop — up to `forge.maxAgentIterations` steps. The parser is written defensively (it'll recover a tool call even if a smaller model forgets the fence) since local models vary a lot in instruction-following.
+Rather than relying on any one model's native function-calling format (inconsistent across local models), Forge defines a small text contract: the model replies with a single fenced ` ```forge_action ` JSON block to call a tool (`read_file`, `list_dir`, `search_code`, `search_codebase`, `write_file`, `run_command`, `get_problems`, `remember`, `search_chat_history`, `spawn_subagent`, and — when enabled — `web_search`/`web_fetch`), or plain text when it's done. The extension executes the tool, feeds the result back, and repeats — a classic ReAct loop — up to `forge.maxAgentIterations` steps. The parser is written defensively (it'll recover a tool call even if a smaller model forgets the fence) since local models vary a lot in instruction-following.
 
 File edits go through an in-memory "pending edit" overlay: the agent's own view of a file it just edited is immediately the new version (so it can make several dependent edits in one turn), but nothing touches your disk until you accept it. Tab autocomplete uses Ollama's `/api/generate` with `prompt`/`suffix` (fill-in-middle) and lets Ollama apply each model's own FIM template, so it works across qwen2.5-coder, deepseek-coder, starcoder2, codegemma, codellama, etc. without hand-maintaining per-model special tokens.
 
-## Known limitations (0.7.0)
+## Known limitations (0.8.0)
 
+- **Web search is the one feature that sends data outside your machine, and it's off by default for exactly that reason.** With `forge.webSearch.enabled` on: your query text goes to whichever provider is configured (or DuckDuckGo's scrape endpoint by default), and `web_fetch` downloads pages from whatever third-party server hosts them. Nothing about the rest of Forge changes — this is scoped to the two web tools and only runs when the model actually calls them.
+- **The HTML→text extraction backing `web_fetch` is a hand-written regex pipeline, not a real DOM parser** (kept dependency-free on purpose — see "Web search" above) — it does well on normal articles/docs pages and worse on adversarial/unusual markup than a library like `@mozilla/readability` would.
+- **The DuckDuckGo fallback provider is an unofficial HTML scrape**, not a documented API — there is no free, public, officially-supported DuckDuckGo search API, so this is the most fragile of the five providers and the first thing likely to need a fix if DuckDuckGo changes their results-page markup.
+- **`web_fetch` cannot read PDFs or other binary files** — it honestly reports "this is a PDF, not supported" rather than attempting extraction and returning garbage, since no PDF-parsing library is bundled (same zero-dependency reasoning as the HTML extractor above).
 - **The 0.6.0 confirm-dialog fix (window.confirm → an in-DOM modal) is a best-effort fix for a real, documented VS Code webview limitation, but this sandbox cannot run the actual extension host to confirm it fixes what you saw.** If Auto mode (or anything else that used to call `window.confirm`) still doesn't work after updating, it's a different bug — please retest and report the exact symptom, an error toast if one appears, or what shows up in **Developer: Open Webview Developer Tools** (Command Palette → search for it) so it's diagnosable.
 - **Sub-agents share the same workspace and `PendingEditManager` as their parent — there's no worktree-style isolation.** In practice this hasn't caused a conflict because a model only calls one tool (including `spawn_subagent`) at a time, so sub-agent turns run one after another, not truly concurrently — but if that ever changes, two sub-agents editing the same file could clobber each other the same way two multitask tabs already can (see below).
 - **GPU utilization is NVIDIA-only, via `nvidia-smi`.** No metric is shown at all on Apple Silicon, AMD GPUs, or any machine without `nvidia-smi` on `PATH` — this is silent-by-design (see HW utilization above), not a bug, but it does mean the GPU readout won't appear for a lot of local-Ollama setups.
@@ -255,7 +301,7 @@ File edits go through an in-memory "pending edit" overlay: the agent's own view 
 - **`.forge/memory.md` is intentionally not itself size-limited beyond what's injected per-turn** (`renderForPrompt()` caps at ~4000 chars, keeping the most recent facts) — if you or the agent let it grow very large, older facts silently stop being injected rather than erroring; open it directly with **Forge: Open Memory File** to prune it by hand.
 - **Outcome mode without a definition-of-done command is only as honest as the model's own self-check.** With a command configured, "done" is a real exit code Forge checks itself; without one, it falls back to the same hallucination-claim mitigation as every other mode — set a check command whenever the goal can be expressed as one, it's a meaningfully stronger guarantee.
 - **The definition-of-done command runs with the same permissions as everything else Forge does** — it's not sandboxed, and it runs automatically after every attempt in Agent/Auto/Outcome mode, so don't point it at something destructive or side-effecting that you wouldn't want run repeatedly and unattended.
-- See `CURSOR_PARITY.md` for the full list of what's intentionally not built yet (MCP servers, @-mention of code symbols/docs/web, auto-indexing, etc.).
+- See `CURSOR_PARITY.md` for the full list of what's intentionally not built yet (MCP servers, @-mention of code symbols/docs, auto-indexing, etc.) — @Web itself shipped in 0.8.0 as the `web_search`/`web_fetch` tools above.
 
 ## Testing & release process
 

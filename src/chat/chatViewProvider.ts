@@ -9,6 +9,9 @@ import { SkillsEngine } from '../forge/skills';
 import { HookRunner } from '../forge/hooks';
 import { MemoryStore } from '../forge/memory';
 import { ChatStore, SessionSummary } from '../forge/chatStore';
+import { PROVIDERS, WebSearchService } from '../websearch/searchService';
+import { WebFetchService } from '../websearch/fetchService';
+import { WebSearchKeyStore, SECRET_BACKED_PROVIDERS } from '../websearch/keyStore';
 import { MODES } from '../agent/modes';
 import { getConfig, setChatModel, setForgeSetting } from '../util/config';
 import { genId } from '../util/ids';
@@ -47,10 +50,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     private readonly hooks: HookRunner,
     private readonly memory: MemoryStore,
     private readonly chatStore: ChatStore,
+    private readonly webSearchService: WebSearchService,
+    private readonly webFetchService: WebFetchService,
+    private readonly keyStore: WebSearchKeyStore,
     private readonly workspaceRoot: vscode.Uri,
     private readonly workspaceName: string
   ) {
-    this.services = { ollama, pendingEdits, workspaceIndex, chatMemoryIndex, rules, skills, hooks, memory, chatStore, workspaceRoot, workspaceName };
+    this.services = { ollama, pendingEdits, workspaceIndex, chatMemoryIndex, rules, skills, hooks, memory, chatStore, webSearchService, webFetchService, workspaceRoot, workspaceName };
     this.entryIndex = new WorkspaceEntryIndex(workspaceRoot);
     this.pendingEdits.onDidChange((edits) => this.post({ type: 'pendingEdits', edits }));
   }
@@ -343,12 +349,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         return;
       }
       case 'getSettings': {
-        this.post({ type: 'settingsData', settings: this.buildSettingsSnapshot() });
+        this.post({ type: 'settingsData', settings: await this.buildSettingsSnapshot() });
         return;
       }
       case 'updateSetting': {
         const applied = await setForgeSetting(msg.key, msg.value);
-        if (applied) this.post({ type: 'settingsData', settings: this.buildSettingsSnapshot() });
+        if (applied) this.post({ type: 'settingsData', settings: await this.buildSettingsSnapshot() });
         else this.post({ type: 'toast', level: 'error', text: `Unknown or disallowed setting "${msg.key}".` });
         return;
       }
@@ -363,12 +369,37 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         this.post({ type: 'sessionSwitched', session: session.toSummaryState() });
         return;
       }
+      case 'setWebSearchApiKey': {
+        // The webview can't touch vscode.SecretStorage directly, so it asks
+        // the extension host to run the real command (which shows its own
+        // provider quick-pick + password input box) and then refreshes the
+        // panel so the newly-configured provider shows up immediately.
+        await vscode.commands.executeCommand('forge.setWebSearchApiKey');
+        this.post({ type: 'settingsData', settings: await this.buildSettingsSnapshot() });
+        return;
+      }
+      case 'clearWebSearchApiKey': {
+        if ((SECRET_BACKED_PROVIDERS as readonly string[]).includes(msg.providerId)) {
+          await this.keyStore.clear(msg.providerId as any);
+          this.post({ type: 'toast', level: 'info', text: `Cleared the stored API key for ${PROVIDERS.find((p) => p.id === msg.providerId)?.displayName || msg.providerId}.` });
+        }
+        this.post({ type: 'settingsData', settings: await this.buildSettingsSnapshot() });
+        return;
+      }
     }
   }
 
-  /** Snapshot of every setting the in-webview Settings panel can read/write — see util/config.ts's SETTINGS_PANEL_KEYS. */
-  private buildSettingsSnapshot(): SettingsSnapshot {
+  /** Snapshot of every setting the in-webview Settings panel can read/write — see util/config.ts's SETTINGS_PANEL_KEYS. Async because provider-configured status reads vscode.SecretStorage. */
+  private async buildSettingsSnapshot(): Promise<SettingsSnapshot> {
     const cfg = getConfig();
+    const webSearchProviders = await Promise.all(
+      PROVIDERS.map(async (p) => {
+        if (p.id === 'searxng') return { id: p.id, displayName: p.displayName, requiresApiKey: p.requiresApiKey, configured: !!cfg.webSearchSearxngUrl };
+        if (!p.requiresApiKey) return { id: p.id, displayName: p.displayName, requiresApiKey: p.requiresApiKey, configured: true };
+        const creds = await this.keyStore.get(p.id);
+        return { id: p.id, displayName: p.displayName, requiresApiKey: p.requiresApiKey, configured: p.isConfigured(creds) };
+      })
+    );
     return {
       numCtx: cfg.numCtx,
       temperature: cfg.temperature,
@@ -379,6 +410,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       subAgentMaxIterations: cfg.subAgentMaxIterations,
       maxSubAgentDepth: cfg.maxSubAgentDepth,
       showStatusMessages: cfg.showStatusMessages,
+      webSearchEnabled: cfg.webSearchEnabled,
+      webSearchProvider: cfg.webSearchProvider,
+      webSearchMaxResults: cfg.webSearchMaxResults,
+      webSearchRespectRobotsTxt: cfg.webSearchRespectRobotsTxt,
+      webSearchSearxngUrl: cfg.webSearchSearxngUrl,
+      webSearchProviders,
     };
   }
 

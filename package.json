@@ -1,8 +1,8 @@
 {
   "name": "forge-local-agent",
   "displayName": "Forge — Local AI Coding Agent",
-  "description": "A Cursor-style agentic coding assistant that runs entirely on local Ollama models. Agent/Ask/Plan modes, multitask chat tabs, .forge/rules + .forge/skills + .forge/hooks, repo-stored chat history, multi-file agent edits, inline Cmd+K editing, and Tab autocomplete — no cloud, no API keys.",
-  "version": "0.7.0",
+  "description": "A Cursor-style agentic coding assistant that runs entirely on local Ollama models. Agent/Ask/Plan modes, multitask chat tabs, .forge/rules + .forge/skills + .forge/hooks, repo-stored chat history, multi-file agent edits, inline Cmd+K editing, Tab autocomplete, and an opt-in production-grade web search/fetch tool — no cloud, no API keys, no telemetry, except web search itself if you turn it on.",
+  "version": "0.8.0",
   "publisher": "local-forge",
   "private": true,
   "engines": {
@@ -56,7 +56,8 @@
       { "command": "forge.newSkill", "title": "Forge: New Skill / Slash Command (.forge/skills)" },
       { "command": "forge.openHooksFolder", "title": "Forge: Open Hooks Folder (.forge/hooks)" },
       { "command": "forge.showHwStatus", "title": "Forge: Show HW Utilization (tokens/sec, VRAM)" },
-      { "command": "forge.openMemory", "title": "Forge: Open Memory File (.forge/memory.md)" }
+      { "command": "forge.openMemory", "title": "Forge: Open Memory File (.forge/memory.md)" },
+      { "command": "forge.setWebSearchApiKey", "title": "Forge: Set Web Search API Key" }
     ],
     "menus": {
       "editor/context": [
@@ -190,6 +191,53 @@
           "type": "boolean",
           "default": true,
           "description": "Show a brief, live activity line (e.g. \"Reading src/foo.ts…\", \"Thinking with qwen2.5-coder:14b…\") in the composer footer while the agent is working."
+        },
+        "forge.webSearch.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable the web_search / web_fetch tools. OFF BY DEFAULT: this is the one Forge feature that inherently sends data outside your machine (a search query has to reach a provider; fetched pages come from third-party servers) — everything else in Forge stays fully local. Turn this on deliberately, and configure a provider API key with \"Forge: Set Web Search API Key\" for real search quality (the built-in DuckDuckGo fallback works with no setup but is an HTML scrape of a page not meant for programmatic use, and is more fragile / lower quality than a real search API)."
+        },
+        "forge.webSearch.provider": {
+          "type": "string",
+          "enum": ["auto", "tavily", "brave", "google", "searxng", "duckduckgo"],
+          "default": "auto",
+          "description": "Which web search backend to use. \"auto\" tries every provider you've configured credentials for, in quality order (Tavily, Brave, Google, SearXNG), falling back to the no-key DuckDuckGo scrape if none are configured. Pick a specific one to pin it."
+        },
+        "forge.webSearch.maxResults": {
+          "type": "number",
+          "default": 8,
+          "description": "Maximum results per web_search call (capped at 20 regardless of this value)."
+        },
+        "forge.webSearch.timeoutMs": {
+          "type": "number",
+          "default": 15000,
+          "description": "Timeout in milliseconds for both search-provider requests and web_fetch page downloads."
+        },
+        "forge.webSearch.cacheTtlMinutes": {
+          "type": "number",
+          "default": 10,
+          "description": "How long search results and fetched pages are cached in memory before a repeat query/URL hits the network again — avoids hammering a provider (or burning paid-API quota) if the agent searches something similar more than once in a session."
+        },
+        "forge.webSearch.blockedDomains": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "Domains (and their subdomains) to silently drop from web_search results, e.g. [\"pinterest.com\"]."
+        },
+        "forge.webSearch.respectRobotsTxt": {
+          "type": "boolean",
+          "default": true,
+          "description": "Whether web_fetch checks the target site's robots.txt before downloading a page and honors Disallow rules. Recommended to leave on; a missing/unreachable robots.txt is always treated as \"everything allowed\", never as blocking."
+        },
+        "forge.webSearch.maxFetchChars": {
+          "type": "number",
+          "default": 500000,
+          "description": "Approximate cap on how much raw page content web_fetch downloads/reads before extraction, to bound memory/time on an unexpectedly huge page."
+        },
+        "forge.webSearch.searxngUrl": {
+          "type": "string",
+          "default": "",
+          "description": "Base URL of a self-hosted SearXNG instance (e.g. \"https://searx.example.com\"), used when forge.webSearch.provider is \"searxng\" or as part of the \"auto\" fallback chain. Not a secret — stored as a plain setting, unlike API keys (see \"Forge: Set Web Search API Key\")."
         }
       }
     }

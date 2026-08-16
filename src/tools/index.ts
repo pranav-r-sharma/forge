@@ -4,6 +4,7 @@ import { searchCodeTool, searchCodebaseTool } from './searchTools';
 import { runCommandTool } from './commandTool';
 import { rememberTool, searchChatHistoryTool } from './memoryTools';
 import { spawnSubAgentTool } from './subAgentTool';
+import { webFetchTool, webSearchTool } from './webTools';
 
 export const TOOL_SPECS: ToolSpec[] = [
   {
@@ -69,6 +70,20 @@ export const TOOL_SPECS: ToolSpec[] = [
       'Delegate a self-contained sub-task to a nested, fully autonomous sub-agent (its own bounded tool-call loop, no approvals) and get back a summary of what it did/found. Use this to parallelize-in-spirit a task that splits cleanly into independent pieces (e.g. "investigate why build fails" + "investigate why tests fail" as two separate sub-agents), or to delegate a well-scoped chunk of work without cluttering your own tool-call history with its step-by-step trace. Give it a specific, self-contained task description — it does not see this conversation, only what you put in "task"/"context". Nesting is capped (a sub-agent cannot itself spawn more than one further level of sub-agents).',
     exampleArgs: { task: 'Find and fix the TypeScript error in src/utils/date.ts', context: 'The error is "Property \'toISO\' does not exist". Likely a typo for toISOString.' },
     run: spawnSubAgentTool,
+  },
+  {
+    name: 'web_search',
+    describe:
+      'Search the public internet for a natural-language query and get back titles/URLs/snippets. Only available when the user has enabled forge.webSearch.enabled (off by default — this is the one Forge tool that sends data outside your machine). Use for anything the codebase itself can\'t answer: current library/API docs, error messages, versions/release notes, general knowledge, current events. Follow up with web_fetch on a promising URL when a snippet isn\'t enough detail.',
+    exampleArgs: { query: 'ollama num_ctx default context window size' },
+    run: webSearchTool,
+  },
+  {
+    name: 'web_fetch',
+    describe:
+      'Fetch a specific URL (e.g. one returned by web_search) and get back its extracted readable text, paged by character offset for long pages. Respects robots.txt by default. Cannot read PDFs or other binary files — HTML/text/JSON only.',
+    exampleArgs: { url: 'https://example.com/docs/page', offset: 0 },
+    run: webFetchTool,
   },
 ];
 

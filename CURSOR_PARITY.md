@@ -28,7 +28,7 @@ This catalogues Cursor's agentic integration into the editor — everything beyo
 | @Code (symbol) | 🗺️ roadmap — currently file-level only |
 | @Codebase (semantic search over the whole repo) | ✅ v1 — `search_codebase` tool + embedding index, keyword fallback |
 | @Docs (indexed external doc sites) | 🗺️ roadmap |
-| @Web | 🗺️ roadmap (would need a local web-search tool) |
+| @Web | 🆕 v0.8.0 — `web_search` + `web_fetch` tools (opt-in, `forge.webSearch.enabled`, off by default since this is the one Forge feature that reaches the open internet). Five providers with `auto` fallback (Tavily/Brave/Google/SearXNG/DuckDuckGo), robots.txt-respecting fetch with readable-text extraction and paging. Not a manual @-mention UI action yet — the model calls the tool itself when it decides a query needs live web info; an explicit `@web` mention is a possible follow-up (see `ROADMAP.md`). |
 | @Git (diffs/commits) | 🗺️ roadmap — `run_command` can already call `git diff` etc. today as a workaround |
 | @Terminal (recent terminal output) | 🗺️ roadmap |
 | @Lint errors / Problems | ✅ v1 — `get_problems` tool |

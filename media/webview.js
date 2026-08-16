@@ -402,7 +402,19 @@
       )}
       ${settingRow('Sub-agent max steps', 'Tool-call cap per sub-agent task.', `<input id="set-subAgentMaxIterations" type="number" min="1" step="1" value="${s.subAgentMaxIterations}" />`)}
       ${settingRow('Max sub-agent nesting depth', 'How many levels deep a sub-agent may spawn further sub-agents.', `<input id="set-maxSubAgentDepth" type="number" min="1" max="4" step="1" value="${s.maxSubAgentDepth}" />`)}
+      <div class="settings-section-title">Web search</div>
+      ${settingRow('Enable web search', 'Off by default — this is the one Forge feature that sends data outside your machine (a search query has to reach a provider; fetched pages come from third-party servers).', `<input id="set-webSearchEnabled" type="checkbox" ${s.webSearchEnabled ? 'checked' : ''} />`)}
+      ${settingRow(
+        'Provider',
+        '"auto" uses the best provider you have configured, falling back to the no-key DuckDuckGo scrape (works with zero setup, but lower quality/more fragile — configure a real key below for anything beyond casual use).',
+        `<select id="set-webSearchProvider">${['auto', 'tavily', 'brave', 'google', 'searxng', 'duckduckgo'].map((id) => `<option value="${id}" ${id === s.webSearchProvider ? 'selected' : ''}>${id}</option>`).join('')}</select>`
+      )}
+      ${settingRow('Max results per search', '', `<input id="set-webSearchMaxResults" type="number" min="1" max="20" step="1" value="${s.webSearchMaxResults}" />`)}
+      ${settingRow('Respect robots.txt', 'web_fetch checks the target site’s robots.txt before downloading a page. Recommended to leave on.', `<input id="set-webSearchRespectRobotsTxt" type="checkbox" ${s.webSearchRespectRobotsTxt ? 'checked' : ''} />`)}
+      ${settingRow('SearXNG instance URL', 'Only used if you self-host SearXNG. Not a secret, unlike the API keys below.', `<input id="set-webSearchSearxngUrl" type="text" placeholder="https://searx.example.com" value="${escapeAttr(s.webSearchSearxngUrl || '')}" />`)}
+      <div id="websearch-providers" class="websearch-providers"></div>
     `;
+    renderWebSearchProviders(s.webSearchProviders || []);
 
     document.getElementById('set-session-numctx').addEventListener('change', (e) => {
       const v = e.target.value.trim();
@@ -419,9 +431,52 @@
         vscodeApi.postMessage({ type: 'updateSetting', key, value: e.target.checked });
       });
     }
+    // Web-search settings are handled by dedicated listeners below (rather
+    // than the generic loops above) since their config keys are dotted
+    // (webSearch.maxResults etc.) while their DOM ids are camelCase
+    // (set-webSearchMaxResults) — folding them into the generic loops would
+    // require deriving one from the other and getting it wrong silently.
     document.getElementById('set-subAgentModel').addEventListener('change', (e) => {
       vscodeApi.postMessage({ type: 'updateSetting', key: 'subAgentModel', value: e.target.value });
     });
+    document.getElementById('set-webSearchProvider').addEventListener('change', (e) => {
+      vscodeApi.postMessage({ type: 'updateSetting', key: 'webSearch.provider', value: e.target.value });
+    });
+    document.getElementById('set-webSearchMaxResults').addEventListener('change', (e) => {
+      const num = parseFloat(e.target.value);
+      if (Number.isFinite(num)) vscodeApi.postMessage({ type: 'updateSetting', key: 'webSearch.maxResults', value: num });
+    });
+    document.getElementById('set-webSearchRespectRobotsTxt').addEventListener('change', (e) => {
+      vscodeApi.postMessage({ type: 'updateSetting', key: 'webSearch.respectRobotsTxt', value: e.target.checked });
+    });
+    document.getElementById('set-webSearchEnabled').addEventListener('change', (e) => {
+      vscodeApi.postMessage({ type: 'updateSetting', key: 'webSearch.enabled', value: e.target.checked });
+    });
+    let searxngCommitTimer;
+    document.getElementById('set-webSearchSearxngUrl').addEventListener('input', (e) => {
+      clearTimeout(searxngCommitTimer);
+      const value = e.target.value.trim();
+      searxngCommitTimer = setTimeout(() => vscodeApi.postMessage({ type: 'updateSetting', key: 'webSearch.searxngUrl', value }), 600);
+    });
+  }
+
+  /** Per-provider "configured / not configured" status + a button to set/clear its API key, for the providers that need one — see websearch/keyStore.ts. Never shows the actual key, only whether one is stored. */
+  function renderWebSearchProviders(providers) {
+    const host = document.getElementById('websearch-providers');
+    if (!host) return;
+    host.innerHTML = providers
+      .map((p) => {
+        const status = p.configured ? '<span class="wsp-status wsp-configured">configured</span>' : '<span class="wsp-status wsp-missing">not configured</span>';
+        const action = p.requiresApiKey
+          ? `<button class="link-btn wsp-set" data-id="${escapeAttr(p.id)}">Set API Key…</button>${p.configured ? `<button class="link-btn wsp-clear" data-id="${escapeAttr(p.id)}">Clear</button>` : ''}`
+          : '';
+        return `<div class="wsp-row"><span class="wsp-name">${escapeHtml(p.displayName)}</span>${status}<span class="spacer"></span>${action}</div>`;
+      })
+      .join('');
+    host.querySelectorAll('.wsp-set').forEach((btn) => btn.addEventListener('click', () => vscodeApi.postMessage({ type: 'setWebSearchApiKey' })));
+    host.querySelectorAll('.wsp-clear').forEach((btn) =>
+      btn.addEventListener('click', () => vscodeApi.postMessage({ type: 'clearWebSearchApiKey', providerId: btn.dataset.id }))
+    );
   }
 
   // ---------- mode strip ----------
@@ -874,6 +929,7 @@
     if (!args) return '';
     if (typeof args.path === 'string') return args.path + (args.search ? ' (targeted edit)' : '');
     if (typeof args.command === 'string') return args.command;
+    if (typeof args.url === 'string') return args.url + (args.offset ? ` (offset ${args.offset})` : '');
     if (typeof args.query === 'string') return `"${args.query}"`;
     const s = JSON.stringify(args);
     return s.length > 80 ? s.slice(0, 80) + '…' : s;

@@ -16,6 +16,10 @@ import { ChatViewProvider } from './chat/chatViewProvider';
 import { InlineEditController } from './inlineEdit/inlineEditController';
 import { ForgeInlineCompletionProvider } from './completion/inlineCompletionProvider';
 import { ForgeStatusBar } from './statusBar';
+import { WebSearchKeyStore } from './websearch/keyStore';
+import { WebSearchService } from './websearch/searchService';
+import { WebFetchService } from './websearch/fetchService';
+import { ProviderCredentials } from './websearch/types';
 import {
   acceptAllEditsCommand,
   checkOllamaStatusCommand,
@@ -29,6 +33,7 @@ import {
   selectChatModelCommand,
   selectCompletionModelCommand,
   setModelForModeCommand,
+  setWebSearchApiKeyCommand,
   showHwStatusCommand,
 } from './commands';
 
@@ -57,6 +62,42 @@ export async function activate(context: vscode.ExtensionContext) {
   const memory = new MemoryStore(workspaceRoot);
   const chatStore = new ChatStore(workspaceRoot);
 
+  // Item "web search": credentials resolve from two places depending on the
+  // provider — secret-backed API keys (brave/tavily/google) come from
+  // vscode.SecretStorage via WebSearchKeyStore, while SearXNG's instance URL
+  // and DuckDuckGo's "no credentials needed" are plain forge.webSearch.*
+  // config. This closure is the one place that distinction is resolved, so
+  // searchService.ts/fetchService.ts stay agnostic to where a credential
+  // actually lives.
+  const webSearchKeyStore = new WebSearchKeyStore(context.secrets);
+  const getWebSearchCredentials = async (providerId: string): Promise<ProviderCredentials> => {
+    if (providerId === 'searxng') return { instanceUrl: getConfig().webSearchSearxngUrl || undefined };
+    if (providerId === 'duckduckgo') return {};
+    return webSearchKeyStore.get(providerId);
+  };
+  const webSearchService = new WebSearchService(
+    () => {
+      const cfg = getConfig();
+      return {
+        provider: cfg.webSearchProvider,
+        maxResults: cfg.webSearchMaxResults,
+        timeoutMs: cfg.webSearchTimeoutMs,
+        cacheTtlMinutes: cfg.webSearchCacheTtlMinutes,
+        blockedDomains: cfg.webSearchBlockedDomains,
+      };
+    },
+    getWebSearchCredentials
+  );
+  const webFetchService = new WebFetchService(() => {
+    const cfg = getConfig();
+    return {
+      timeoutMs: cfg.webSearchTimeoutMs,
+      respectRobotsTxt: cfg.webSearchRespectRobotsTxt,
+      maxFetchChars: cfg.webSearchMaxFetchChars,
+      cacheTtlMinutes: cfg.webSearchCacheTtlMinutes,
+    };
+  });
+
   const chatViewProvider = new ChatViewProvider(
     context,
     ollama,
@@ -68,6 +109,9 @@ export async function activate(context: vscode.ExtensionContext) {
     hooks,
     memory,
     chatStore,
+    webSearchService,
+    webFetchService,
+    webSearchKeyStore,
     workspaceRoot,
     workspaceName
   );
@@ -128,7 +172,8 @@ export async function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('forge.newSkill', () => newSkillCommand(workspaceRoot)),
     vscode.commands.registerCommand('forge.openHooksFolder', () => openHooksFolderCommand(workspaceRoot)),
     vscode.commands.registerCommand('forge.showHwStatus', () => showHwStatusCommand(ollama)),
-    vscode.commands.registerCommand('forge.openMemory', () => openMemoryFileCommand(memory))
+    vscode.commands.registerCommand('forge.openMemory', () => openMemoryFileCommand(memory)),
+    vscode.commands.registerCommand('forge.setWebSearchApiKey', () => setWebSearchApiKeyCommand(webSearchKeyStore))
   );
 
   // Best-effort background warm-up: don't block activation on network I/O.

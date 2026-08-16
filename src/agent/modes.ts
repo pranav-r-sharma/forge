@@ -23,12 +23,18 @@ const ALL_TOOLS: ToolName[] = [
   'remember',
   'search_chat_history',
   'spawn_subagent',
+  'web_search',
+  'web_fetch',
 ];
 
-// remember/search_chat_history are allowed even in read-only Ask mode: the
-// former only ever touches .forge/memory.md (not user code), and the latter
-// is pure read-only search — neither is the kind of side effect Ask mode
-// exists to gate.
+// remember/search_chat_history/web_search/web_fetch are allowed even in
+// read-only Ask mode: none of them touch user code or run commands.
+// remember only ever writes .forge/memory.md; search_chat_history is pure
+// local read-only search; web_search/web_fetch are read-only information
+// gathering (their own opt-in gate — forge.webSearch.enabled, see
+// websearch/types.ts — is a separate concern from mode-based tool
+// availability, and is enforced at the tool-execution layer regardless of
+// which mode called them).
 const READ_ONLY_TOOLS: ToolName[] = [
   'read_file',
   'list_dir',
@@ -37,6 +43,8 @@ const READ_ONLY_TOOLS: ToolName[] = [
   'get_problems',
   'remember',
   'search_chat_history',
+  'web_search',
+  'web_fetch',
 ];
 
 export const MODES: Record<ForgeMode, ModeDef> = {

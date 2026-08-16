@@ -16,6 +16,8 @@ import { HookRunner } from '../forge/hooks';
 import { MemoryStore } from '../forge/memory';
 import { reviewForMemoryFacts } from '../forge/memoryReview';
 import { ChatStore, StoredSession, deriveTitle } from '../forge/chatStore';
+import { WebSearchService } from '../websearch/searchService';
+import { WebFetchService } from '../websearch/fetchService';
 import { getConfig, resolveModelForMode } from '../util/config';
 import { genId } from '../util/ids';
 import { toRelative } from '../util/paths';
@@ -35,6 +37,8 @@ export interface ChatSessionServices {
   hooks: HookRunner;
   memory: MemoryStore;
   chatStore: ChatStore;
+  webSearchService: WebSearchService;
+  webFetchService: WebFetchService;
   workspaceRoot: vscode.Uri;
   workspaceName: string;
 }
@@ -389,6 +393,11 @@ export class ChatSession {
           codebaseSearch: (q, k) => this.services.workspaceIndex.search(q, k),
           rememberFact: (fact) => this.services.memory.addFact(fact),
           chatMemorySearch: (q, k) => this.services.chatMemoryIndex.search(q, k),
+          // Item "web search": only wired up when explicitly enabled — see
+          // the doc comment on ToolExecContext.webSearch in agent/types.ts
+          // for why this is Forge's one opt-in-required tool.
+          webSearch: cfg.webSearchEnabled ? (q) => this.services.webSearchService.search(q) : undefined,
+          webFetch: cfg.webSearchEnabled ? (url, offset, length) => this.services.webFetchService.fetch(url, offset, length) : undefined,
           workspaceRoot: this.services.workspaceRoot,
           workspaceName: this.services.workspaceName,
         },

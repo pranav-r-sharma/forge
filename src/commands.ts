@@ -7,6 +7,49 @@ import { WorkspaceIndex } from './indexing/workspaceIndex';
 import { MemoryStore } from './forge/memory';
 import { MODES } from './agent/modes';
 import { logger } from './util/logger';
+import { WebSearchKeyStore, SECRET_BACKED_PROVIDERS, SecretBackedProviderId } from './websearch/keyStore';
+import { PROVIDER_MAP } from './websearch/searchService';
+
+/** Item "web search": provider API keys are stored via vscode.SecretStorage, not settings.json — see keyStore.ts for why. This is the interactive entry point (also reachable from the Settings panel's "Set API Key…" button, which just runs this same command). */
+export async function setWebSearchApiKeyCommand(keyStore: WebSearchKeyStore) {
+  const picked = await vscode.window.showQuickPick(
+    SECRET_BACKED_PROVIDERS.map((id) => ({ id, label: PROVIDER_MAP[id].displayName })),
+    { title: 'Forge: Set Web Search API Key — which provider?' }
+  );
+  if (!picked) return;
+  const providerId = (picked as unknown as { id: SecretBackedProviderId }).id;
+  const displayName = PROVIDER_MAP[providerId].displayName;
+
+  const apiKey = await vscode.window.showInputBox({
+    title: `Forge: ${displayName} API key`,
+    password: true,
+    ignoreFocusOut: true,
+    placeHolder: 'Paste the API key — leave blank and confirm to clear a previously saved key',
+  });
+  if (apiKey === undefined) return; // user cancelled (Esc) — different from an intentionally empty submission
+  if (!apiKey) {
+    await keyStore.clear(providerId);
+    vscode.window.showInformationMessage(`Forge: cleared the stored ${displayName} credentials.`);
+    return;
+  }
+
+  if (providerId === 'google') {
+    // Google Programmable Search needs a Search Engine ID (cx) alongside the key — see providers/googleCse.ts.
+    const cx = await vscode.window.showInputBox({
+      title: 'Forge: Google Programmable Search Engine ID (cx)',
+      ignoreFocusOut: true,
+      placeHolder: 'From your search engine at programmablesearchengine.google.com',
+    });
+    if (!cx) {
+      vscode.window.showWarningMessage('Forge: Google Programmable Search also needs a Search Engine ID (cx) — nothing was saved.');
+      return;
+    }
+    await keyStore.set(providerId, { apiKey, cx });
+  } else {
+    await keyStore.set(providerId, { apiKey });
+  }
+  vscode.window.showInformationMessage(`Forge: ${displayName} API key saved (in VS Code's secret storage, not settings.json).`);
+}
 
 /** Item "HWD Utilization metrics" — a quick, no-UI-work-required way to see what's currently resident in Ollama and its VRAM footprint (GET /api/ps), for when the composer-footer readout (live tokens/sec, from ChatSession's 'metrics' events) isn't enough. */
 export async function showHwStatusCommand(ollama: OllamaClient) {
