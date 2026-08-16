@@ -163,7 +163,7 @@ function buildCompactedView(archival: ChatMessage[], hasSystem: boolean, bodySta
     ...(hasSystem ? [archival[0]] : []),
     {
       role: 'user',
-      content: `[Earlier conversation summary — ${cache.throughIndex - bodyStart} message(s) compacted to save context]\n${cache.summary}`,
+      content: `[Earlier conversation summary — ${cache.throughIndex - bodyStart} message(s) compacted to save context. Nothing was lost: the full original messages are still in this session's saved history. If you need an exact detail this summary omitted — exact code, an exact error message, a specific earlier decision — call search_chat_history rather than guessing.]\n${cache.summary}`,
     },
     ...archival.slice(cache.throughIndex),
   ];

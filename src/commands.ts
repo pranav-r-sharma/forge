@@ -4,6 +4,7 @@ import { setChatModel, setCompletionModel, getConfig } from './util/config';
 import { PendingEditManager } from './tools/editApply';
 import { openDiffForEdit } from './tools/diffContentProvider';
 import { WorkspaceIndex } from './indexing/workspaceIndex';
+import { MemoryStore } from './forge/memory';
 import { logger } from './util/logger';
 
 /** Item "HWD Utilization metrics" — a quick, no-UI-work-required way to see what's currently resident in Ollama and its VRAM footprint (GET /api/ps), for when the composer-footer readout (live tokens/sec, from ChatSession's 'metrics' events) isn't enough. */
@@ -25,6 +26,28 @@ export async function showHwStatusCommand(ollama: OllamaClient) {
     return `${m.name} — ${sizeGB}GB${vramGB}${until}`;
   });
   vscode.window.showInformationMessage(`Forge — loaded models:\n${lines.join('\n')}`, { modal: true });
+}
+
+/** Opens (creating if needed) `.forge/memory.md` — the durable-facts half of the memory system. The agent writes to this itself via the `remember` tool; this command is for reading/hand-editing it directly. */
+export async function openMemoryFileCommand(memory: MemoryStore) {
+  const uri = vscode.Uri.file(memory.fsPath());
+  const raw = await memory.readRaw();
+  if (!raw) {
+    await ensureFileWithContent(
+      uri,
+      `# Forge memory
+
+One durable fact per line (as a "- " bullet). Injected into every system
+prompt for this project — the agent adds to this itself via the \`remember\`
+tool when it learns something worth never forgetting, and you can edit it by
+hand too. Keep it short: project conventions, explicit preferences,
+decisions and why, where things live. If this file starts growing into a
+real knowledge base rather than a handful of durable facts, that content
+probably belongs in \`.forge/rules/\` instead.
+`
+    );
+  }
+  await vscode.window.showTextDocument(uri);
 }
 
 export async function selectChatModelCommand(ollama: OllamaClient) {

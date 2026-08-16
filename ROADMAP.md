@@ -4,6 +4,8 @@ Everything here is catalogued but not built. Ordered roughly by how much day-to-
 
 **Shipped in 0.3.0** (used to be listed here as #1/#2 plus several items under "Everything else"): Auto mode (fully autonomous, no approvals, loop-detector-backed), checkpoints (restore a chat + its files to any earlier message), context pruning/compaction that never touches the persisted transcript, a crash-recovery append log, cross-chat search, folder-aware `@`-mentions with arrow-key navigation, clickable file references in the transcript, HW utilization (tokens/sec, loaded-model VRAM via `/api/ps`), and the `num_ctx`/`keep_alive` tuning + stop-button-error-message fix that were ported in from local hand-edits. See `CHANGELOG.md` for the full list and what was actually verified vs. just type-checked.
 
+**Shipped in 0.4.0**: the memory system — `.forge/memory.md` (durable, curated, agent-maintainable facts injected into every prompt) and `search_chat_history` (semantic search over every past chat, mirroring `@codebase`'s embedding-index approach). This is what used to be listed under "Customization" below as "Memories"; it's now built, not catalogued. See `CHANGELOG.md` for the full entry.
+
 ## 1. Multi-model task routing
 
 Right now Forge has two model slots: `forge.chatModel` (agent/chat) and `forge.completionModel` (Tab). The natural next step is routing by *task type*, not just chat-vs-completion, because local models have real, different strengths and a single model is a compromise for everything:
@@ -35,7 +37,7 @@ This is now the single biggest item left on the list.
 **Customization**
 - User-level (global, cross-project) rules, not just project-scoped `.forge/rules/`.
 - An MCP client, so Forge's agent can call the same MCP tool servers Claude/Cursor use (filesystem, GitHub, databases, etc.) instead of only its own built-in tool set. Highest-effort item on this list, also highest ceiling — turns Forge from "has 7 tools" into "has whatever tools you connect."
-- Memories: let the agent propose durable facts about the project/your preferences ("this repo uses pnpm, not npm") and save them into a rule file with one click, rather than you writing rules by hand every time.
+- ~~Memories~~ — shipped in 0.4.0 as `.forge/memory.md` + the `remember` tool. Possible follow-up: a one-click "promote to rule" action for a memory fact that's really a coding convention and belongs in `.forge/rules/` instead.
 
 **Environment**
 - Long-running/background terminal processes the agent can start and later check on (e.g. "start the dev server" then keep coding), instead of every `run_command` call being run-to-completion-or-timeout.

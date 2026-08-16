@@ -20,9 +20,23 @@ const ALL_TOOLS: ToolName[] = [
   'write_file',
   'run_command',
   'get_problems',
+  'remember',
+  'search_chat_history',
 ];
 
-const READ_ONLY_TOOLS: ToolName[] = ['read_file', 'list_dir', 'search_code', 'search_codebase', 'get_problems'];
+// remember/search_chat_history are allowed even in read-only Ask mode: the
+// former only ever touches .forge/memory.md (not user code), and the latter
+// is pure read-only search — neither is the kind of side effect Ask mode
+// exists to gate.
+const READ_ONLY_TOOLS: ToolName[] = [
+  'read_file',
+  'list_dir',
+  'search_code',
+  'search_codebase',
+  'get_problems',
+  'remember',
+  'search_chat_history',
+];
 
 export const MODES: Record<ForgeMode, ModeDef> = {
   agent: {

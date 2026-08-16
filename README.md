@@ -18,6 +18,7 @@ See `CURSOR_PARITY.md` for a full feature-by-feature map against Cursor, and `RO
 - **Review before write** — every file edit the agent proposes is staged, not written to disk, until you accept it (per-file or all at once) from the chat panel or a real VS Code diff view.
 - **Command approval** — shell commands the agent wants to run are shown to you first, unless you've allow-listed that pattern.
 - **@codebase search** — semantic search over your workspace if you've pulled an embedding model (`nomic-embed-text`), with an automatic keyword-search fallback if you haven't.
+- **Memory** — a curated durable-facts file (`.forge/memory.md`) injected into every prompt, plus semantic search over every past chat (`search_chat_history`) so a long-running project's history is retrievable on demand instead of having to fit in one prompt. See "Memory" below.
 - **Model picker** — auto-detects installed Ollama models and recommends a good default (qwen2.5-coder, deepseek-coder, etc.); switch anytime from the status bar.
 
 Zero runtime npm dependencies — the whole extension is hand-written TypeScript talking to Ollama's HTTP API with Node's built-in `fetch`.
@@ -101,6 +102,15 @@ Every message you send starts a checkpoint. Hover a message and click **⟲ Rest
 ### Context management — long sessions don't quietly lose information
 
 Two settings control how much of your conversation Forge sends to Ollama on each turn: `forge.numCtx` (the context window it requests from the model) and internal pruning/compaction that keeps the *live prompt* bounded once a session gets long — stale file reads (superseded by a later edit or a newer read) get collapsed to a one-line placeholder, and once the transcript passes a size budget derived from `numCtx`, everything except the system prompt and the last dozen-or-so messages gets folded into a short model-generated summary. Critically, **this only affects what's sent to the model on the next call — it never deletes anything from `.forge/chat/`.** The full, uncompacted transcript is always there; scroll up, or use chat search (below) to find anything from earlier in a long session, even after it's been summarized out of what the model currently sees. A crash-recovery log (`.forge/chat/<id>.log.jsonl`, append-only, one line per tool call/result/decision) also means a mid-session crash or restart doesn't lose the record of what the agent was doing right up to that point, even if the last full snapshot is slightly behind.
+
+### Memory — durable facts + searchable chat history
+
+Context compaction (above) keeps a single long turn from blowing the context window, but it doesn't fix the bigger version of the same problem: a *project* easily outlives any one chat, and a fresh chat starts from nothing. Two pieces work together to fix that:
+
+- **`.forge/memory.md`** — a short, curated list of durable facts ("this repo uses pnpm, not npm", "the user prefers tabs", "staging DB creds live in `.env.staging`"). It's injected into every system prompt, in every chat, the same way `.forge/rules/` is. The agent adds to it itself via a `remember` tool call when it learns something worth never forgetting; you can also open and hand-edit it directly with **Forge: Open Memory File**. It's deliberately meant to stay small — if it starts turning into a real knowledge base, that content belongs in `.forge/rules/` instead.
+- **Chat-history search** — every past chat (not just the open one) is chunked and embedded into a searchable index, incrementally updated after every turn. The agent can call `search_chat_history` itself when you reference something that sounds like it was already discussed or decided ("like we talked about…"), instead of asking you to repeat it or guessing. This is the same embedding-index machinery as `@codebase`/`search_codebase`, pointed at `.forge/chat/*.json` instead of your source files, with the same automatic keyword-search fallback if no embedding model is installed.
+
+Together these mean a long-running project's context doesn't actually run out — it becomes something the agent looks up on demand rather than something that has to be kept, in full, in every prompt. Neither is retroactive: chat-history search only covers sessions that have been indexed (every session gets indexed as you use it, so this only matters for import scenarios), and memory only contains what's actually been written to `.forge/memory.md`.
 
 ### Search — find anything across every chat
 
@@ -188,7 +198,7 @@ Rather than relying on any one model's native function-calling format (inconsist
 
 File edits go through an in-memory "pending edit" overlay: the agent's own view of a file it just edited is immediately the new version (so it can make several dependent edits in one turn), but nothing touches your disk until you accept it. Tab autocomplete uses Ollama's `/api/generate` with `prompt`/`suffix` (fill-in-middle) and lets Ollama apply each model's own FIM template, so it works across qwen2.5-coder, deepseek-coder, starcoder2, codegemma, codellama, etc. without hand-maintaining per-model special tokens.
 
-## Known limitations (0.3.0)
+## Known limitations (0.4.0)
 
 - Inline edit (Cmd+K) uses a simple input box for the instruction rather than a floating in-editor widget, and supports one pending inline edit at a time.
 - No multi-root workspace support — Forge uses the first workspace folder.
@@ -199,6 +209,8 @@ File edits go through an in-memory "pending edit" overlay: the agent's own view 
 - **Chat search and cross-session listing are a linear scan** over `.forge/chat/*.json` — fine at personal, single-workspace scale; would need real indexing to stay fast with hundreds of long chats.
 - **The hallucination check (unverified-claim detection) is a narrow regex**, not real verification — it only catches "created/updated/wrote `path.ext`"-shaped claims and gives the model a couple of chances to correct itself; it's a mitigation, not a guarantee nothing is ever misreported.
 - No multi-model-per-task-type routing yet (one chat model, one optional separate completion model) — see `ROADMAP.md`.
+- **Memory relies on the model actually calling `remember`/`search_chat_history`.** There's no automatic fact extraction — if the model doesn't think to save something, it isn't saved, same as any other tool call in this architecture. The system prompt nudges it to use both, but this isn't a guarantee.
+- **`.forge/memory.md` is intentionally not itself size-limited beyond what's injected per-turn** (`renderForPrompt()` caps at ~4000 chars, keeping the most recent facts) — if you or the agent let it grow very large, older facts silently stop being injected rather than erroring; open it directly with **Forge: Open Memory File** to prune it by hand.
 - See `CURSOR_PARITY.md` for the full list of what's intentionally not built yet (MCP servers, @-mention of code symbols/docs/web, auto-indexing, etc.).
 
 ## Testing & release process

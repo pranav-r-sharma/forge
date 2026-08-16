@@ -9,7 +9,9 @@ export type ToolName =
   | 'search_codebase'
   | 'write_file'
   | 'run_command'
-  | 'get_problems';
+  | 'get_problems'
+  | 'remember'
+  | 'search_chat_history';
 
 export interface ToolCall {
   tool: ToolName | string;
@@ -45,6 +47,10 @@ export interface ToolExecContext {
   requestCommandApproval: (command: string, callId: string) => Promise<boolean>;
   /** Semantic (embedding) or keyword-fallback search over the indexed workspace. */
   codebaseSearch: (query: string, k: number) => Promise<{ path: string; snippet: string; score: number }[]>;
+  /** Item "memory": saves a durable fact to .forge/memory.md (de-duped), injected into every future system prompt. */
+  rememberFact: (fact: string) => Promise<{ added: boolean; reason?: string }>;
+  /** Item "memory": semantic (embedding) or keyword-fallback search over every past chat session's transcript. */
+  chatMemorySearch: (query: string, k: number) => Promise<{ sessionId: string; sessionTitle: string; snippet: string; score: number }[]>;
   config: {
     autoApproveCommands: string[];
     requireApprovalForWrites: boolean;

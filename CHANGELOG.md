@@ -5,6 +5,17 @@ that "did the last release actually fix what it claims to" has a paper trail
 you can check against — see the testing notes in the README for how each
 entry below was verified.
 
+## 0.4.0
+
+The context-window discussion from 0.3.0's compaction work led directly here: compaction keeps one long *turn* from blowing the context window, but it doesn't help a *project* that outlives any single chat — a fresh chat still starts from nothing, and a long chat's compacted-away detail is only ever recoverable by scrolling. This release adds a retrieval-based memory system to actually fix that, instead of just bounding it. Verified with `tsc --noEmit` and a new runtime test file (`_devtools/runtime_test/test_memory.ts`, 22 assertions covering both the embeddings path and the keyword-fallback path) plus the full existing suite (all passing); not yet run inside a real VS Code extension host — same caveat as every release so far, see README → Testing.
+
+### Added
+
+- **`.forge/memory.md` — durable, curated facts.** A short plain-text file (one fact per line) injected into every system prompt, the same way `.forge/rules/` is. The agent adds to it itself via a new `remember` tool (case-insensitive de-duped, capped per-fact length) when it learns something worth never forgetting — a convention, a decision and why, a preference. **Forge: Open Memory File** opens/creates it for hand-editing. Rendering into the prompt is capped (~4000 chars, keeping the *most recent* facts) so even a neglected, overgrown memory file can't itself blow the context budget it exists to protect.
+- **`search_chat_history` — semantic search over every past chat.** A new `ChatMemoryIndex` mirrors the existing `@codebase`/`search_codebase` machinery (`WorkspaceIndex`): chunks `.forge/chat/*.json` transcripts, embeds them with the configured embedding model, cosine-ranks results, and falls back to keyword search automatically if no embedding model is installed. Indexing is incremental and per-session — a content-hash gate means re-indexing after a turn only re-embeds the session that actually changed, not the whole chat history, so this stays cheap even in a long-running project with many past chats. The agent is nudged (system prompt) to call this instead of asking you to repeat something that sounds like it was already discussed.
+- Both new tools (`remember`, `search_chat_history`) are available in Ask mode too, not just Agent/Auto — neither has a side effect Ask mode's read-only guarantee needs to gate (`remember` only ever touches `.forge/memory.md`, not your code; the other is pure read).
+- `src/util/vector.ts` — `cosineSimilarity` extracted out of `workspaceIndex.ts` so `ChatMemoryIndex` doesn't duplicate it; `workspaceIndex.ts` refactored to import it, no behavior change.
+
 ## 0.3.0
 
 Two things landed together in this release: your local hand-edits to the *installed* extension (documented in `forgechanges20260815.md`) ported into the actual TypeScript source so they survive a rebuild, plus ten requested additions. Everything below was verified with `tsc --noEmit` and targeted runtime tests (`_devtools/runtime_test/` — `test_v3.ts` and additions to `test_edit.ts`/`test_chatstore.ts`, all passing); none of it has been run inside a real VS Code extension host (see README → Testing for why that gap still exists in this sandbox). Treat this release with the same "read the diff, run the manual QA checklist" posture as any other, more so given its size.

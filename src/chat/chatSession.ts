@@ -9,9 +9,11 @@ import { ForgeMode } from '../agent/modes';
 import { CheckpointStore } from '../agent/checkpoints';
 import { CompactionCache } from '../agent/contextManager';
 import { WorkspaceIndex } from '../indexing/workspaceIndex';
+import { ChatMemoryIndex } from '../indexing/chatMemoryIndex';
 import { RulesEngine } from '../forge/rules';
 import { SkillsEngine } from '../forge/skills';
 import { HookRunner } from '../forge/hooks';
+import { MemoryStore } from '../forge/memory';
 import { ChatStore, StoredSession, deriveTitle } from '../forge/chatStore';
 import { getConfig } from '../util/config';
 import { genId } from '../util/ids';
@@ -23,9 +25,11 @@ export interface ChatSessionServices {
   ollama: OllamaClient;
   pendingEdits: PendingEditManager;
   workspaceIndex: WorkspaceIndex;
+  chatMemoryIndex: ChatMemoryIndex;
   rules: RulesEngine;
   skills: SkillsEngine;
   hooks: HookRunner;
+  memory: MemoryStore;
   chatStore: ChatStore;
   workspaceRoot: vscode.Uri;
   workspaceName: string;
@@ -320,6 +324,7 @@ export class ChatSession {
       ? toRelative(this.services.workspaceRoot, vscode.window.activeTextEditor.document.uri)
       : undefined;
     const rulesText = await this.services.rules.renderForPrompt(activeFileRel);
+    const memoryText = await this.services.memory.renderForPrompt();
 
     this.busy = true;
     this.post({ type: 'busy', sessionId: this.id, busy: true });
@@ -336,13 +341,15 @@ export class ChatSession {
           approvalBroker: this.approvalBroker,
           hooks: this.services.hooks,
           codebaseSearch: (q, k) => this.services.workspaceIndex.search(q, k),
+          rememberFact: (fact) => this.services.memory.addFact(fact),
+          chatMemorySearch: (q, k) => this.services.chatMemoryIndex.search(q, k),
           workspaceRoot: this.services.workspaceRoot,
           workspaceName: this.services.workspaceName,
         },
         (event) => this.handleAgentEvent(event),
         this.cts.token,
         model,
-        { mode: this.mode, rulesText: rulesText || undefined, planContext: opts?.planContext, compactionCache: this.compactionCache }
+        { mode: this.mode, rulesText: rulesText || undefined, memoryText: memoryText || undefined, planContext: opts?.planContext, compactionCache: this.compactionCache }
       );
       this.modelHistory = result.messages;
       this.compactionCache = result.compactionCache;
@@ -358,6 +365,11 @@ export class ChatSession {
       this.cts = undefined;
       this.post({ type: 'busy', sessionId: this.id, busy: false });
       this.persist();
+      // Keep search_chat_history current — incremental (see ChatMemoryIndex),
+      // so this is cheap on every turn except when this session actually
+      // grew. Best-effort: a memory-index failure must never break the turn
+      // that just completed.
+      this.services.chatMemoryIndex.indexSession(this.toStored()).catch((err) => logger.warn('chat memory indexing failed', String(err)));
     }
   }
 

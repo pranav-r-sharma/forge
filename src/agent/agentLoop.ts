@@ -21,6 +21,8 @@ export interface AgentDeps {
   approvalBroker: ApprovalBroker;
   hooks: HookRunner;
   codebaseSearch: (query: string, k: number) => Promise<{ path: string; snippet: string; score: number }[]>;
+  rememberFact: (fact: string) => Promise<{ added: boolean; reason?: string }>;
+  chatMemorySearch: (query: string, k: number) => Promise<{ sessionId: string; sessionTitle: string; snippet: string; score: number }[]>;
   workspaceRoot: vscode.Uri;
   workspaceName: string;
 }
@@ -28,6 +30,7 @@ export interface AgentDeps {
 export interface AgentTurnOptions {
   mode: ForgeMode;
   rulesText?: string;
+  memoryText?: string;
   planContext?: string;
   /** Carried across turns so compaction doesn't re-summarize from scratch every time — see ChatSession. */
   compactionCache?: CompactionCache;
@@ -83,6 +86,7 @@ export async function runAgentTurn(
   const systemPrompt = buildSystemPrompt(deps.workspaceName, options.mode, {
     rulesText: options.rulesText,
     planContext: options.planContext,
+    memoryText: options.memoryText,
   });
   if (messages.length > 0 && messages[0].role === 'system') {
     messages[0] = { role: 'system', content: systemPrompt };
@@ -98,6 +102,8 @@ export async function runAgentTurn(
     readEffective: (uri) => deps.pendingEdits.readEffective(uri),
     requestCommandApproval: (command, callId) => deps.approvalBroker.requestCommandApproval(command, callId),
     codebaseSearch: deps.codebaseSearch,
+    rememberFact: deps.rememberFact,
+    chatMemorySearch: deps.chatMemorySearch,
     config: {
       autoApproveCommands: cfg.autoApproveCommands,
       requireApprovalForWrites,

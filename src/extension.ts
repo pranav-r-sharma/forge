@@ -6,9 +6,11 @@ import { logger } from './util/logger';
 import { PendingEditManager } from './tools/editApply';
 import { DiffContentProvider, FORGE_DIFF_SCHEME } from './tools/diffContentProvider';
 import { WorkspaceIndex } from './indexing/workspaceIndex';
+import { ChatMemoryIndex } from './indexing/chatMemoryIndex';
 import { RulesEngine } from './forge/rules';
 import { SkillsEngine } from './forge/skills';
 import { HookRunner } from './forge/hooks';
+import { MemoryStore } from './forge/memory';
 import { ChatStore } from './forge/chatStore';
 import { ChatViewProvider } from './chat/chatViewProvider';
 import { InlineEditController } from './inlineEdit/inlineEditController';
@@ -22,6 +24,7 @@ import {
   newSkillCommand,
   openDiffForFileCommand,
   openHooksFolderCommand,
+  openMemoryFileCommand,
   rejectAllEditsCommand,
   selectChatModelCommand,
   selectCompletionModelCommand,
@@ -44,9 +47,13 @@ export async function activate(context: vscode.ExtensionContext) {
   const workspaceIndex = new WorkspaceIndex(ollama, workspaceRoot, context.storageUri, () => getConfig().embeddingModel);
   await workspaceIndex.loadCache();
 
+  const chatMemoryIndex = new ChatMemoryIndex(ollama, context.storageUri, () => getConfig().embeddingModel);
+  await chatMemoryIndex.loadCache();
+
   const rules = new RulesEngine(workspaceRoot);
   const skills = new SkillsEngine(workspaceRoot);
   const hooks = new HookRunner(workspaceRoot);
+  const memory = new MemoryStore(workspaceRoot);
   const chatStore = new ChatStore(workspaceRoot);
 
   const chatViewProvider = new ChatViewProvider(
@@ -54,9 +61,11 @@ export async function activate(context: vscode.ExtensionContext) {
     ollama,
     pendingEdits,
     workspaceIndex,
+    chatMemoryIndex,
     rules,
     skills,
     hooks,
+    memory,
     chatStore,
     workspaceRoot,
     workspaceName
@@ -116,7 +125,8 @@ export async function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('forge.newRule', () => newRuleCommand(workspaceRoot)),
     vscode.commands.registerCommand('forge.newSkill', () => newSkillCommand(workspaceRoot)),
     vscode.commands.registerCommand('forge.openHooksFolder', () => openHooksFolderCommand(workspaceRoot)),
-    vscode.commands.registerCommand('forge.showHwStatus', () => showHwStatusCommand(ollama))
+    vscode.commands.registerCommand('forge.showHwStatus', () => showHwStatusCommand(ollama)),
+    vscode.commands.registerCommand('forge.openMemory', () => openMemoryFileCommand(memory))
   );
 
   // Best-effort background warm-up: don't block activation on network I/O.

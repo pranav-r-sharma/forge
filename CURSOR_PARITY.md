@@ -58,7 +58,7 @@ This catalogues Cursor's agentic integration into the editor — everything beyo
 | Legacy single `.cursorrules` file | 🆕 v2 — a bare `.forge/rules.md` (no frontmatter) is treated as always-on, for the simple case |
 | User/global rules (apply to every project) | 🗺️ roadmap — v2 rules are project-scoped only (`forge.userRules` global setting is a natural v3 add) |
 | `.cursor/commands/*.md` (custom slash commands) | 🆕 v2 — `.forge/skills/*.md`, invoked as `/name` in chat |
-| Memories (auto-remembered facts/preferences) | 🗺️ roadmap — no automatic memory extraction yet; rules are the manual equivalent today |
+| Memories (auto-remembered facts/preferences) | 🆕 v0.4.0 — `.forge/memory.md`, curated durable facts injected into every prompt; the agent adds to it via a `remember` tool call (not fully automatic extraction — it's a tool the model is nudged to use, not a background process). Paired with `search_chat_history` (semantic search over every past chat) for anything that doesn't need to be a standing fact. |
 | MCP servers (`.cursor/mcp.json`) | 🗺️ roadmap — real value-add since it'd let Forge's agent call the same MCP tool ecosystem Claude/Cursor use; nontrivial (needs an MCP client) |
 | Hooks (`beforeSubmitPrompt`, `afterFileEdit`, `beforeShellExecution`, etc.) | 🆕 v2 (subset) — `.forge/hooks/<event>` executable scripts for `session-start`, `before-write`, `after-write`, `before-command`, `after-command`; gating hooks can block an action by exiting non-zero |
 | Model picker / multiple models per task type | ✅ v1 (chat vs. completion model) → 🗺️ roadmap for full per-task routing (see `ROADMAP.md`) |
@@ -71,7 +71,7 @@ This catalogues Cursor's agentic integration into the editor — everything beyo
 | Multiple chat tabs | 🆕 v2 |
 | Branch a conversation | 🗺️ roadmap |
 | Search across chat history | 🆕 v3.0 — searches every saved session, not just the open tab |
-| Context-window summarization on long chats | 🆕 v3.0 — stale-read pruning + summarization of the older part of a long transcript, applied only to what's sent to the model (never to the persisted `.forge/chat/*.json`, so nothing is actually lost) |
+| Context-window summarization on long chats | 🆕 v3.0 — stale-read pruning + summarization of the older part of a long transcript, applied only to what's sent to the model (never to the persisted `.forge/chat/*.json`, so nothing is actually lost). Paired in v0.4.0 with `search_chat_history` so the model can pull back an exact detail a summary glossed over, instead of only the persisted-but-unreachable-from-the-prompt transcript. |
 | Per-message checkpoints | 🆕 v3.0 (see Checkpoints above) |
 
 ## 6. Terminal & environment

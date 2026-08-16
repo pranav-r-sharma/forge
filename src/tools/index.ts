@@ -2,6 +2,7 @@ import { ToolSpec } from '../agent/types';
 import { readFileTool, listDirTool, writeFileTool, getProblemsTool } from './fileTools';
 import { searchCodeTool, searchCodebaseTool } from './searchTools';
 import { runCommandTool } from './commandTool';
+import { rememberTool, searchChatHistoryTool } from './memoryTools';
 
 export const TOOL_SPECS: ToolSpec[] = [
   {
@@ -46,6 +47,20 @@ export const TOOL_SPECS: ToolSpec[] = [
     describe: 'Get current editor diagnostics (errors/warnings) for a file, or the whole workspace if no path is given. Useful right after an edit to self-check.',
     exampleArgs: { path: 'src/index.ts' },
     run: getProblemsTool,
+  },
+  {
+    name: 'remember',
+    describe:
+      'Save a durable fact/preference about this project to .forge/memory.md — injected into every future system prompt so it survives context compaction and new chats. Use for things worth never forgetting (conventions, decisions, credentials locations, user preferences), not routine progress notes.',
+    exampleArgs: { fact: 'This repo uses pnpm, not npm.' },
+    run: rememberTool,
+  },
+  {
+    name: 'search_chat_history',
+    describe:
+      'Semantic search over every past chat session in this workspace (not just this conversation) for a natural-language question. Use this instead of asking the user to repeat themselves when something was likely discussed or decided in an earlier chat.',
+    exampleArgs: { query: 'why did we switch away from the old auth flow' },
+    run: searchChatHistoryTool,
   },
 ];
 

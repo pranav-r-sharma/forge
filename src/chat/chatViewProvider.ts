@@ -3,9 +3,11 @@ import { OllamaClient, pickBestDefaultModel } from '../ollama/client';
 import { PendingEditManager } from '../tools/editApply';
 import { openDiffForEdit } from '../tools/diffContentProvider';
 import { WorkspaceIndex } from '../indexing/workspaceIndex';
+import { ChatMemoryIndex } from '../indexing/chatMemoryIndex';
 import { RulesEngine } from '../forge/rules';
 import { SkillsEngine } from '../forge/skills';
 import { HookRunner } from '../forge/hooks';
+import { MemoryStore } from '../forge/memory';
 import { ChatStore } from '../forge/chatStore';
 import { MODES } from '../agent/modes';
 import { getConfig, setChatModel } from '../util/config';
@@ -35,14 +37,16 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     private readonly ollama: OllamaClient,
     private readonly pendingEdits: PendingEditManager,
     private readonly workspaceIndex: WorkspaceIndex,
+    private readonly chatMemoryIndex: ChatMemoryIndex,
     private readonly rules: RulesEngine,
     private readonly skills: SkillsEngine,
     private readonly hooks: HookRunner,
+    private readonly memory: MemoryStore,
     private readonly chatStore: ChatStore,
     private readonly workspaceRoot: vscode.Uri,
     private readonly workspaceName: string
   ) {
-    this.services = { ollama, pendingEdits, workspaceIndex, rules, skills, hooks, chatStore, workspaceRoot, workspaceName };
+    this.services = { ollama, pendingEdits, workspaceIndex, chatMemoryIndex, rules, skills, hooks, memory, chatStore, workspaceRoot, workspaceName };
     this.entryIndex = new WorkspaceEntryIndex(workspaceRoot);
     this.pendingEdits.onDidChange((edits) => this.post({ type: 'pendingEdits', edits }));
   }
@@ -177,6 +181,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         closing?.dispose();
         this.sessions.delete(msg.id);
         await this.chatStore.delete(msg.id);
+        this.chatMemoryIndex.removeSession(msg.id);
         if (this.activeSessionId === msg.id) {
           let next: ChatSession | undefined = [...this.sessions.values()][0];
           if (!next) {
