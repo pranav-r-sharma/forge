@@ -65,6 +65,43 @@ async function main() {
 
   fs.rmSync(tmp, { recursive: true, force: true });
 
+  // ---------- close (archive) vs. delete — the fix for "chats can't be
+  // closed" (closing used to permanently delete with no way back; now it
+  // just hides the chat from the open-tabs strip while keeping it on disk) ----------
+  const tmp2 = fs.mkdtempSync(path.join(os.tmpdir(), 'forge-chatstore-close-test-'));
+  const root2 = vscode.Uri.file(tmp2);
+  const store2 = new ChatStore(root2);
+
+  await store2.save(makeSession('x', 'Chat X'));
+  await store2.save(makeSession('y', 'Chat Y'));
+
+  const beforeClose = await store2.listSessions();
+  ok(beforeClose.every((s) => !s.closed), 'sessions start out open (closed is falsy) by default');
+
+  await store2.setClosed('x', true);
+  const afterClose = await store2.listSessions();
+  const closedX = afterClose.find((s) => s.id === 'x');
+  ok(!!closedX && closedX.closed === true, 'setClosed(id, true) marks the session closed in the index');
+  ok(fs.existsSync(path.join(tmp2, '.forge', 'chat', 'x.json')), 'closing a chat does NOT delete its session file — this is the actual archive, not delete');
+  ok((await store2.load('x')) !== undefined, 'a closed chat still loads normally — closing never touches session content, only the index flag');
+
+  // The exact bug this test set exists to pin: persisting a closed chat
+  // again (every turn calls save()) must not silently reopen it.
+  await store2.save(makeSession('x', 'Chat X — updated'));
+  const afterResave = await store2.listSessions();
+  const stillClosed = afterResave.find((s) => s.id === 'x');
+  ok(!!stillClosed && stillClosed.closed === true, 'save() preserves the closed flag across a resave — a background/queued turn must not silently reopen an archived chat');
+  ok(stillClosed!.title === 'Chat X — updated', 'save() still updates the title/content normally while preserving closed');
+
+  await store2.setClosed('x', false);
+  const afterReopen = await store2.listSessions();
+  ok(afterReopen.find((s) => s.id === 'x')!.closed === false, 'setClosed(id, false) reopens a closed chat');
+
+  await store2.setClosed('nonexistent-id', true);
+  ok(true, 'setClosed() on an unknown id is a safe no-op (does not throw)');
+
+  fs.rmSync(tmp2, { recursive: true, force: true });
+
   console.log(`\n${passed} passed, ${failed} failed.`);
   if (failed > 0) process.exit(1);
   console.log('All ChatStore runtime tests passed.');

@@ -118,13 +118,45 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   }
 
   private async pushSessionsList() {
-    const persisted = await this.chatStore.listSessions();
+    // The tab strip only ever shows OPEN chats — a chat that's been closed
+    // (archived, see closeSession below) still exists in .forge/chat/ and is
+    // reachable from the "All chats" browser (listAllChats), but it's
+    // deliberately filtered out here so closing a tab actually removes it
+    // from the strip instead of it reappearing on the next list refresh.
+    const persisted = (await this.chatStore.listSessions()).filter((s) => !s.closed);
     // Merge in any not-yet-persisted (brand new, empty) open sessions so they show up immediately.
     const known = new Map(persisted.map((s) => [s.id, s]));
     for (const s of this.sessions.values()) {
       if (!known.has(s.id)) known.set(s.id, { id: s.id, title: s.title, mode: s.mode, updatedAt: new Date().toISOString() });
     }
     this.post({ type: 'sessionsList', sessions: [...known.values()], activeId: this.activeSessionId || '' });
+  }
+
+  /** Every persisted chat, open or closed, for the "All chats" browser — the one place closed chats are still visible/reachable. */
+  private async pushAllChatsList() {
+    this.post({ type: 'allChatsList', sessions: await this.chatStore.listSessions() });
+  }
+
+  /**
+   * After the active session gets closed or deleted, picks what to show
+   * instead: another currently-open in-memory session, else the
+   * most-recently-updated OPEN persisted session, else a brand-new chat
+   * (Forge never leaves the UI with no active session at all). Shared by
+   * closeSession and deleteSession so the fallback logic can't drift
+   * between the two.
+   */
+  private async replaceActiveSession() {
+    let next: ChatSession | undefined = [...this.sessions.values()][0];
+    if (!next) {
+      const persisted = (await this.chatStore.listSessions()).filter((s) => !s.closed);
+      if (persisted.length > 0) next = await this.getOrLoadSession(persisted[0].id);
+    }
+    if (!next) {
+      next = new ChatSession(this.services, (id, m) => this.notify(id, m));
+      this.sessions.set(next.id, next);
+    }
+    this.activeSessionId = next.id;
+    this.post({ type: 'sessionSwitched', session: next.toSummaryState() });
   }
 
   private async getOrLoadSession(id: string): Promise<ChatSession | undefined> {
@@ -158,49 +190,53 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       case 'switchSession': {
         const session = await this.getOrLoadSession(msg.id);
         if (!session) return;
+        // Switching to a chat implies it's active/open again — this is how a
+        // closed chat gets reopened from the "All chats" browser or a search
+        // result. A no-op (cheap index write) if it wasn't closed.
+        await this.chatStore.setClosed(msg.id, false);
         this.activeSessionId = session.id;
         this.post({ type: 'sessionSwitched', session: session.toSummaryState() });
         await this.pushSessionsList();
         return;
       }
       case 'closeSession': {
-        // "Closing" a tab deletes that chat's history for good — there is no
-        // separate "hide but keep" state, so this must remove it from both
-        // the in-memory session map AND the on-disk store. Doing only the
-        // former left the persisted copy in .forge/chat/index.json, and
-        // pushSessionsList()/sendInit() both rebuild their tab list from
-        // chatStore.listSessions(), so the "closed" chat reappeared on the
-        // very next list refresh. See CHANGELOG for the v2.0.1 fix.
-        const wasOnlySession = this.sessions.size <= 1 && (await this.chatStore.listSessions()).length <= 1;
-        if (wasOnlySession) {
-          this.post({ type: 'toast', level: 'warn', text: "Can't delete your only chat — start a new one first." });
-          return;
-        }
+        // Closing a tab ARCHIVES the chat, it does not delete it: the
+        // session file stays on disk under .forge/chat/, it's just hidden
+        // from the open-tabs strip (see pushSessionsList's filter) until
+        // reopened via switchSession (from the "All chats" browser or a
+        // search result) or removed for good via deleteSession. This used
+        // to permanently delete on close with no way back — see CHANGELOG.
         const closing = this.sessions.get(msg.id);
         closing?.stop();
         closing?.dispose();
         this.sessions.delete(msg.id);
+        await this.chatStore.setClosed(msg.id, true);
+        if (this.activeSessionId === msg.id) await this.replaceActiveSession();
+        await this.pushSessionsList();
+        await this.pushAllChatsList();
+        this.post({ type: 'toast', level: 'info', text: 'Chat closed — still saved, reopen it from All Chats.' });
+        return;
+      }
+      case 'deleteSession': {
+        // The actually-destructive action, now separate from closing (see
+        // above) — permanently removes the session file, its crash log, and
+        // its entry from the chat-memory search index.
+        const deleting = this.sessions.get(msg.id);
+        deleting?.stop();
+        deleting?.dispose();
+        this.sessions.delete(msg.id);
         await this.chatStore.delete(msg.id);
         this.chatMemoryIndex.removeSession(msg.id);
         this.historyCache.delete(msg.id);
-        if (this.activeSessionId === msg.id) {
-          let next: ChatSession | undefined = [...this.sessions.values()][0];
-          if (!next) {
-            const persisted = await this.chatStore.listSessions();
-            if (persisted.length > 0) next = await this.getOrLoadSession(persisted[0].id);
-          }
-          if (!next) {
-            // Nothing left at all — start a fresh chat rather than leaving the UI with no active session.
-            next = new ChatSession(this.services, (id, m) => this.notify(id, m));
-            this.sessions.set(next.id, next);
-          }
-          this.activeSessionId = next.id;
-          this.post({ type: 'sessionSwitched', session: next.toSummaryState() });
-        }
+        if (this.activeSessionId === msg.id) await this.replaceActiveSession();
         await this.pushSessionsList();
-        this.post({ type: 'toast', level: 'info', text: 'Chat deleted.' });
+        await this.pushAllChatsList();
+        this.post({ type: 'toast', level: 'info', text: 'Chat deleted permanently.' });
         return;
       }
+      case 'listAllChats':
+        await this.pushAllChatsList();
+        return;
       case 'setMode':
         this.activeSession()?.setMode(msg.mode);
         return;
@@ -367,9 +403,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       }
     }
 
-    // Restore the most-recently-updated session, or start fresh.
+    // Restore the most-recently-updated OPEN session, or start fresh —
+    // closed/archived chats are never auto-restored into the tab strip,
+    // only reachable deliberately via the "All chats" browser or search.
     if (this.sessions.size === 0) {
-      const persisted = await this.chatStore.listSessions();
+      const persisted = (await this.chatStore.listSessions()).filter((s) => !s.closed);
       if (persisted.length > 0) {
         const session = await this.getOrLoadSession(persisted[0].id);
         if (session) this.activeSessionId = session.id;
@@ -383,7 +421,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     }
 
     const active = this.activeSession();
-    const persistedSummaries = await this.chatStore.listSessions();
+    const persistedSummaries = (await this.chatStore.listSessions()).filter((s) => !s.closed);
     const known = new Map(persistedSummaries.map((s) => [s.id, s]));
     for (const s of this.sessions.values()) {
       if (!known.has(s.id)) known.set(s.id, { id: s.id, title: s.title, mode: s.mode, updatedAt: new Date().toISOString() });

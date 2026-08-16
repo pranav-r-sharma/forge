@@ -102,7 +102,7 @@ If you don't set a check command, the model has to verify its own work some othe
 
 ### Multitask (chat tabs)
 
-The strip above the mode pills is a tab bar — click **+** for a new chat, click a tab to switch, click **×** to close it. Closing a tab asks for confirmation and then **permanently deletes** that chat's history from `.forge/chat/` — there's currently no "hide but keep" state, so if you want to keep a conversation around, just leave the tab open (or don't close your last one; Forge always keeps at least one chat alive). Each open tab has its own mode, message history, and in-flight agent run; a tab working in the background shows a small pulsing dot until you switch to it.
+The strip above the mode pills is a tab bar — click **+** for a new chat, click a tab to switch, click **×** to close it. As of 0.6.0, **closing a tab archives the chat, it does not delete it** — the chat disappears from the open-tabs strip, but its `.forge/chat/<id>.json` file stays on disk untouched. Click **📁 All Chats** in the header to see every chat, open or closed, and reopen any of them (clicking a title clears its closed flag and switches to it). Actually deleting a chat for good is a separate, still-confirmed action — the 🗑 icon next to each chat in the All Chats panel. Each open tab has its own mode, message history, and in-flight agent run; a tab working in the background shows a small pulsing dot until you switch to it.
 
 ### Checkpoints — restore a chat (and your files) to an earlier point
 
@@ -211,8 +211,9 @@ Rather than relying on any one model's native function-calling format (inconsist
 
 File edits go through an in-memory "pending edit" overlay: the agent's own view of a file it just edited is immediately the new version (so it can make several dependent edits in one turn), but nothing touches your disk until you accept it. Tab autocomplete uses Ollama's `/api/generate` with `prompt`/`suffix` (fill-in-middle) and lets Ollama apply each model's own FIM template, so it works across qwen2.5-coder, deepseek-coder, starcoder2, codegemma, codellama, etc. without hand-maintaining per-model special tokens.
 
-## Known limitations (0.5.0)
+## Known limitations (0.6.0)
 
+- **The 0.6.0 confirm-dialog fix (window.confirm → an in-DOM modal) is a best-effort fix for a real, documented VS Code webview limitation, but this sandbox cannot run the actual extension host to confirm it fixes what you saw.** If Auto mode (or anything else that used to call `window.confirm`) still doesn't work after updating, it's a different bug — please retest and report the exact symptom, an error toast if one appears, or what shows up in **Developer: Open Webview Developer Tools** (Command Palette → search for it) so it's diagnosable.
 - Inline edit (Cmd+K) uses a simple input box for the instruction rather than a floating in-editor widget, and supports one pending inline edit at a time.
 - No multi-root workspace support — Forge uses the first workspace folder.
 - The semantic index is a flat cosine-similarity search over line-chunked files (no AST-aware chunking) — good for "what file handles X", not a replacement for `search_code` on exact symbols.

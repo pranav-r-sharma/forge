@@ -5,6 +5,21 @@ that "did the last release actually fix what it claims to" has a paper trail
 you can check against — see the testing notes in the README for how each
 entry below was verified.
 
+## 0.6.0
+
+Two bug reports from actually using this in a real VS Code window for the first time (everything before this was type-checked and unit-tested in a sandbox that can't run the real extension host — see README → Testing).
+
+### Fixed
+
+- **Root cause of "chats can't be deleted or closed" (and very likely part of "Auto mode doesn't work"): `window.confirm()`/`alert()` are not reliably supported inside a VS Code webview.** This is a documented webview limitation, not something obvious from the code — every confirmation dialog in the chat panel (closing a tab, switching to Auto/Outcome mode, restoring a checkpoint) used `window.confirm()`, which can silently no-op in a real webview instead of showing anything, which looks exactly like "I clicked the button and nothing happened." Replaced with a real in-DOM modal (`confirmDialog()` in `webview.js`) that behaves the same way every time. Also added a global `window.onerror`/`unhandledrejection` handler that surfaces any future webview JS error as a toast instead of failing silently, so the next "nothing happened" bug is diagnosable instead of invisible.
+- Mode switches now show a confirmation toast ("Switched to Auto mode.") so it's visible whether a switch actually landed — useful for exactly this kind of "did that even work" question going forward.
+
+### Changed
+
+- **Closing a chat tab no longer deletes it — it archives it.** This was flagged directly ("chats can't be closed... I want chats to be saved locally"): the × button used to permanently delete `.forge/chat/<id>.json` with no way back (by design, since 0.2.1). Now it just hides the chat from the open-tabs strip; the session file stays on disk untouched. A new **All Chats** panel (📁 in the header, next to search) lists every chat, open or closed — click a title to reopen it (clears the closed flag), or the 🗑 to actually delete it for good, which now requires a separate, deliberate, still-confirmed action instead of being what closing did. `ChatStore` gained `SessionSummary.closed` and `setClosed()`; `save()` was fixed to preserve the closed flag across a resave, so a background turn completing on an archived chat can't silently reopen it.
+
+Verified with `tsc --noEmit`, `node --check` on the webview JS, and 8 new `test_chatstore.ts` assertions covering the close/reopen/resave-preserves-closed contract, plus the full existing suite (all passing). The confirm-modal and webview-error-handler fix specifically targets something the sandbox here cannot reproduce or verify (real webview behavior) — this is a best-effort fix based on a well-documented VS Code webview limitation, not something confirmed against your actual report. Please retest both — especially Auto mode — and report back if either is still broken; if Auto mode still doesn't work after this, it's a different bug and I'll need the exact symptom (error toast text, or what you see in Developer: Open Webview Developer Tools) to keep digging.
+
 ## 0.5.0
 
 Four of the five improvements from the last roadmap review, folding "Auto mode definition of done" into the headline item below since they turned out to be the same mechanism. The headline one is genuinely new behavior rather than a refinement: a mode where you state a destination and Forge works backward from it instead of you writing the steps. Verified with `tsc --noEmit` and a new runtime test file (`test_v4.ts`, 23 assertions) that exercises the actual iterate-until-true loop end-to-end — not just its pieces — plus the full existing suite (all still passing). Not yet run inside a real VS Code extension host, same caveat as every release so far.

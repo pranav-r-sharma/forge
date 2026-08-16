@@ -37,6 +37,8 @@ export interface SessionSummary {
   title: string;
   mode: ForgeMode;
   updatedAt: string;
+  /** True once the user has closed this chat's tab. Closing no longer deletes anything (see CHANGELOG) — it just hides the chat from the open-tabs strip; the session file stays on disk and the chat is reachable from the "All chats" browser, which can reopen it (clearing this flag) or permanently delete it. Undefined/false = open. */
+  closed?: boolean;
 }
 
 interface IndexFile {
@@ -95,11 +97,30 @@ export class ChatStore {
       await vscode.workspace.fs.writeFile(tmp, Buffer.from(JSON.stringify(session, null, 2), 'utf8'));
       await vscode.workspace.fs.rename(tmp, target, { overwrite: true });
       const idx = await this.readIndex();
-      const summary: SessionSummary = { id: session.id, title: session.title, mode: session.mode, updatedAt: session.updatedAt };
+      // Preserve the existing closed/open flag — a session's own content
+      // (title, mode, transcript) is saved constantly as you chat, but
+      // whether its tab is open or archived is separate, tab-strip-level
+      // state that setClosed() owns; save() must not silently reopen an
+      // archived chat just because a background turn persisted it.
+      const prior = idx.sessions.find((s) => s.id === session.id);
+      const summary: SessionSummary = { id: session.id, title: session.title, mode: session.mode, updatedAt: session.updatedAt, closed: prior?.closed };
       const others = idx.sessions.filter((s) => s.id !== session.id);
       await this.writeIndex({ sessions: [...others, summary] });
     } catch (err) {
       logger.warn('Failed to persist chat session', String(err));
+    }
+  }
+
+  /** Archives (closed=true) or reopens (closed=false) a chat without touching its content — see SessionSummary.closed. A no-op if the session isn't in the index (e.g. already deleted). */
+  async setClosed(id: string, closed: boolean): Promise<void> {
+    try {
+      const idx = await this.readIndex();
+      const target = idx.sessions.find((s) => s.id === id);
+      if (!target) return;
+      target.closed = closed;
+      await this.writeIndex(idx);
+    } catch (err) {
+      logger.warn('Failed to update chat closed state', String(err));
     }
   }
 

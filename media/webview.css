@@ -765,3 +765,84 @@ body {
   opacity: 0.6;
   font-size: 12px;
 }
+
+.all-chats-header {
+  padding: 8px 10px 4px;
+  font-size: 12px;
+  font-weight: 600;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.all-chats-hint {
+  font-weight: 400;
+  opacity: 0.6;
+  font-size: 11px;
+}
+.all-chats-item {
+  cursor: default;
+}
+.all-chats-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.all-chats-title {
+  cursor: pointer;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.all-chats-title:hover {
+  text-decoration: underline;
+}
+.all-chats-badge {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: var(--vscode-badge-background, rgba(128, 128, 128, 0.3));
+  color: var(--vscode-badge-foreground, inherit);
+  opacity: 0.85;
+}
+.all-chats-delete {
+  opacity: 0.6;
+}
+.all-chats-delete:hover {
+  opacity: 1;
+  color: var(--vscode-errorForeground);
+}
+
+/* ---------- custom confirm modal ----------
+   VS Code webviews don't reliably support window.confirm()/alert() — see the
+   comment in webview.js. This is a real modal so confirmations always work. */
+.forge-modal-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.forge-modal {
+  background: var(--vscode-editorWidget-background);
+  border: 1px solid var(--vscode-widget-border, var(--vscode-panel-border));
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
+  padding: 16px;
+  max-width: 340px;
+  width: 90%;
+}
+.forge-modal-text {
+  font-size: 13px;
+  line-height: 1.5;
+  margin-bottom: 14px;
+  white-space: pre-wrap;
+}
+.forge-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}

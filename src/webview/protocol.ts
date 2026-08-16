@@ -98,7 +98,8 @@ export type ExtensionToWebviewMessage =
   | { type: 'hwStatus'; status: HwStatus }
   | { type: 'metricsUpdate'; sessionId: string; metrics: OllamaCallMetrics }
   | { type: 'checkpointRestored'; sessionId: string; message: string; ok: boolean }
-  | { type: 'searchResults'; query: string; results: SearchResultItem[] };
+  | { type: 'searchResults'; query: string; results: SearchResultItem[] }
+  | { type: 'allChatsList'; sessions: SessionSummary[] };
 
 export type WebviewToExtensionMessage =
   | { type: 'ready' }
@@ -123,4 +124,6 @@ export type WebviewToExtensionMessage =
   | { type: 'restoreCheckpoint'; id: string }
   | { type: 'searchChats'; query: string }
   | { type: 'refreshHwStatus' }
-  | { type: 'setVerifyCommand'; command: string };
+  | { type: 'setVerifyCommand'; command: string }
+  | { type: 'deleteSession'; id: string }
+  | { type: 'listAllChats' };

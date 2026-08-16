@@ -69,7 +69,7 @@ This catalogues Cursor's agentic integration into the editor — everything beyo
 | Cursor feature | Forge status |
 |---|---|
 | Persistent chat history | ✅ v1 (VS Code `workspaceState`) → 🆕 v2 (moved to `.forge/chat/*.json` in the repo, per your request) |
-| Multiple chat tabs | 🆕 v2 |
+| Multiple chat tabs | 🆕 v2 — 🆕 v0.6.0: closing a tab now archives it (session file stays on disk) instead of permanently deleting it; a new "All Chats" panel lists open + closed chats and can reopen or permanently delete any of them |
 | Branch a conversation | 🗺️ roadmap |
 | Search across chat history | 🆕 v3.0 — searches every saved session, not just the open tab; 🆕 v0.5.0 — closed sessions' transcripts are now cached (keyed by `updatedAt`), so repeated searches stop re-reading every session file from disk each keystroke |
 | Context-window summarization on long chats | 🆕 v3.0 — stale-read pruning + summarization of the older part of a long transcript, applied only to what's sent to the model (never to the persisted `.forge/chat/*.json`, so nothing is actually lost). Paired in v0.4.0 with `search_chat_history` so the model can pull back an exact detail a summary glossed over, instead of only the persisted-but-unreachable-from-the-prompt transcript. |

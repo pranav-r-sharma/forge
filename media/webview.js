@@ -28,6 +28,7 @@
     mentionResults: [], // [{path, kind}] or skill matches, whichever is active
     mentionSelectedIndex: -1,
     searchOpen: false,
+    allChatsOpen: false,
   };
 
   const root = document.getElementById('root');
@@ -37,6 +38,7 @@
         <div class="forge-header-title"><span class="forge-logo">&#9670;</span> Forge</div>
         <div class="forge-header-actions">
           <button id="btn-search" class="icon-btn" title="Search all chats">&#128269;</button>
+          <button id="btn-all-chats" class="icon-btn" title="All chats (including closed ones)">&#128193;</button>
           <button id="btn-index" class="icon-btn" title="Index workspace for @codebase search">&#8635;</button>
           <button id="btn-new-chat" class="icon-btn" title="New chat">+</button>
         </div>
@@ -45,6 +47,19 @@
       <div id="search-panel" class="forge-search-panel" style="display:none;">
         <input id="search-input" type="text" placeholder="Search every chat…" />
         <div id="search-results" class="search-results"></div>
+      </div>
+      <div id="all-chats-panel" class="forge-search-panel" style="display:none;">
+        <div class="all-chats-header">All chats <span class="all-chats-hint">closed chats are still saved — click to reopen</span></div>
+        <div id="all-chats-list" class="search-results"></div>
+      </div>
+      <div id="confirm-overlay" class="forge-modal-overlay" style="display:none;">
+        <div class="forge-modal">
+          <div id="confirm-modal-text" class="forge-modal-text"></div>
+          <div class="forge-modal-actions">
+            <button id="confirm-modal-cancel" class="link-btn">Cancel</button>
+            <button id="confirm-modal-ok" class="deny-btn">Confirm</button>
+          </div>
+        </div>
       </div>
       <div id="banner" class="forge-banner" style="display:none;"></div>
       <div id="auto-banner" class="forge-banner forge-banner-warn" style="display:none;"></div>
@@ -106,7 +121,59 @@
     searchResults: document.getElementById('search-results'),
     verifyRow: document.getElementById('verify-row'),
     verifyInput: /** @type {HTMLInputElement} */ (document.getElementById('verify-input')),
+    allChatsBtn: document.getElementById('btn-all-chats'),
+    allChatsPanel: document.getElementById('all-chats-panel'),
+    allChatsList: document.getElementById('all-chats-list'),
+    confirmOverlay: document.getElementById('confirm-overlay'),
+    confirmText: document.getElementById('confirm-modal-text'),
+    confirmOk: document.getElementById('confirm-modal-ok'),
+    confirmCancel: document.getElementById('confirm-modal-cancel'),
   };
+
+  // ---------- custom confirm dialog ----------
+  // VS Code webviews do not reliably support window.confirm()/alert() — it's
+  // a documented webview limitation, and every previous use of window.confirm
+  // in this file (closing a chat, restoring a checkpoint, switching to
+  // Auto/Outcome mode) could silently no-op because of it, which looks
+  // exactly like "nothing happens when I click X". This is a real in-DOM
+  // modal instead, so it always works the same way the rest of the UI does.
+  let confirmResolve = null;
+  function confirmDialog(message) {
+    return new Promise((resolve) => {
+      confirmResolve = resolve;
+      el.confirmText.textContent = message;
+      el.confirmOverlay.style.display = 'flex';
+    });
+  }
+  function settleConfirm(result) {
+    el.confirmOverlay.style.display = 'none';
+    const resolve = confirmResolve;
+    confirmResolve = null;
+    if (resolve) resolve(result);
+  }
+  el.confirmOk.addEventListener('click', () => settleConfirm(true));
+  el.confirmCancel.addEventListener('click', () => settleConfirm(false));
+  el.confirmOverlay.addEventListener('click', (e) => {
+    if (e.target === el.confirmOverlay) settleConfirm(false);
+  });
+  document.addEventListener('keydown', (e) => {
+    if (el.confirmOverlay.style.display !== 'none' && e.key === 'Escape') settleConfirm(false);
+  });
+
+  // A JS error anywhere in this file (a bad message shape, a null ref in a
+  // render function, etc.) would otherwise fail completely silently in a
+  // webview — no console visible by default, nothing in the VS Code UI —
+  // which is exactly what "I clicked X and nothing happened" looks like
+  // from the outside. Surface it as a toast so it's at least visible, and
+  // still log it for "Developer: Open Webview Developer Tools".
+  window.addEventListener('error', (e) => {
+    console.error('Forge webview error:', e.error || e.message);
+    showToast('error', `Forge UI error: ${(e.error && e.error.message) || e.message || 'unknown error'} — see Developer: Open Webview Developer Tools for details.`);
+  });
+  window.addEventListener('unhandledrejection', (e) => {
+    console.error('Forge webview unhandled rejection:', e.reason);
+    showToast('error', `Forge UI error: ${(e.reason && e.reason.message) || e.reason || 'unknown error'} — see Developer: Open Webview Developer Tools for details.`);
+  });
 
   document.getElementById('btn-new-chat').addEventListener('click', () => vscodeApi.postMessage({ type: 'newChat' }));
   document.getElementById('btn-index').addEventListener('click', () => vscodeApi.postMessage({ type: 'indexWorkspace' }));
@@ -165,6 +232,53 @@
     return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   }
 
+  // ---------- all chats (open + closed) ----------
+  el.allChatsBtn.addEventListener('click', () => {
+    state.allChatsOpen = !state.allChatsOpen;
+    el.allChatsPanel.style.display = state.allChatsOpen ? 'flex' : 'none';
+    if (state.allChatsOpen) {
+      if (state.searchOpen) {
+        state.searchOpen = false;
+        el.searchPanel.style.display = 'none';
+      }
+      vscodeApi.postMessage({ type: 'listAllChats' });
+    }
+  });
+
+  function renderAllChats(sessions) {
+    el.allChatsList.innerHTML = '';
+    if (sessions.length === 0) {
+      el.allChatsList.innerHTML = '<div class="search-empty">No chats yet.</div>';
+      return;
+    }
+    // Open chats first (they're what you're most likely looking for), most-recently-updated within each group.
+    const sorted = sessions.slice().sort((a, b) => (!!a.closed === !!b.closed ? (a.updatedAt < b.updatedAt ? 1 : -1) : a.closed ? 1 : -1));
+    for (const s of sorted) {
+      const item = document.createElement('div');
+      item.className = 'search-result-item all-chats-item';
+      item.innerHTML = `
+        <div class="all-chats-row">
+          <span class="all-chats-title">${escapeHtml(s.title || 'New chat')}</span>
+          ${s.closed ? '<span class="all-chats-badge">closed</span>' : ''}
+          <span class="spacer"></span>
+          <button class="link-btn all-chats-delete" title="Delete permanently">&#128465;</button>
+        </div>
+      `;
+      item.querySelector('.all-chats-title').addEventListener('click', () => {
+        vscodeApi.postMessage({ type: 'switchSession', id: s.id });
+        state.allChatsOpen = false;
+        el.allChatsPanel.style.display = 'none';
+      });
+      item.querySelector('.all-chats-delete').addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const label = s.title || 'this chat';
+        if (!(await confirmDialog(`Permanently delete "${label}"? This removes its saved history from .forge/chat and cannot be undone.`))) return;
+        vscodeApi.postMessage({ type: 'deleteSession', id: s.id });
+      });
+      el.allChatsList.appendChild(item);
+    }
+  }
+
   // ---------- mode strip ----------
   function renderModeStrip() {
     el.modeStrip.innerHTML = '';
@@ -173,12 +287,12 @@
       btn.className = 'mode-btn' + (m.id === 'auto' ? ' mode-auto' : '') + (m.id === 'outcome' ? ' mode-outcome' : '') + (m.id === state.activeMode ? ' active' : '');
       btn.textContent = m.label;
       btn.title = m.description;
-      btn.addEventListener('click', () => {
+      btn.addEventListener('click', async () => {
         if (m.id === state.activeMode) return;
-        if (m.id === 'auto' && !window.confirm('Switch to Auto mode? Forge will edit files and run commands with NO approval prompts from here on (a hard-coded denylist still blocks a few destructive commands). A checkpoint is saved before every turn so you can revert.')) {
+        if (m.id === 'auto' && !(await confirmDialog('Switch to Auto mode? Forge will edit files and run commands with NO approval prompts from here on (a hard-coded denylist still blocks a few destructive commands). A checkpoint is saved before every turn so you can revert.'))) {
           return;
         }
-        if (m.id === 'outcome' && !window.confirm('Switch to Outcome mode? Describe a destination, not steps — Forge works backward from it with NO approval prompts (same denylist exception as Auto mode) and keeps iterating, checking its own progress, until it\'s reached. Set an optional "definition of done" command below the mode row for a real, automatic check instead of relying on the model\'s own judgment. A checkpoint is saved before every turn so you can revert.')) {
+        if (m.id === 'outcome' && !(await confirmDialog('Switch to Outcome mode? Describe a destination, not steps — Forge works backward from it with NO approval prompts (same denylist exception as Auto mode) and keeps iterating, checking its own progress, until it\'s reached. Set an optional "definition of done" command below the mode row for a real, automatic check instead of relying on the model\'s own judgment. A checkpoint is saved before every turn so you can revert.'))) {
           return;
         }
         state.activeMode = m.id;
@@ -186,6 +300,7 @@
         renderAutoBanner();
         renderVerifyRow();
         vscodeApi.postMessage({ type: 'setMode', mode: m.id });
+        showToast('info', `Switched to ${m.label} mode.`);
       });
       el.modeStrip.appendChild(btn);
     }
@@ -246,15 +361,16 @@
       tab.innerHTML = `
         ${busy ? '<span class="tab-spinner"></span>' : ''}
         <span class="tab-title">${escapeHtml(s.title || 'New chat')}</span>
-        <span class="tab-close" title="Delete this chat permanently">&times;</span>
+        <span class="tab-close" title="Close (still saved — reopen from All Chats)">&times;</span>
       `;
       tab.querySelector('.tab-title').addEventListener('click', () => {
         if (s.id !== state.activeSessionId) vscodeApi.postMessage({ type: 'switchSession', id: s.id });
       });
       tab.querySelector('.tab-close').addEventListener('click', (e) => {
         e.stopPropagation();
-        const label = s.title || 'this chat';
-        if (!window.confirm(`Delete "${label}"? This permanently removes its saved history from .forge/chat.`)) return;
+        // Closing just archives the chat now — nothing destructive happens,
+        // so no confirmation needed. Permanent deletion lives in the All
+        // Chats panel, where it's a deliberate, separate, confirmed action.
         vscodeApi.postMessage({ type: 'closeSession', id: s.id });
       });
       el.tabStrip.appendChild(tab);
@@ -495,8 +611,8 @@
         btn.className = 'checkpoint-restore-btn';
         btn.textContent = '⟲ Restore to here';
         btn.title = 'Revert every file edit and message from this point on';
-        btn.addEventListener('click', () => {
-          if (!window.confirm('Restore to this point? This reverts every file edit made from here on and removes the messages after it. This cannot be undone.')) return;
+        btn.addEventListener('click', async () => {
+          if (!(await confirmDialog('Restore to this point? This reverts every file edit made from here on and removes the messages after it. This cannot be undone.'))) return;
           vscodeApi.postMessage({ type: 'restoreCheckpoint', id: entry.checkpointId });
         });
         wrap.appendChild(btn);
@@ -813,6 +929,10 @@
       }
       case 'searchResults': {
         renderSearchResults(msg.results, msg.query);
+        break;
+      }
+      case 'allChatsList': {
+        renderAllChats(msg.sessions);
         break;
       }
     }
