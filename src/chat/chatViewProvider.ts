@@ -39,6 +39,51 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   /** Last completed call's metrics per session, so buildHwStatus() can report context-window usage (item "context usage metrics") without threading metrics through every call site. Best-effort/ephemeral — never persisted. */
   private lastMetricsBySession = new Map<string, OllamaCallMetrics>();
 
+  /**
+   * Serializes the session-management operations (new/switch/close/delete/
+   * rename) against EACH OTHER. `webviewView.webview.onDidReceiveMessage`
+   * invokes `handleMessage` without awaiting it, so if the user clicks
+   * around quickly — e.g. two tabs in succession, or close right after
+   * switch — multiple of these can genuinely run concurrently. Whichever one
+   * happens to finish its own async work (loading a not-yet-in-memory
+   * session from disk, etc.) LAST wins and silently overwrites
+   * `this.activeSessionId`/`this.sessions`, even if it was the one the user
+   * triggered first — this is the direct cause of "I clicked a chat and it
+   * just didn't open" (it opened, then an in-flight earlier/slower op
+   * finished after and reverted the switch). Routing these five operations
+   * through one FIFO queue makes them fully sequential, so the last one
+   * *requested* is always the last one applied. Deliberately narrow: `send`/
+   * `stop`/every other message type is untouched and stays fully
+   * concurrent — an agent turn in flight must never block clicking Stop or
+   * switching tabs.
+   */
+  private sessionOpQueue: Promise<any> = Promise.resolve();
+  private enqueueSessionOp<T>(fn: () => Promise<T>): Promise<T> {
+    const run = this.sessionOpQueue.then(fn, fn);
+    this.sessionOpQueue = run.then(
+      () => undefined,
+      () => undefined
+    );
+    return run;
+  }
+
+  /**
+   * Monotonic counters for `sessionsList`/`allChatsList`, incremented at
+   * the moment each push is CALLED (not when its async read resolves).
+   * `pushSessionsList`/`pushAllChatsList` are called from many independent
+   * places (session-management ops above, and background sessions'
+   * `notify()` on every `busy` event) and each does its own async
+   * `chatStore.listSessions()` read before posting — two overlapping calls
+   * can resolve in the opposite order they were started in, so without a
+   * sequence number a slightly-stale snapshot from an earlier call can land
+   * at the webview AFTER a fresher one and silently roll the tab strip back
+   * (a closed/renamed chat "flickering" back to its old state). The webview
+   * keeps the highest seq it has applied per message type and ignores
+   * anything older — see webview.js's `case 'sessionsList'`/`'allChatsList'`.
+   */
+  private sessionsListSeq = 0;
+  private allChatsListSeq = 0;
+
   constructor(
     private readonly context: vscode.ExtensionContext,
     private readonly ollama: OllamaClient,
@@ -97,12 +142,14 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   }
 
   async newChat() {
-    const session = new ChatSession(this.services, (id, msg) => this.notify(id, msg));
-    this.sessions.set(session.id, session);
-    this.activeSessionId = session.id;
-    await session.runHookOnce('session-start');
-    this.post({ type: 'sessionSwitched', session: session.toSummaryState() });
-    await this.pushSessionsList();
+    return this.enqueueSessionOp(async () => {
+      const session = new ChatSession(this.services, (id, msg) => this.notify(id, msg));
+      this.sessions.set(session.id, session);
+      this.activeSessionId = session.id;
+      await session.runHookOnce('session-start');
+      this.post({ type: 'sessionSwitched', session: session.toSummaryState() });
+      await this.pushSessionsList();
+    });
   }
 
   async refreshIndexStatus() {
@@ -129,6 +176,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   }
 
   private async pushSessionsList() {
+    // Captured synchronously, before the await below, so it reflects THIS
+    // call's position in the call order — see the sessionsListSeq doc
+    // comment up in the constructor area.
+    const seq = ++this.sessionsListSeq;
     // The tab strip only ever shows OPEN chats — a chat that's been closed
     // (archived, see closeSession below) still exists in .forge/chat/ and is
     // reachable from the "All chats" browser (listAllChats), but it's
@@ -140,12 +191,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     for (const s of this.sessions.values()) {
       if (!known.has(s.id)) known.set(s.id, { id: s.id, title: s.title, mode: s.mode, updatedAt: new Date().toISOString() });
     }
-    this.post({ type: 'sessionsList', sessions: [...known.values()], activeId: this.activeSessionId || '' });
+    this.post({ type: 'sessionsList', seq, sessions: [...known.values()], activeId: this.activeSessionId || '' });
   }
 
   /** Every persisted chat, open or closed, for the "All chats" browser — the one place closed chats are still visible/reachable. */
   private async pushAllChatsList() {
-    this.post({ type: 'allChatsList', sessions: await this.chatStore.listSessions() });
+    const seq = ++this.allChatsListSeq;
+    this.post({ type: 'allChatsList', seq, sessions: await this.chatStore.listSessions() });
   }
 
   /**
@@ -199,15 +251,30 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         await this.newChat();
         return;
       case 'switchSession': {
-        const session = await this.getOrLoadSession(msg.id);
-        if (!session) return;
-        // Switching to a chat implies it's active/open again — this is how a
-        // closed chat gets reopened from the "All chats" browser or a search
-        // result. A no-op (cheap index write) if it wasn't closed.
-        await this.chatStore.setClosed(msg.id, false);
-        this.activeSessionId = session.id;
-        this.post({ type: 'sessionSwitched', session: session.toSummaryState() });
-        await this.pushSessionsList();
+        // Enqueued (see sessionOpQueue's doc comment) so a second click
+        // (another tab, or the same one again) can't finish first and get
+        // silently overwritten by this one finishing later, or vice versa —
+        // whichever switch was requested LAST is always the one that ends
+        // up active, matching what the user actually clicked most recently.
+        await this.enqueueSessionOp(async () => {
+          const session = await this.getOrLoadSession(msg.id);
+          if (!session) {
+            // Previously a silent no-op — from the user's side this looked
+            // exactly like "I clicked a chat and nothing happened," with no
+            // way to tell a real failure from a UI glitch. This is a genuine
+            // failure (the session's .forge/chat/<id>.json is missing or
+            // unreadable), so say so.
+            this.post({ type: 'toast', level: 'error', text: "Couldn't open that chat — its saved data may be missing. Try again, or check it in All Chats." });
+            return;
+          }
+          // Switching to a chat implies it's active/open again — this is how a
+          // closed chat gets reopened from the "All chats" browser or a search
+          // result. A no-op (cheap index write) if it wasn't closed.
+          await this.chatStore.setClosed(msg.id, false);
+          this.activeSessionId = session.id;
+          this.post({ type: 'sessionSwitched', session: session.toSummaryState() });
+          await this.pushSessionsList();
+        });
         return;
       }
       case 'closeSession': {
@@ -217,32 +284,36 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         // reopened via switchSession (from the "All chats" browser or a
         // search result) or removed for good via deleteSession. This used
         // to permanently delete on close with no way back — see CHANGELOG.
-        const closing = this.sessions.get(msg.id);
-        closing?.stop();
-        closing?.dispose();
-        this.sessions.delete(msg.id);
-        await this.chatStore.setClosed(msg.id, true);
-        if (this.activeSessionId === msg.id) await this.replaceActiveSession();
-        await this.pushSessionsList();
-        await this.pushAllChatsList();
-        this.post({ type: 'toast', level: 'info', text: 'Chat closed — still saved, reopen it from All Chats.' });
+        await this.enqueueSessionOp(async () => {
+          const closing = this.sessions.get(msg.id);
+          closing?.stop();
+          closing?.dispose();
+          this.sessions.delete(msg.id);
+          await this.chatStore.setClosed(msg.id, true);
+          if (this.activeSessionId === msg.id) await this.replaceActiveSession();
+          await this.pushSessionsList();
+          await this.pushAllChatsList();
+          this.post({ type: 'toast', level: 'info', text: 'Chat closed — still saved, reopen it from All Chats.' });
+        });
         return;
       }
       case 'deleteSession': {
         // The actually-destructive action, now separate from closing (see
         // above) — permanently removes the session file, its crash log, and
         // its entry from the chat-memory search index.
-        const deleting = this.sessions.get(msg.id);
-        deleting?.stop();
-        deleting?.dispose();
-        this.sessions.delete(msg.id);
-        await this.chatStore.delete(msg.id);
-        this.chatMemoryIndex.removeSession(msg.id);
-        this.historyCache.delete(msg.id);
-        if (this.activeSessionId === msg.id) await this.replaceActiveSession();
-        await this.pushSessionsList();
-        await this.pushAllChatsList();
-        this.post({ type: 'toast', level: 'info', text: 'Chat deleted permanently.' });
+        await this.enqueueSessionOp(async () => {
+          const deleting = this.sessions.get(msg.id);
+          deleting?.stop();
+          deleting?.dispose();
+          this.sessions.delete(msg.id);
+          await this.chatStore.delete(msg.id);
+          this.chatMemoryIndex.removeSession(msg.id);
+          this.historyCache.delete(msg.id);
+          if (this.activeSessionId === msg.id) await this.replaceActiveSession();
+          await this.pushSessionsList();
+          await this.pushAllChatsList();
+          this.post({ type: 'toast', level: 'info', text: 'Chat deleted permanently.' });
+        });
         return;
       }
       case 'listAllChats':
@@ -337,15 +408,17 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         // currently loaded into memory (use its own rename() so
         // titleManuallySet is set) or only on disk (rename via ChatStore
         // directly, from the All Chats panel).
-        const loaded = this.sessions.get(msg.id);
-        if (loaded) loaded.rename(msg.title);
-        else await this.chatStore.rename(msg.id, msg.title);
-        await this.pushSessionsList();
-        await this.pushAllChatsList();
-        if (this.activeSessionId === msg.id) {
-          const active = this.activeSession();
-          if (active) this.post({ type: 'sessionSwitched', session: active.toSummaryState() });
-        }
+        await this.enqueueSessionOp(async () => {
+          const loaded = this.sessions.get(msg.id);
+          if (loaded) loaded.rename(msg.title);
+          else await this.chatStore.rename(msg.id, msg.title);
+          await this.pushSessionsList();
+          await this.pushAllChatsList();
+          if (this.activeSessionId === msg.id) {
+            const active = this.activeSession();
+            if (active) this.post({ type: 'sessionSwitched', session: active.toSummaryState() });
+          }
+        });
         return;
       }
       case 'getSettings': {

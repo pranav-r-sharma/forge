@@ -14,6 +14,8 @@ Everything here is catalogued but not built. Ordered roughly by how much day-to-
 
 **Shipped in 0.8.0**: `web_search` + `web_fetch` (opt-in, `forge.webSearch.enabled`, off by default — this is the one Forge feature that reaches the open internet). Five providers (Tavily/Brave/Google/SearXNG/DuckDuckGo, with `auto` fallback across whichever are configured), API keys in `vscode.SecretStorage` not `settings.json`, robots.txt-respecting fetch with readable-text extraction and character-offset paging, retry/cache/dedupe/domain-blocking. This is what used to be listed below as "`@web` — a `web_search` tool"; it's now built, not catalogued. See `CHANGELOG.md` for the full entry.
 
+**Shipped in 0.8.1**: fixed the chat open/close/rename reliability bugs reported after 0.8.0 — two independent concurrency bugs (unsynchronized concurrent writes to `.forge/chat/index.json`, and unserialized concurrent handling of switch/close/delete/rename/newChat) were the root cause of chats that wouldn't open, wouldn't stay closed, or silently reverted a rename. See `CHANGELOG.md` for the full entry.
+
 ## 1. Everything else, grouped
 
 **Context & indexing**

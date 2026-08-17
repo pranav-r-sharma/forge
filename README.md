@@ -57,7 +57,7 @@ Prefer to do it by hand, or the script hits an issue?
 npm install
 npm run compile
 npx @vscode/vsce package --no-dependencies --allow-missing-repository
-code --install-extension forge-local-agent-0.8.0.vsix
+code --install-extension forge-local-agent-0.8.1.vsix
 ```
 
 Or skip the CLI entirely: in VS Code, open the Extensions view → "…" menu (top right) → **Install from VSIX...** → pick the `.vsix` file that `npm run package` produced.
@@ -109,6 +109,8 @@ If you don't set a check command, the model has to verify its own work some othe
 ### Multitask (chat tabs)
 
 The strip above the mode pills is a tab bar — click **+** for a new chat, click a tab to switch, click **×** to close it. As of 0.6.0, **closing a tab archives the chat, it does not delete it** — the chat disappears from the open-tabs strip, but its `.forge/chat/<id>.json` file stays on disk untouched. Click **📁 All Chats** in the header to see every chat, open or closed, and reopen any of them (clicking a title clears its closed flag and switches to it). Actually deleting a chat for good is a separate, still-confirmed action — the 🗑 icon next to each chat in the All Chats panel. Each open tab has its own mode, message history, and in-flight agent run; a tab working in the background shows a small pulsing dot until you switch to it.
+
+**0.8.1 reliability fix:** switching, closing, renaming, and reopening chats could previously lose to a race condition — a background tab's constant autosaving could silently revert a close/rename/reopen that happened moments earlier, and clicking a tab while another switch was still in flight could pick the wrong one. Both root causes (unsynchronized concurrent writes to the chat index, and unserialized concurrent handling of these five operations) are fixed — see `CHANGELOG.md` for the detail and how it was verified.
 
 ### Checkpoints — restore a chat (and your files) to an earlier point
 
@@ -280,7 +282,7 @@ Rather than relying on any one model's native function-calling format (inconsist
 
 File edits go through an in-memory "pending edit" overlay: the agent's own view of a file it just edited is immediately the new version (so it can make several dependent edits in one turn), but nothing touches your disk until you accept it. Tab autocomplete uses Ollama's `/api/generate` with `prompt`/`suffix` (fill-in-middle) and lets Ollama apply each model's own FIM template, so it works across qwen2.5-coder, deepseek-coder, starcoder2, codegemma, codellama, etc. without hand-maintaining per-model special tokens.
 
-## Known limitations (0.8.0)
+## Known limitations (0.8.1)
 
 - **Web search is the one feature that sends data outside your machine, and it's off by default for exactly that reason.** With `forge.webSearch.enabled` on: your query text goes to whichever provider is configured (or DuckDuckGo's scrape endpoint by default), and `web_fetch` downloads pages from whatever third-party server hosts them. Nothing about the rest of Forge changes — this is scoped to the two web tools and only runs when the model actually calls them.
 - **The HTML→text extraction backing `web_fetch` is a hand-written regex pipeline, not a real DOM parser** (kept dependency-free on purpose — see "Web search" above) — it does well on normal articles/docs pages and worse on adversarial/unusual markup than a library like `@mozilla/readability` would.

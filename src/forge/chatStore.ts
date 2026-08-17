@@ -62,6 +62,40 @@ export class ChatStore {
   private indexUri: vscode.Uri;
   private counter = 0;
 
+  /**
+   * Serializes every operation below that does a read-modify-write on the
+   * shared `index.json` (save/rename/setClosed/delete). This file is touched
+   * constantly and from many independent places at once — a busy background
+   * chat tab calls save() after nearly every agent event (every tool call,
+   * every streamed message finalized), while the user might simultaneously
+   * close, rename, or reopen a *different* chat in the foreground. Without
+   * serialization, two of these can interleave their own independent
+   * readIndex() -> mutate -> writeIndex() cycles: whichever call's write
+   * lands last wins in full, silently discarding the other call's change —
+   * e.g. a close's `closed: true` gets reverted back to open by a
+   * slightly-later-landing save() that happened to read the index *before*
+   * the close's write landed. That's the direct cause of "closing a chat
+   * doesn't stick" and "a chat's open/closed state or title randomly
+   * reverts." A single FIFO queue makes every one of these calls run fully
+   * one-at-a-time, so each always reads the truly-current state before
+   * writing — no lost updates, regardless of how many chats are active or
+   * how fast events are firing. These are tiny local JSON files, so
+   * serializing them costs nothing perceptible.
+   */
+  private queue: Promise<any> = Promise.resolve();
+  private enqueue<T>(fn: () => Promise<T>): Promise<T> {
+    const run = this.queue.then(fn, fn);
+    // The chain itself must never reject, or every operation queued after a
+    // failing one would be silently stuck forever waiting on a rejected
+    // promise — settle it either way and let `run` (returned to the actual
+    // caller) carry the real success/failure.
+    this.queue = run.then(
+      () => undefined,
+      () => undefined
+    );
+    return run;
+  }
+
   constructor(private workspaceRoot: vscode.Uri) {
     this.chatDir = vscode.Uri.joinPath(workspaceRoot, '.forge', 'chat');
     this.indexUri = vscode.Uri.joinPath(this.chatDir, 'index.json');
@@ -87,6 +121,17 @@ export class ChatStore {
   }
 
   async save(session: StoredSession): Promise<void> {
+    // Also serializes concurrent save() calls for the SAME session against
+    // each other (pushEntry() fires one per tool call/result/streamed
+    // message, not awaited/queued at the call site, so several can easily be
+    // in flight at once during a busy turn) — without this they'd all share
+    // the same `<id>.json.tmp` path and race on it directly, which could let
+    // an older call's rename land *after* a newer call's, silently reverting
+    // the session file to stale content.
+    return this.enqueue(() => this.saveInternal(session));
+  }
+
+  private async saveInternal(session: StoredSession): Promise<void> {
     try {
       await vscode.workspace.fs.createDirectory(this.chatDir);
       const target = vscode.Uri.joinPath(this.chatDir, `${session.id}.json`);
@@ -127,6 +172,16 @@ export class ChatStore {
   async rename(id: string, title: string): Promise<void> {
     const clean = title.trim();
     if (!clean) return;
+    // Note: this calls save() internally (via the `stored` branch below),
+    // which itself enqueues on the same queue — that's fine, enqueue() calls
+    // nest/chain correctly since each is a distinct link appended to
+    // `this.queue`, not a re-entrant lock. What matters is the index
+    // read-modify-write below happens as one atomic step relative to every
+    // other queued operation.
+    return this.enqueue(() => this.renameInternal(id, clean));
+  }
+
+  private async renameInternal(id: string, clean: string): Promise<void> {
     const idx = await this.readIndex();
     const target = idx.sessions.find((s) => s.id === id);
     if (target) {
@@ -137,21 +192,23 @@ export class ChatStore {
     if (stored) {
       stored.title = clean;
       stored.titleManuallySet = true;
-      await this.save(stored);
+      await this.saveInternal(stored);
     }
   }
 
   /** Archives (closed=true) or reopens (closed=false) a chat without touching its content — see SessionSummary.closed. A no-op if the session isn't in the index (e.g. already deleted). */
   async setClosed(id: string, closed: boolean): Promise<void> {
-    try {
-      const idx = await this.readIndex();
-      const target = idx.sessions.find((s) => s.id === id);
-      if (!target) return;
-      target.closed = closed;
-      await this.writeIndex(idx);
-    } catch (err) {
-      logger.warn('Failed to update chat closed state', String(err));
-    }
+    return this.enqueue(async () => {
+      try {
+        const idx = await this.readIndex();
+        const target = idx.sessions.find((s) => s.id === id);
+        if (!target) return;
+        target.closed = closed;
+        await this.writeIndex(idx);
+      } catch (err) {
+        logger.warn('Failed to update chat closed state', String(err));
+      }
+    });
   }
 
   /**
@@ -197,18 +254,20 @@ export class ChatStore {
   }
 
   async delete(id: string): Promise<void> {
-    try {
-      await vscode.workspace.fs.delete(vscode.Uri.joinPath(this.chatDir, `${id}.json`));
-    } catch {
-      /* already gone */
-    }
-    try {
-      await vscode.workspace.fs.delete(vscode.Uri.joinPath(this.chatDir, `${id}.log.jsonl`));
-    } catch {
-      /* already gone / never existed */
-    }
-    const idx = await this.readIndex();
-    await this.writeIndex({ sessions: idx.sessions.filter((s) => s.id !== id) });
+    return this.enqueue(async () => {
+      try {
+        await vscode.workspace.fs.delete(vscode.Uri.joinPath(this.chatDir, `${id}.json`));
+      } catch {
+        /* already gone */
+      }
+      try {
+        await vscode.workspace.fs.delete(vscode.Uri.joinPath(this.chatDir, `${id}.log.jsonl`));
+      } catch {
+        /* already gone / never existed */
+      }
+      const idx = await this.readIndex();
+      await this.writeIndex({ sessions: idx.sessions.filter((s) => s.id !== id) });
+    });
   }
 
   private async readIndex(): Promise<IndexFile> {
@@ -224,7 +283,16 @@ export class ChatStore {
   private async writeIndex(idx: IndexFile): Promise<void> {
     try {
       await vscode.workspace.fs.createDirectory(this.chatDir);
-      await vscode.workspace.fs.writeFile(this.indexUri, Buffer.from(JSON.stringify(idx, null, 2), 'utf8'));
+      // Same write-then-rename reasoning as save() above: index.json is read
+      // by every tab-strip refresh, so a direct write that's interrupted
+      // partway (host crash/kill) could leave the one file every chat's
+      // open/closed state and title lives in truncated and unparseable —
+      // readIndex()'s catch-all would then silently fall back to "no chats,"
+      // which looks like every saved chat vanished. Tmp+rename keeps this
+      // file always either the old or new complete version, never partial.
+      const tmp = vscode.Uri.joinPath(this.chatDir, 'index.json.tmp');
+      await vscode.workspace.fs.writeFile(tmp, Buffer.from(JSON.stringify(idx, null, 2), 'utf8'));
+      await vscode.workspace.fs.rename(tmp, this.indexUri, { overwrite: true });
     } catch (err) {
       logger.warn('Failed to write chat index', String(err));
     }

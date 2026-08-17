@@ -33,6 +33,12 @@
     settings: null, // populated lazily from 'settingsData' the first time the panel is opened
     numCtxOverride: undefined, // active session's per-chat context override, if any
     statusText: '', // brief "what is the agent doing" line — item "brief status messages"
+    // Highest 'sessionsList'/'allChatsList' seq applied so far — a lower-seq
+    // message that arrives late (two overlapping extension-host reads
+    // resolving out of order) is discarded instead of rolling the tab strip
+    // back to stale data. See chatViewProvider.ts's sessionsListSeq doc comment.
+    sessionsListSeq: -1,
+    allChatsListSeq: -1,
   };
 
   const root = document.getElementById('root');
@@ -1086,6 +1092,11 @@
         break;
       }
       case 'sessionsList': {
+        // Stale/out-of-order guard — see the seq doc comment on this
+        // message type in protocol.ts. A message with a seq we've already
+        // passed is discarded rather than applied.
+        if (msg.seq < state.sessionsListSeq) break;
+        state.sessionsListSeq = msg.seq;
         state.sessions = msg.sessions;
         state.activeSessionId = msg.activeId;
         renderTabStrip();
@@ -1193,6 +1204,8 @@
         break;
       }
       case 'allChatsList': {
+        if (msg.seq < state.allChatsListSeq) break;
+        state.allChatsListSeq = msg.seq;
         renderAllChats(msg.sessions);
         break;
       }

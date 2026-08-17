@@ -121,14 +121,21 @@ export type ExtensionToWebviewMessage =
   | { type: 'toast'; level: 'info' | 'warn' | 'error'; text: string }
   | { type: 'indexStatus'; indexed: number; total: number; embeddingsAvailable: boolean }
   | { type: 'prefill'; text: string; files?: string[] }
-  | { type: 'sessionsList'; sessions: SessionSummary[]; activeId: string }
+  // `seq` guards against two overlapping pushSessionsList()/pushAllChatsList()
+  // calls (from different triggers — a foreground tab switch, a background
+  // tab's busy event, etc.) delivering their independent async reads out of
+  // order: each is stamped when the push is CALLED, and the webview ignores
+  // one that arrives with a lower seq than it's already applied, so a
+  // slower/staler read can never roll the tab strip back after a fresher one
+  // already landed. See chatViewProvider.ts's sessionsListSeq doc comment.
+  | { type: 'sessionsList'; seq: number; sessions: SessionSummary[]; activeId: string }
   | { type: 'sessionSwitched'; session: SessionState }
   | { type: 'skillsList'; skills: SkillInfo[] }
   | { type: 'hwStatus'; status: HwStatus }
   | { type: 'metricsUpdate'; sessionId: string; metrics: OllamaCallMetrics }
   | { type: 'checkpointRestored'; sessionId: string; message: string; ok: boolean }
   | { type: 'searchResults'; query: string; results: SearchResultItem[] }
-  | { type: 'allChatsList'; sessions: SessionSummary[] }
+  | { type: 'allChatsList'; seq: number; sessions: SessionSummary[] }
   | { type: 'statusUpdate'; sessionId: string; text: string }
   | { type: 'settingsData'; settings: SettingsSnapshot };
 
