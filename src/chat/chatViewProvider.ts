@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { OllamaClient, pickBestDefaultModel } from '../ollama/client';
 import { PendingEditManager } from '../tools/editApply';
+import { BackgroundProcessManager } from '../tools/backgroundProcessManager';
 import { openDiffForEdit } from '../tools/diffContentProvider';
 import { WorkspaceIndex } from '../indexing/workspaceIndex';
 import { ChatMemoryIndex } from '../indexing/chatMemoryIndex';
@@ -17,7 +18,7 @@ import { getConfig, setChatModel, setForgeSetting } from '../util/config';
 import { genId } from '../util/ids';
 import { toRelative } from '../util/paths';
 import { WorkspaceEntryIndex } from '../util/fileSearch';
-import { getGpuStatus, getRamStatus } from '../util/hwMetrics';
+import { estimateSuggestedNumCtx, getGpuStatus, getRamStatus } from '../util/hwMetrics';
 import { logger } from '../util/logger';
 import { ChatSession, ChatSessionServices } from './chatSession';
 import { ExtensionToWebviewMessage, HwStatus, InitState, SearchResultItem, SettingsSnapshot, UiTranscriptEntry, WebviewToExtensionMessage } from '../webview/protocol';
@@ -88,6 +89,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     private readonly context: vscode.ExtensionContext,
     private readonly ollama: OllamaClient,
     private readonly pendingEdits: PendingEditManager,
+    private readonly backgroundProcesses: BackgroundProcessManager,
     private readonly workspaceIndex: WorkspaceIndex,
     private readonly chatMemoryIndex: ChatMemoryIndex,
     private readonly rules: RulesEngine,
@@ -101,7 +103,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     private readonly workspaceRoot: vscode.Uri,
     private readonly workspaceName: string
   ) {
-    this.services = { ollama, pendingEdits, workspaceIndex, chatMemoryIndex, rules, skills, hooks, memory, chatStore, webSearchService, webFetchService, workspaceRoot, workspaceName };
+    this.services = { ollama, pendingEdits, backgroundProcesses, workspaceIndex, chatMemoryIndex, rules, skills, hooks, memory, chatStore, webSearchService, webFetchService, workspaceRoot, workspaceName };
     this.entryIndex = new WorkspaceEntryIndex(workspaceRoot);
     this.pendingEdits.onDidChange((edits) => this.post({ type: 'pendingEdits', edits }));
   }
@@ -225,11 +227,27 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   private async getOrLoadSession(id: string): Promise<ChatSession | undefined> {
     const existing = this.sessions.get(id);
     if (existing) return existing;
-    const stored = await this.chatStore.load(id);
-    if (!stored) return undefined;
-    const session = ChatSession.fromStored(stored, this.services, (sid, msg) => this.notify(sid, msg));
-    this.sessions.set(id, session);
-    return session;
+    try {
+      // ChatStore.load() already recovers a missing/corrupted session file
+      // on its own (see recoverCorruptedSession — the fix for "older chats
+      // sometimes won't open"), so this only returns undefined for an id
+      // that genuinely never existed. The try/catch here is defense in
+      // depth for anything else unexpected in the load/construct path
+      // (an unanticipated legacy data shape, etc.): previously an exception
+      // here would propagate as an unhandled rejection (handleMessage isn't
+      // awaited by its caller) and switchSession would just silently do
+      // nothing — exactly the "click a chat and it just won't open" symptom
+      // with zero feedback. Now it's a real, loggable failure the caller can
+      // turn into the error toast added in 0.8.1.
+      const stored = await this.chatStore.load(id);
+      if (!stored) return undefined;
+      const session = ChatSession.fromStored(stored, this.services, (sid, msg) => this.notify(sid, msg));
+      this.sessions.set(id, session);
+      return session;
+    } catch (err) {
+      logger.warn(`Failed to load chat session ${id}`, String(err));
+      return undefined;
+    }
   }
 
   private activeSession(): ChatSession | undefined {
@@ -388,6 +406,27 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         const result = await session.restoreCheckpoint(msg.id);
         this.post({ type: 'checkpointRestored', sessionId: session.id, message: result.message, ok: result.ok });
         if (result.ok) this.post({ type: 'sessionSwitched', session: session.toSummaryState() });
+        return;
+      }
+      case 'forkChat': {
+        // Registers a new session and switches the active tab to it, so —
+        // like newChat/switchSession/closeSession/deleteSession/renameSession
+        // — this goes through enqueueSessionOp to stay serialized against
+        // those (see that queue's doc comment: this class of operation must
+        // never interleave, or a concurrent switch/close could race the new
+        // tab into an inconsistent state).
+        await this.enqueueSessionOp(async () => {
+          const session = this.activeSession();
+          if (!session) return;
+          const result = await session.forkAt(msg.id);
+          this.post({ type: 'chatForked', sessionId: session.id, message: result.message, ok: result.ok });
+          if (result.ok && result.forkedSession) {
+            this.sessions.set(result.forkedSession.id, result.forkedSession);
+            this.activeSessionId = result.forkedSession.id;
+            this.post({ type: 'sessionSwitched', session: result.forkedSession.toSummaryState() });
+            await this.pushSessionsList();
+          }
+        });
         return;
       }
       case 'searchChats': {
@@ -553,6 +592,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     const lastMetrics = this.activeSessionId ? this.lastMetricsBySession.get(this.activeSessionId) : undefined;
     const maxTokens = active?.numCtxOverride || cfg.numCtx;
     const usedTokens = lastMetrics ? (lastMetrics.promptTokens || 0) + (lastMetrics.evalTokens || 0) : undefined;
+    const ram = getRamStatus();
     return {
       loadedModels: loaded.map((m) => ({
         name: m.name,
@@ -560,9 +600,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         vramGB: m.size_vram !== undefined ? Math.round((m.size_vram / 1024 / 1024 / 1024) * 10) / 10 : undefined,
         expiresAt: m.expires_at,
       })),
-      ram: getRamStatus(),
+      ram,
       gpu: gpu.length ? gpu : undefined,
       contextWindow: usedTokens !== undefined ? { usedTokens, maxTokens } : undefined,
+      suggestedNumCtx: estimateSuggestedNumCtx(maxTokens, ram),
     };
   }
 

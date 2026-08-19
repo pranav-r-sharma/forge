@@ -16,6 +16,8 @@ Everything here is catalogued but not built. Ordered roughly by how much day-to-
 
 **Shipped in 0.8.1**: fixed the chat open/close/rename reliability bugs reported after 0.8.0 — two independent concurrency bugs (unsynchronized concurrent writes to `.forge/chat/index.json`, and unserialized concurrent handling of switch/close/delete/rename/newChat) were the root cause of chats that wouldn't open, wouldn't stay closed, or silently reverted a rename. See `CHANGELOG.md` for the full entry.
 
+**Shipped in 0.9.0**: a mechanically-generated milestone log per turn plus a RAM-based `num_ctx` suggestion, Outcome-mode gaming detection for a check passed by disabling/weakening what it verifies rather than fixing the real problem, fork-a-chat at any checkpoint without losing the original conversation, recovery for chats left permanently unopenable by data already damaged before the 0.8.1 fix, and real terminal access — a user-facing **Forge: Open Terminal** command plus agent-facing background/long-running commands (`run_command`'s `{"background": true}` + the new `check_background_command` tool). See `CHANGELOG.md` for the full entry.
+
 ## 1. Everything else, grouped
 
 **Context & indexing**
@@ -38,8 +40,9 @@ Everything here is catalogued but not built. Ordered roughly by how much day-to-
 - ~~Memories~~ — shipped in 0.4.0 as `.forge/memory.md` + the `remember` tool. Possible follow-up: a one-click "promote to rule" action for a memory fact that's really a coding convention and belongs in `.forge/rules/` instead.
 
 **Environment**
-- Long-running/background terminal processes the agent can start and later check on (e.g. "start the dev server" then keep coding), instead of every `run_command` call being run-to-completion-or-timeout.
+- ~~Long-running/background terminal processes the agent can start and later check on~~ — shipped in 0.9.0 as `run_command`'s `{"background": true}` + `check_background_command`. Possible follow-ups: a dedicated UI panel listing running background commands (today the only way to see one is to ask the agent), and true process-tree killing on Windows (currently POSIX-only via process-group signaling — see README's Known limitations).
 - ~~An explicit "definition of done"~~ — shipped in 0.5.0 as the optional verify command in Agent/Auto/Outcome modes. Possible follow-up: multiple check commands (e.g. lint AND test) rather than one.
 - Outcome mode's self-verification when no command is configured relies entirely on the model re-checking its own work — a lighter-weight structured self-check (e.g. auto-run `get_problems` before any no-command "done" claim) would make that path more trustworthy without requiring the user to write a shell command.
+- ~~Outcome mode gaming a check instead of meeting the goal~~ — shipped in 0.9.0 as a heuristic, advisory scan (`agent/gamingDetection.ts`) plus explicit anti-gaming system-prompt language. Possible follow-up: something less regex-shaped — e.g. diffing test file line counts, or a second model call specifically judging "does this edit look like it fixed the problem or dodged the check."
 
 Have opinions on the ordering, or want one of these scoped into an actual build? Say the word and I'll pick it up the same way — catalogue the exact behavior first, then build it.

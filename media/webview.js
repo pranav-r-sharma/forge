@@ -380,6 +380,23 @@
     return `<div class="setting-row"><div class="setting-label">${escapeHtml(label)}${hint ? `<div class="setting-hint">${escapeHtml(hint)}</div>` : ''}</div><div class="setting-control">${inputHtml}</div></div>`;
   }
 
+  // Item "lot of ram sitting idle, can that be somehow leveraged for
+  // increased context": a best-effort, clearly-hedged suggestion (see
+  // util/hwMetrics.ts's estimateSuggestedNumCtx doc comment for exactly
+  // why this is deliberately rough, not precise) shown right under the
+  // per-chat context override, with a one-click way to apply it.
+  function renderNumCtxSuggestion() {
+    const suggested = state.hwStatus && state.hwStatus.suggestedNumCtx;
+    if (!suggested) return '';
+    return `<div class="setting-row numctx-suggestion">
+      <div class="setting-label"></div>
+      <div class="setting-control">
+        <div class="numctx-suggestion-text">You have idle RAM right now — you could try raising this to ~${suggested.toLocaleString()} tokens. This is a rough estimate based on free memory, not a guarantee it'll fit; watch the HW readout after changing it.</div>
+        <button id="use-suggested-numctx" class="numctx-suggestion-btn" data-value="${suggested}">Use ${suggested.toLocaleString()}</button>
+      </div>
+    </div>`;
+  }
+
   function renderSettings() {
     const s = state.settings;
     if (!s) {
@@ -393,6 +410,7 @@
         'Tokens this chat may use — blank uses the global default below. A lighter/faster model leaves more memory headroom, so it can often afford a larger number here than a big model could.',
         `<input id="set-session-numctx" type="number" min="512" step="512" placeholder="${s.numCtx}" value="${state.numCtxOverride || ''}" />`
       )}
+      ${renderNumCtxSuggestion()}
       <div class="settings-section-title">Global defaults</div>
       ${settingRow('Context window (forge.numCtx)', 'Applies to every chat without its own override.', `<input id="set-numCtx" type="number" min="512" step="512" value="${s.numCtx}" />`)}
       ${settingRow('Temperature', '', `<input id="set-temperature" type="number" min="0" max="2" step="0.1" value="${s.temperature}" />`)}
@@ -426,6 +444,15 @@
       const v = e.target.value.trim();
       vscodeApi.postMessage({ type: 'setSessionNumCtx', numCtx: v ? parseInt(v, 10) : null });
     });
+    const suggestBtn = document.getElementById('use-suggested-numctx');
+    if (suggestBtn) {
+      suggestBtn.addEventListener('click', () => {
+        const v = parseInt(suggestBtn.dataset.value, 10);
+        if (!Number.isFinite(v)) return;
+        document.getElementById('set-session-numctx').value = v;
+        vscodeApi.postMessage({ type: 'setSessionNumCtx', numCtx: v });
+      });
+    }
     for (const key of ['numCtx', 'temperature', 'keepAliveMinutes', 'subAgentMaxIterations', 'maxSubAgentDepth']) {
       document.getElementById(`set-${key}`).addEventListener('change', (e) => {
         const num = parseFloat(e.target.value);
@@ -819,7 +846,30 @@
       // Item #3: every user turn is a checkpoint boundary — offer to jump
       // back to it (and undo everything since) as long as it still exists
       // (it's dropped once you've already restored past it).
-      if (entry.checkpointId && state.checkpoints.some((c) => c.id === entry.checkpointId)) {
+      const checkpoint = entry.checkpointId ? state.checkpoints.find((c) => c.id === entry.checkpointId) : undefined;
+      if (checkpoint) {
+        // Item #1: the mechanically-logged milestone for the turn this
+        // checkpoint started — a cheap, always-available "what happened
+        // here" caption, independent of (and complementary to) whatever
+        // compaction later folds away. Absent until the turn finishes.
+        if (checkpoint.milestone) {
+          const caption = document.createElement('div');
+          caption.className = 'checkpoint-milestone';
+          caption.textContent = checkpoint.milestone;
+          caption.title = 'Mechanically-generated summary of this turn (not from the model)';
+          wrap.appendChild(caption);
+        }
+        const btnRow = document.createElement('div');
+        btnRow.className = 'checkpoint-btn-row';
+        const forkBtn = document.createElement('button');
+        forkBtn.className = 'checkpoint-restore-btn';
+        forkBtn.textContent = '⑂ Fork here';
+        forkBtn.title = 'Open a new chat starting from this point, with files reverted to match — this conversation is left untouched';
+        forkBtn.addEventListener('click', async () => {
+          if (!(await confirmDialog('Fork this chat from here? Opens a new chat containing everything up to this point and reverts shared workspace files to match — this conversation stays exactly as it is.'))) return;
+          vscodeApi.postMessage({ type: 'forkChat', id: entry.checkpointId });
+        });
+        btnRow.appendChild(forkBtn);
         const btn = document.createElement('button');
         btn.className = 'checkpoint-restore-btn';
         btn.textContent = '⟲ Restore to here';
@@ -828,7 +878,8 @@
           if (!(await confirmDialog('Restore to this point? This reverts every file edit made from here on and removes the messages after it. This cannot be undone.'))) return;
           vscodeApi.postMessage({ type: 'restoreCheckpoint', id: entry.checkpointId });
         });
-        wrap.appendChild(btn);
+        btnRow.appendChild(btn);
+        wrap.appendChild(btnRow);
       }
       return wrap;
     }
@@ -897,6 +948,18 @@
     if (entry.kind === 'system') {
       wrap.className = 'msg msg-system';
       wrap.textContent = entry.text;
+      return wrap;
+    }
+
+    if (entry.kind === 'warning') {
+      // Item "Outcome mode introduces cheap tricks bypass" (agent/gamingDetection.ts):
+      // deliberately distinct styling from msg-error — the turn succeeded,
+      // this is a "double-check this" flag, not a failure.
+      wrap.className = 'msg msg-warning';
+      const details = (entry.details || [])
+        .map((d) => `<li><code>${escapeHtml(d.path)}</code> — ${escapeHtml(d.reason)}</li>`)
+        .join('');
+      wrap.innerHTML = `<span class="warning-icon">&#9888;</span> ${escapeHtml(entry.text)}${details ? `<ul class="warning-details">${details}</ul>` : ''}`;
       return wrap;
     }
 
@@ -1187,6 +1250,7 @@
       case 'hwStatus': {
         state.hwStatus = msg.status;
         renderHwReadout();
+        if (state.settingsOpen && state.settings) renderSettings();
         break;
       }
       case 'metricsUpdate': {
@@ -1196,6 +1260,13 @@
         break;
       }
       case 'checkpointRestored': {
+        showToast(msg.ok ? 'info' : 'error', msg.message);
+        break;
+      }
+      case 'chatForked': {
+        // On success a sessionSwitched + sessionsList follow this and do the
+        // real UI work (new tab, new active session) — this toast is just
+        // the confirmation/error message, same role as checkpointRestored's.
         showToast(msg.ok ? 'info' : 'error', msg.message);
         break;
       }

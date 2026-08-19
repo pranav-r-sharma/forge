@@ -10,6 +10,7 @@ export type ToolName =
   | 'search_codebase'
   | 'write_file'
   | 'run_command'
+  | 'check_background_command'
   | 'get_problems'
   | 'remember'
   | 'search_chat_history'
@@ -75,6 +76,17 @@ export interface ToolExecContext {
    */
   webSearch?: (query: string) => Promise<{ results: WebSearchResult[]; providerUsed?: string; warnings: string[] }>;
   webFetch?: (url: string, offset?: number, length?: number) => Promise<WebFetchResult>;
+  /**
+   * Item "ability to interact and use the terminal and run commands via the
+   * terminal": long-running/background commands — see
+   * tools/backgroundProcessManager.ts. Exposed as closures (matching every
+   * other ToolExecContext capability) rather than the manager object itself,
+   * so tool implementations stay decoupled from where/how it's stored.
+   */
+  startBackgroundCommand: (command: string, cwd: string) => { ok: true; id: string } | { ok: false; error: string };
+  checkBackgroundCommand: (id: string) => { found: false } | { found: true; status: 'running' | 'exited'; exitCode: number | null; output: string; command: string; truncated: boolean };
+  killBackgroundCommand: (id: string) => { found: false } | { found: true; alreadyExited: boolean };
+  listBackgroundCommands: () => { id: string; command: string; cwd: string; status: 'running' | 'exited'; exitCode: number | null; startedAt: string }[];
   config: {
     autoApproveCommands: string[];
     requireApprovalForWrites: boolean;
@@ -107,6 +119,8 @@ export type AgentEvent =
   | { type: 'checkpoint'; id: string; label: string }
   | { type: 'verify_start'; command: string; draftText: string }
   | { type: 'verify_result'; command: string; ok: boolean; summary: string }
+  /** Item "Outcome mode introduces cheap tricks bypass" — see gamingDetection.ts. Emitted right after a verify_result whose check passed, only when that pass followed at least one failure and the heuristic scan flagged something in the writes made in response to it. Advisory only — never blocks the turn from completing. */
+  | { type: 'verify_gaming_warning'; findings: { path: string; reason: string }[] }
   | { type: 'status'; text: string }
   | { type: 'subagent_start'; task: string; depth: number }
   | { type: 'subagent_result'; task: string; ok: boolean; summary: string; depth: number }

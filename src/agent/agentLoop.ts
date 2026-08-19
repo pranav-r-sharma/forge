@@ -15,6 +15,8 @@ import { CompactionCache, hardCapOversizedMessages, maybeCompact, pruneStaleRead
 import { LoopDetector, signatureForStep } from './loopDetector';
 import { findUnverifiedClaims } from './claimChecker';
 import { runVerifyCommand } from './verifyCheck';
+import { detectSuspiciousVerifyBypass } from './gamingDetection';
+import { BackgroundProcessManager } from '../tools/backgroundProcessManager';
 
 export interface AgentDeps {
   ollama: OllamaClient;
@@ -27,6 +29,8 @@ export interface AgentDeps {
   /** Undefined when forge.webSearch.enabled is false — see ToolExecContext.webSearch's doc comment in agent/types.ts. */
   webSearch?: (query: string) => Promise<{ results: import('../websearch/types').WebSearchResult[]; providerUsed?: string; warnings: string[] }>;
   webFetch?: (url: string, offset?: number, length?: number) => Promise<import('../websearch/types').WebFetchResult>;
+  /** Item "ability to interact and use the terminal" — see tools/backgroundProcessManager.ts. Workspace-scoped and shared across every chat tab, same as pendingEdits. */
+  backgroundProcesses: BackgroundProcessManager;
   workspaceRoot: vscode.Uri;
   workspaceName: string;
 }
@@ -35,6 +39,8 @@ export interface AgentTurnOptions {
   mode: ForgeMode;
   rulesText?: string;
   memoryText?: string;
+  /** Compact, mechanically-generated digest of prior turns this session (see chat/milestones.ts) — a cheap, always-available table of contents distinct from compaction's lossy LLM summary. */
+  milestonesText?: string;
   planContext?: string;
   /** Carried across turns so compaction doesn't re-summarize from scratch every time — see ChatSession. */
   compactionCache?: CompactionCache;
@@ -167,12 +173,22 @@ export async function runAgentTurn(
   const allowedTools = new Set(toolsAllowedInMode(options.mode));
   const loopDetector = new LoopDetector();
   let compactionCache = options.compactionCache;
+  // Item "Outcome mode introduces cheap tricks bypass" (gamingDetection.ts):
+  // tracks write_file calls made since the last verify attempt, so that if
+  // the NEXT verify attempt passes right after a failure, the writes that
+  // supposedly fixed it can be scanned for signs the check was gamed rather
+  // than the goal actually met. Reset after every verify attempt (pass or
+  // fail) so the window always covers exactly "what changed in response to
+  // the most recent failure," not this turn's whole edit history.
+  let sawFailedVerify = false;
+  let writesSinceLastVerify: { path: string; text: string }[] = [];
 
   // Mode/rules can change between turns (user flips the mode dropdown, edits
   // a rule file, etc.) — always refresh the system prompt rather than trusting
   // whatever was pinned as messages[0] from a previous turn.
   const systemPrompt = buildSystemPrompt(deps.workspaceName, options.mode, {
     rulesText: options.rulesText,
+    milestonesText: options.milestonesText,
     planContext: options.planContext,
     memoryText: options.memoryText,
   });
@@ -194,6 +210,10 @@ export async function runAgentTurn(
     chatMemorySearch: deps.chatMemorySearch,
     webSearch: deps.webSearch,
     webFetch: deps.webFetch,
+    startBackgroundCommand: (command, cwd) => deps.backgroundProcesses.start(command, cwd),
+    checkBackgroundCommand: (id) => deps.backgroundProcesses.check(id),
+    killBackgroundCommand: (id) => deps.backgroundProcesses.kill(id),
+    listBackgroundCommands: () => deps.backgroundProcesses.list(),
     spawnSubAgent: async (task, contextHint) => {
       const configuredMaxDepth = Math.min(Math.max(1, cfg.maxSubAgentDepth), HARD_MAX_SUBAGENT_DEPTH);
       if (subAgentDepth >= configuredMaxDepth) {
@@ -343,13 +363,21 @@ export async function runAgentTurn(
           return { messages, compactionCache };
         }
         if (!verify.ok) {
-          const nudge = `[Definition-of-done check failed]\n${verify.output}\n\nThe goal is not met yet — this is real evidence, not an opinion. Diagnose why and keep working; do not repeat the same "done" claim without either fixing the underlying issue or explaining concretely why this check itself is wrong (e.g. it tests the wrong thing).`;
+          const nudge = `[Definition-of-done check failed]\n${verify.output}\n\nThe goal is not met yet — this is real evidence, not an opinion. Diagnose why and keep working; do not repeat the same "done" claim without either fixing the underlying issue or explaining concretely why this check itself is wrong (e.g. it tests the wrong thing). Do NOT make this check pass by disabling, skipping, or weakening what it verifies (e.g. skipping/deleting the failing test, neutering an assertion, silencing an error instead of fixing it, or editing the check command itself) — Forge scans for exactly that pattern and will flag it to the user, and it does not actually satisfy the user's goal even if the command exits 0.`;
           messages.push({ role: 'user', content: nudge });
+          sawFailedVerify = true;
+          writesSinceLastVerify = [];
           if (checkLoop(loopDetector, '__verify__', { command: options.verifyCommand }, false, verify.output, emit)) {
             return { messages, compactionCache };
           }
           continue;
         }
+        if (sawFailedVerify) {
+          const findings = detectSuspiciousVerifyBypass(writesSinceLastVerify, options.verifyCommand);
+          if (findings.length > 0) emit({ type: 'verify_gaming_warning', findings });
+        }
+        sawFailedVerify = false;
+        writesSinceLastVerify = [];
       }
 
       emit({ type: 'final', text: fullText.trim(), unverifiedClaims: unverified.length > 0 ? unverified : undefined });
@@ -407,6 +435,12 @@ export async function runAgentTurn(
 
     if (spec.name === 'write_file' && result.ok) {
       deps.hooks.run('after-write', { args: call.args }).catch(() => {});
+      // Record for gamingDetection.ts below — the text actually being
+      // written (full-content or the search/replace pair) is already right
+      // here in the call args, no need to re-read the file back off disk.
+      const path = typeof call.args?.path === 'string' ? call.args.path : '';
+      const text = [call.args?.content, call.args?.search, call.args?.replace].filter((v) => typeof v === 'string').join('\n');
+      writesSinceLastVerify.push({ path, text });
     } else if (spec.name === 'run_command' && result.ok) {
       deps.hooks.run('after-command', { args: call.args }).catch(() => {});
     }

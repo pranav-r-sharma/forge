@@ -13,7 +13,7 @@ import { ForgeMode, MODES, toolsAllowedInMode } from './modes';
 export function buildSystemPrompt(
   workspaceName: string,
   mode: ForgeMode = 'agent',
-  extra?: { rulesText?: string; planContext?: string; memoryText?: string }
+  extra?: { rulesText?: string; planContext?: string; memoryText?: string; milestonesText?: string }
 ): string {
   const allowed = new Set(toolsAllowedInMode(mode));
   const visibleTools = TOOL_SPECS.filter((t) => allowed.has(t.name));
@@ -58,6 +58,7 @@ Rules for actions:
   ];
 
   if (extra?.memoryText) sections.push(extra.memoryText);
+  if (extra?.milestonesText) sections.push(extra.milestonesText);
   if (extra?.rulesText) sections.push(extra.rulesText);
   if (extra?.planContext) sections.push(`## Approved plan for this task\n${extra.planContext}\n\nExecute this plan now, step by step, using tools as needed. Deviate from it only if you discover it's wrong, and say so.`);
 

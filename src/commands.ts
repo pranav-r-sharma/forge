@@ -286,6 +286,26 @@ export async function newSkillCommand(workspaceRoot: vscode.Uri) {
   await vscode.window.showTextDocument(uri);
 }
 
+/**
+ * Item "ability to interact and use the terminal and run commands via the
+ * terminal" (the user-facing half — see tools/backgroundProcessManager.ts
+ * for the agent-facing half, background commands). This is deliberately
+ * just a real, ordinary VS Code integrated terminal at the workspace root —
+ * Forge doesn't try to proxy or intercept anything you type into it, and
+ * the agent has no visibility into what you run here (the reverse of
+ * run_command, where the agent runs something and you see it). It's a
+ * plain convenience for "I want a terminal in this project" without
+ * reaching for the terminal panel's own "+" button, and for jumping
+ * straight into a shell to poke at something the agent just did/reported.
+ * Reuses an existing "Forge" terminal if one's still open rather than
+ * piling up a new tab on every click.
+ */
+export function openTerminalCommand(workspaceRoot: vscode.Uri) {
+  const existing = vscode.window.terminals.find((t: vscode.Terminal) => t.name === 'Forge');
+  const terminal = existing ?? vscode.window.createTerminal({ name: 'Forge', cwd: workspaceRoot });
+  terminal.show();
+}
+
 export async function openHooksFolderCommand(workspaceRoot: vscode.Uri) {
   const dir = vscode.Uri.joinPath(workspaceRoot, '.forge', 'hooks');
   const readme = vscode.Uri.joinPath(dir, 'README.md');

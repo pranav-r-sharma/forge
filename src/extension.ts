@@ -4,6 +4,7 @@ import { OllamaClient } from './ollama/client';
 import { getConfig } from './util/config';
 import { logger } from './util/logger';
 import { PendingEditManager } from './tools/editApply';
+import { BackgroundProcessManager } from './tools/backgroundProcessManager';
 import { DiffContentProvider, FORGE_DIFF_SCHEME } from './tools/diffContentProvider';
 import { WorkspaceIndex } from './indexing/workspaceIndex';
 import { ChatMemoryIndex } from './indexing/chatMemoryIndex';
@@ -29,6 +30,7 @@ import {
   openDiffForFileCommand,
   openHooksFolderCommand,
   openMemoryFileCommand,
+  openTerminalCommand,
   rejectAllEditsCommand,
   selectChatModelCommand,
   selectCompletionModelCommand,
@@ -36,6 +38,9 @@ import {
   setWebSearchApiKeyCommand,
   showHwStatusCommand,
 } from './commands';
+
+/** Module-level so deactivate() (a separate top-level function, no closure over activate()'s locals) can reach it to kill any still-running background commands — see BackgroundProcessManager.disposeAll()'s doc comment. */
+let activeBackgroundProcesses: BackgroundProcessManager | undefined;
 
 export async function activate(context: vscode.ExtensionContext) {
   logger.init(context);
@@ -50,6 +55,8 @@ export async function activate(context: vscode.ExtensionContext) {
 
   const ollama = new OllamaClient(() => getConfig().ollamaBaseUrl);
   const pendingEdits = new PendingEditManager(workspaceRoot);
+  const backgroundProcesses = new BackgroundProcessManager();
+  activeBackgroundProcesses = backgroundProcesses;
   const workspaceIndex = new WorkspaceIndex(ollama, workspaceRoot, context.storageUri, () => getConfig().embeddingModel);
   await workspaceIndex.loadCache();
 
@@ -102,6 +109,7 @@ export async function activate(context: vscode.ExtensionContext) {
     context,
     ollama,
     pendingEdits,
+    backgroundProcesses,
     workspaceIndex,
     chatMemoryIndex,
     rules,
@@ -173,7 +181,8 @@ export async function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('forge.openHooksFolder', () => openHooksFolderCommand(workspaceRoot)),
     vscode.commands.registerCommand('forge.showHwStatus', () => showHwStatusCommand(ollama)),
     vscode.commands.registerCommand('forge.openMemory', () => openMemoryFileCommand(memory)),
-    vscode.commands.registerCommand('forge.setWebSearchApiKey', () => setWebSearchApiKeyCommand(webSearchKeyStore))
+    vscode.commands.registerCommand('forge.setWebSearchApiKey', () => setWebSearchApiKeyCommand(webSearchKeyStore)),
+    vscode.commands.registerCommand('forge.openTerminal', () => openTerminalCommand(workspaceRoot))
   );
 
   // Best-effort background warm-up: don't block activation on network I/O.
@@ -189,6 +198,11 @@ export async function activate(context: vscode.ExtensionContext) {
 }
 
 export function deactivate() {
-  // Nothing to clean up beyond what's registered in context.subscriptions —
-  // in-memory pending edits are intentionally session-scoped.
+  // Everything else registered in context.subscriptions is disposed
+  // automatically — in-memory pending edits are intentionally
+  // session-scoped and need no cleanup. Background commands are the one
+  // exception: they're real OS child processes (a dev server, a watcher)
+  // that would otherwise keep running orphaned after the extension host
+  // shuts down or reloads, with no way left to reach them.
+  activeBackgroundProcesses?.disposeAll();
 }

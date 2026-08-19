@@ -2,6 +2,7 @@ import { ToolSpec } from '../agent/types';
 import { readFileTool, listDirTool, writeFileTool, getProblemsTool } from './fileTools';
 import { searchCodeTool, searchCodebaseTool } from './searchTools';
 import { runCommandTool } from './commandTool';
+import { checkBackgroundCommandTool } from './backgroundCommandTool';
 import { rememberTool, searchChatHistoryTool } from './memoryTools';
 import { spawnSubAgentTool } from './subAgentTool';
 import { webFetchTool, webSearchTool } from './webTools';
@@ -40,9 +41,17 @@ export const TOOL_SPECS: ToolSpec[] = [
   },
   {
     name: 'run_command',
-    describe: 'Run a shell command in the workspace root (or a given relative cwd). Requires user approval unless it matches an auto-approve pattern.',
+    describe:
+      'Run a shell command in the workspace root (or a given relative cwd). Requires user approval unless it matches an auto-approve pattern. Waits for the command to exit (up to a ~3min timeout) and returns its output — for anything that\'s SUPPOSED to keep running instead (a dev server, a watcher), add {"background": true} and use check_background_command to follow up instead of letting it hit the timeout.',
     exampleArgs: { command: 'npm test' },
     run: runCommandTool,
+  },
+  {
+    name: 'check_background_command',
+    describe:
+      'Check output/status of a command started with run_command\'s {"background": true}, or kill/list them. {"id"} (or {"id","action":"status"}) for output so far, {"id","action":"kill"} to stop it, {"action":"list"} to see every background command\'s id if you\'ve lost track.',
+    exampleArgs: { id: 'bg_abc123_1' },
+    run: checkBackgroundCommandTool,
   },
   {
     name: 'get_problems',

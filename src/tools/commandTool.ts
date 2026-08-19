@@ -30,6 +30,22 @@ export async function runCommandTool(args: Record<string, any>, ctx: ToolExecCon
     return { ok: false, content: err.message };
   }
 
+  // Item "ability to interact and use the terminal and run commands via the
+  // terminal": {"background": true} skips the spawn-and-wait-for-exit
+  // behavior below entirely — this is for anything that's SUPPOSED to keep
+  // running (a dev server, a watcher), which the fixed timeout below would
+  // otherwise just kill partway through startup. See
+  // tools/backgroundProcessManager.ts and the check_background_command tool
+  // for how the model gets output/status back afterward.
+  if (args.background === true) {
+    const started = ctx.startBackgroundCommand(command, cwd);
+    if (!started.ok) return { ok: false, content: started.error };
+    return {
+      ok: true,
+      content: `Started in the background as "${started.id}". It keeps running independently of this turn — use check_background_command with {"id": "${started.id}"} to see its output/status so far, or {"id": "${started.id}", "action": "kill"} to stop it.`,
+    };
+  }
+
   const timeoutMs = Math.min(args.timeout_ms ? Number(args.timeout_ms) : DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS);
 
   return new Promise<ToolResult>((resolve) => {

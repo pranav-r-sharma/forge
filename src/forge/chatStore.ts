@@ -115,9 +115,80 @@ export class ChatStore {
     try {
       const bytes = await vscode.workspace.fs.readFile(vscode.Uri.joinPath(this.chatDir, `${id}.json`));
       return JSON.parse(Buffer.from(bytes).toString('utf8')) as StoredSession;
-    } catch {
-      return undefined;
+    } catch (err) {
+      return this.recoverCorruptedSession(id, err);
     }
+  }
+
+  /**
+   * Best-effort recovery for a session whose `<id>.json` is missing or
+   * unparseable. This is the fix for "older chats sometimes won't open, but
+   * rename/delete still work": before 0.8.1, concurrent save() calls for the
+   * same session could race on a shared, non-unique temp filename and leave
+   * `<id>.json` truncated or overwritten with the wrong content — 0.8.1
+   * fixed the ongoing cause (see CHANGELOG), but any file that was ALREADY
+   * damaged by it before upgrading stays damaged; without this, such a
+   * session could never be opened again. Rename/delete "still worked" only
+   * because they operate on `index.json` (rename patches the title there
+   * even when the full-file update it also attempts silently no-ops on an
+   * unreadable file; delete just removes files regardless of their
+   * validity) — never on the actually-broken content file, which is exactly
+   * why those two looked fine while opening did not.
+   *
+   * Two-step recovery: try a leftover `<id>.json.tmp` first — an abandoned
+   * write from the same historical race might still hold valid, if slightly
+   * stale, content. If that's also unusable, synthesize a minimal session
+   * from whatever `index.json` still knows (title/mode) with a visible note
+   * explaining the loss, so the chat becomes usable again instead of a
+   * permanent dead end. Either way, the recovered content is saved back
+   * immediately so this doesn't need recovering again on the next open.
+   */
+  private async recoverCorruptedSession(id: string, originalErr: unknown): Promise<StoredSession | undefined> {
+    const tmp = vscode.Uri.joinPath(this.chatDir, `${id}.json.tmp`);
+    try {
+      const bytes = await vscode.workspace.fs.readFile(tmp);
+      const recovered = JSON.parse(Buffer.from(bytes).toString('utf8')) as StoredSession;
+      logger.warn(`Chat session ${id} failed to load (${String(originalErr)}); recovered from a leftover .tmp file`);
+      // Bypasses the queue deliberately — see renameInternal()'s identical
+      // saveInternal() call for why: load() can itself be called from
+      // within an already-enqueued operation (e.g. rename's fallback read),
+      // and enqueuing here would deadlock waiting on that outer operation to
+      // finish while it's waiting on this one.
+      await this.saveInternal(recovered);
+      try {
+        await vscode.workspace.fs.delete(tmp);
+      } catch {
+        /* best-effort cleanup, not load-bearing */
+      }
+      return recovered;
+    } catch {
+      /* no usable .tmp either — fall through to the synthetic-shell recovery below */
+    }
+
+    const idx = await this.readIndex();
+    const summary = idx.sessions.find((s) => s.id === id);
+    if (!summary) return undefined; // no index entry either — this id genuinely never existed, not a recovery case
+    logger.warn(`Chat session ${id} failed to load (${String(originalErr)}) and has no recoverable .tmp file; starting an empty shell so it can still be opened`);
+    const now = new Date().toISOString();
+    const shell: StoredSession = {
+      id,
+      title: summary.title,
+      mode: summary.mode,
+      model: '',
+      createdAt: now,
+      updatedAt: now,
+      uiHistory: [
+        {
+          kind: 'error',
+          id: `recovered_${id}`,
+          text:
+            "This chat's saved history could not be read (the file was corrupted or lost, most likely by a save-file race condition fixed in Forge 0.8.1). The chat is usable again from here on, but the earlier conversation is gone. If this keeps happening, please report it.",
+        },
+      ],
+      modelHistory: [],
+    };
+    await this.saveInternal(shell);
+    return shell;
   }
 
   async save(session: StoredSession): Promise<void> {

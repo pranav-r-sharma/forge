@@ -99,12 +99,20 @@ declare module 'vscode' {
     [key: string]: any;
   };
 
+  export interface Terminal {
+    name: string;
+    show(preserveFocus?: boolean): void;
+    dispose(): void;
+    [key: string]: any;
+  }
   export const window: {
     createStatusBarItem(...args: any[]): any;
     createOutputChannel(name: string): any;
     createTextEditorDecorationType(opts: any): any;
     withProgress<T>(options: any, task: (progress: any, token: CancellationToken) => Thenable<T>): Thenable<T>;
     registerWebviewViewProvider(...args: any[]): Disposable;
+    createTerminal(...args: any[]): Terminal;
+    terminals: Terminal[];
     [key: string]: any;
   };
   export const workspace: {

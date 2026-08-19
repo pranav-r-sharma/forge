@@ -26,6 +26,20 @@ export interface CheckpointRecord {
   modelHistoryLength: number;
   /** relativePath -> file content immediately before the first write after this checkpoint began. `null` = the file did not exist yet. */
   fileSnapshots: Record<string, string | null>;
+  /**
+   * A short, mechanically-generated (NOT model-generated) one-line digest of
+   * what happened during this turn — tools called, files touched, command
+   * outcome — set once the turn completes (see ChatSession.send()'s finally
+   * block / chat/milestones.ts). This is the "milestone log" item: unlike
+   * contextManager.ts's compaction summary (an LLM call, made only once a
+   * session grows large enough to need it, and lossy), every turn gets one
+   * of these for free, deterministically, the moment it finishes — so a
+   * session's context can always be reconstructed from a cheap, always-
+   * available table of contents instead of only from summarization. Absent
+   * for a checkpoint whose turn hasn't finished yet (still in progress or
+   * was aborted before the finally block ran).
+   */
+  milestone?: string;
 }
 
 export interface ResolvedRestore {
@@ -53,6 +67,12 @@ export class CheckpointStore {
     const active = this.checkpoints[this.checkpoints.length - 1];
     if (!active) return;
     if (!(relPath in active.fileSnapshots)) active.fileSnapshots[relPath] = priorContent;
+  }
+
+  /** Attaches (or overwrites) a checkpoint's milestone digest — see CheckpointRecord.milestone. No-op if the id no longer exists (e.g. checkpoints after it were already dropped by a restore). */
+  setMilestone(id: string, milestone: string) {
+    const record = this.checkpoints.find((c) => c.id === id);
+    if (record) record.milestone = milestone;
   }
 
   /** Computes what restoring to `id` would do, without mutating anything. Returns undefined if `id` isn't found. */

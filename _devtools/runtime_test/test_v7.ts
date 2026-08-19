@@ -20,6 +20,7 @@ import { MemoryStore } from '../../src/forge/memory';
 import { WebSearchService } from '../../src/websearch/searchService';
 import { WebFetchService } from '../../src/websearch/fetchService';
 import { WebSearchKeyStore } from '../../src/websearch/keyStore';
+import { BackgroundProcessManager } from '../../src/tools/backgroundProcessManager';
 
 let passed = 0;
 let failed = 0;
@@ -172,6 +173,7 @@ async function testChatViewProviderSessionOps() {
     fakeContext,
     ollama,
     pendingEdits,
+    new BackgroundProcessManager(),
     workspaceIndex,
     chatMemoryIndex,
     rules,

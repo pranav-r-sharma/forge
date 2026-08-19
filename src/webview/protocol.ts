@@ -14,6 +14,8 @@ export type UiTranscriptEntry =
   | { kind: 'plan'; id: string; text: string; executed?: boolean }
   | { kind: 'error'; id: string; text: string }
   | { kind: 'system'; id: string; text: string }
+  /** Item "Outcome mode introduces cheap tricks bypass" — see agent/gamingDetection.ts. Advisory, not an error: the turn still completed, this is a "double-check this" flag, not a failure. */
+  | { kind: 'warning'; id: string; text: string; details: { path: string; reason: string }[] }
   | { kind: 'verify'; id: string; command: string; status: 'running' | 'done'; ok?: boolean; summary?: string }
   | { kind: 'subagent'; id: string; task: string; status: 'running' | 'done'; ok?: boolean; summary?: string; depth: number };
 
@@ -39,6 +41,8 @@ export interface CheckpointInfo {
   id: string;
   label: string;
   createdAt: string;
+  /** Mechanically-generated one-line digest of that turn — see chat/milestones.ts. Absent if the turn hasn't finished yet. */
+  milestone?: string;
 }
 
 export interface SessionState {
@@ -92,6 +96,8 @@ export interface HwStatus {
   ram?: { usedGB: number; totalGB: number };
   /** GPU utilization/VRAM, best-effort via `nvidia-smi` — absent entirely on machines without an NVIDIA GPU or without nvidia-smi on PATH (e.g. Apple Silicon, AMD), which is the common case for a local-Ollama setup and not an error. */
   gpu?: { name: string; usedVramGB: number; totalVramGB: number; utilizationPct: number }[];
+  /** Rough, RAM-headroom-based suggestion for a larger forge.numCtx — see util/hwMetrics.ts's estimateSuggestedNumCtx(). Undefined if there isn't enough idle RAM to make a suggestion worthwhile. Deliberately NOT a precise/guaranteed-safe figure — see that function's doc comment. */
+  suggestedNumCtx?: number;
 }
 
 export interface InitState {
@@ -134,6 +140,8 @@ export type ExtensionToWebviewMessage =
   | { type: 'hwStatus'; status: HwStatus }
   | { type: 'metricsUpdate'; sessionId: string; metrics: OllamaCallMetrics }
   | { type: 'checkpointRestored'; sessionId: string; message: string; ok: boolean }
+  /** Item "Ability to fork chats" — see ChatSession.forkAt(). ok:false means the checkpoint itself was invalid; sessionId is the ORIGINATING session (the tab the "Fork here" button was clicked in), not the new fork — the new fork's own arrival is a normal sessionSwitched + sessionsList, same as newChat(). */
+  | { type: 'chatForked'; sessionId: string; message: string; ok: boolean }
   | { type: 'searchResults'; query: string; results: SearchResultItem[] }
   | { type: 'allChatsList'; seq: number; sessions: SessionSummary[] }
   | { type: 'statusUpdate'; sessionId: string; text: string }
@@ -160,6 +168,7 @@ export type WebviewToExtensionMessage =
   | { type: 'openFile'; path: string }
   | { type: 'toggleTabCompletion'; enabled: boolean }
   | { type: 'restoreCheckpoint'; id: string }
+  | { type: 'forkChat'; id: string }
   | { type: 'searchChats'; query: string }
   | { type: 'refreshHwStatus' }
   | { type: 'setVerifyCommand'; command: string }

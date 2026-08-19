@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { OllamaClient } from '../ollama/client';
 import { ChatMessage } from '../ollama/types';
 import { PendingEditManager } from '../tools/editApply';
+import { BackgroundProcessManager } from '../tools/backgroundProcessManager';
 import { ApprovalBroker } from '../agent/approvalBroker';
 import { runAgentTurn } from '../agent/agentLoop';
 import { AgentEvent } from '../agent/types';
@@ -16,6 +17,7 @@ import { HookRunner } from '../forge/hooks';
 import { MemoryStore } from '../forge/memory';
 import { reviewForMemoryFacts } from '../forge/memoryReview';
 import { ChatStore, StoredSession, deriveTitle } from '../forge/chatStore';
+import { deriveMilestoneSummary, renderMilestonesForPrompt } from './milestones';
 import { WebSearchService } from '../websearch/searchService';
 import { WebFetchService } from '../websearch/fetchService';
 import { getConfig, resolveModelForMode } from '../util/config';
@@ -30,6 +32,7 @@ const MEMORY_REVIEW_INTERVAL = 6;
 export interface ChatSessionServices {
   ollama: OllamaClient;
   pendingEdits: PendingEditManager;
+  backgroundProcesses: BackgroundProcessManager;
   workspaceIndex: WorkspaceIndex;
   chatMemoryIndex: ChatMemoryIndex;
   rules: RulesEngine;
@@ -158,7 +161,7 @@ export class ChatSession {
       model: this.model,
       busy: this.busy,
       history: this.uiHistory,
-      checkpoints: this.checkpoints.list().map((c) => ({ id: c.id, label: c.label, createdAt: c.createdAt })),
+      checkpoints: this.checkpoints.list().map((c) => ({ id: c.id, label: c.label, createdAt: c.createdAt, milestone: c.milestone })),
       verifyCommand: this.verifyCommand || undefined,
       numCtxOverride: this.numCtxOverride,
     };
@@ -236,6 +239,77 @@ export class ChatSession {
     this.log('checkpoint', `restored to ${resolved.target.id} (${resolved.target.label}); reverted ${filesTouched} file(s)`);
     this.persist();
     return { ok: true, message: `Restored to "${resolved.target.label}" — reverted ${filesTouched} file(s) and the conversation from that point on.` };
+  }
+
+  /**
+   * Item "Ability to fork chats and revert back the chat to a particular
+   * point": non-destructively duplicates this session as a brand-new chat,
+   * truncated at `checkpointId` — the fork's transcript/checkpoint list end
+   * up exactly where restoreCheckpoint(id) would have left THIS session,
+   * except THIS session is completely untouched (uses resolveRestore(), not
+   * applyRestore(), and never mutates this.uiHistory/modelHistory/checkpoints).
+   * That's the whole point over "restore to here": you get to keep exploring
+   * both the original line of conversation and a new one from that branch
+   * point, instead of the original ending being deleted forever.
+   *
+   * File state is the one place a fork can't fully honor "non-destructive":
+   * Forge has a single physical workspace per project, not a per-chat
+   * worktree (see checkpoints.ts's known-limitation doc comment), so there
+   * is only one real copy of each file on disk. Forking still applies the
+   * checkpoint's file reversion to that one shared workspace, so the new
+   * chat's transcript is consistent with what you'll actually see on disk —
+   * but if you then keep working in the ORIGINAL chat's tab, its later edits
+   * to those same files are only back on disk once IT writes again. Same
+   * tradeoff restoreCheckpoint already has, just without deleting anything.
+   */
+  async forkAt(checkpointId: string): Promise<{ ok: boolean; message: string; forkedSession?: ChatSession }> {
+    const resolved = this.checkpoints.resolveRestore(checkpointId);
+    if (!resolved) return { ok: false, message: 'That checkpoint no longer exists.' };
+
+    let filesTouched = 0;
+    for (const [relPath, content] of Object.entries(resolved.fileStates)) {
+      try {
+        const uri = vscode.Uri.joinPath(this.services.workspaceRoot, relPath);
+        if (content === null) {
+          try {
+            await vscode.workspace.fs.delete(uri);
+          } catch {
+            /* already gone, fine — it didn't exist at the checkpoint either */
+          }
+        } else {
+          await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(uri, '..'));
+          await vscode.workspace.fs.writeFile(uri, Buffer.from(content, 'utf8'));
+        }
+        filesTouched++;
+      } catch (err) {
+        logger.warn('checkpoint fork failed for', relPath, String(err));
+      }
+    }
+
+    const forked = new ChatSession(this.services, this.notify);
+    forked.title = deriveTitle(`${this.title} (fork)`);
+    forked.titleManuallySet = true; // this title is already meaningful — don't let the first-message auto-title logic overwrite it
+    forked.mode = this.mode;
+    forked.model = this.model;
+    forked.verifyCommand = this.verifyCommand;
+    forked.numCtxOverride = this.numCtxOverride;
+    // Deep-clone via JSON round-trip: these are plain, serializable objects
+    // (the same shape persisted to disk), so this is cheap and — more
+    // importantly — guarantees the fork shares no mutable object references
+    // with the original. Without it, a later in-place mutation on the
+    // original (e.g. a still-in-flight verify/subagent entry being updated)
+    // could bleed into the fork's supposedly-frozen history.
+    forked.uiHistory = JSON.parse(JSON.stringify(this.uiHistory.slice(0, resolved.target.uiHistoryIndex)));
+    forked.modelHistory = JSON.parse(JSON.stringify(this.modelHistory.slice(0, resolved.target.modelHistoryLength)));
+    forked.checkpoints = CheckpointStore.fromJSON(JSON.parse(JSON.stringify(resolved.remaining)));
+    forked.uiHistory.push({ kind: 'system', id: genId('sys'), text: `Forked from "${this.title}" at checkpoint "${resolved.target.label}".` });
+    forked.persist();
+
+    return {
+      ok: true,
+      message: `Forked into a new chat "${forked.title}" — reverted ${filesTouched} shared workspace file(s) to match "${resolved.target.label}". The original chat is untouched.`,
+      forkedSession: forked,
+    };
   }
 
   private post(msg: ExtensionToWebviewMessage) {
@@ -327,11 +401,12 @@ export class ChatSession {
     // *specific* turn will run in, so a checkpoint label is accurate even if
     // the user flips modes right after sending.
     const checkpointId = genId('ckpt');
+    const turnStartUiIndex = this.uiHistory.length;
     this.checkpoints.begin({
       id: checkpointId,
       label: deriveTitle(text),
       createdAt: nowIso(),
-      uiHistoryIndex: this.uiHistory.length,
+      uiHistoryIndex: turnStartUiIndex,
       modelHistoryLength: this.modelHistory.length,
     });
 
@@ -375,6 +450,7 @@ export class ChatSession {
       : undefined;
     const rulesText = await this.services.rules.renderForPrompt(activeFileRel);
     const memoryText = await this.services.memory.renderForPrompt();
+    const milestonesText = renderMilestonesForPrompt(this.checkpoints.list());
 
     this.busy = true;
     this.post({ type: 'busy', sessionId: this.id, busy: true });
@@ -388,6 +464,7 @@ export class ChatSession {
         {
           ollama: this.services.ollama,
           pendingEdits: this.services.pendingEdits,
+          backgroundProcesses: this.services.backgroundProcesses,
           approvalBroker: this.approvalBroker,
           hooks: this.services.hooks,
           codebaseSearch: (q, k) => this.services.workspaceIndex.search(q, k),
@@ -408,6 +485,7 @@ export class ChatSession {
           mode: this.mode,
           rulesText: rulesText || undefined,
           memoryText: memoryText || undefined,
+          milestonesText,
           planContext: opts?.planContext,
           compactionCache: this.compactionCache,
           verifyCommand: modeSupportsVerifyCommand(this.mode) && this.verifyCommand ? this.verifyCommand : undefined,
@@ -427,6 +505,14 @@ export class ChatSession {
       this.busy = false;
       this.cts = undefined;
       this.post({ type: 'busy', sessionId: this.id, busy: false });
+      // Milestone logging (item "documenting all milestones, logging
+      // checkpoints so context can be derived from that") — a mechanical,
+      // zero-cost digest of what THIS turn actually did, attached to its
+      // checkpoint. Runs even if the turn errored/was aborted above (the
+      // digest just reflects whatever entries actually landed), but not if
+      // the checkpoint itself was already dropped by a restore that
+      // happened mid-turn (setMilestone no-ops on a missing id).
+      this.checkpoints.setMilestone(checkpointId, deriveMilestoneSummary(this.uiHistory.slice(turnStartUiIndex)));
       this.persist();
       // Keep search_chat_history current — incremental (see ChatMemoryIndex),
       // so this is cheap on every turn except when this session actually
@@ -552,6 +638,20 @@ export class ChatSession {
         }
         this.currentVerifyId = undefined;
         this.log('verify', `${event.command} — ${event.ok ? 'passed' : 'failed'}: ${event.summary.slice(0, 200)}`);
+        return;
+      }
+      case 'verify_gaming_warning': {
+        // Item "Outcome mode introduces cheap tricks bypass" — advisory
+        // only, the turn already completed successfully; this just flags
+        // that the fix which made the check pass looks suspicious (see
+        // agent/gamingDetection.ts) so the user knows to take a closer
+        // look before trusting the "done" result.
+        const paths = [...new Set(event.findings.map((f) => f.path))];
+        const text = `Heads up: the definition-of-done check passed, but ${event.findings.length === 1 ? 'an edit' : 'edits'} made right before it looks like it may have gamed the check rather than fixed the underlying issue — worth a second look at ${paths.join(', ')}.`;
+        const entry: UiTranscriptEntry = { kind: 'warning', id: genId('warn'), text, details: event.findings };
+        this.pushEntry(entry);
+        this.post({ type: 'entry', sessionId: this.id, entry });
+        this.log('verify', `possible verify-bypass gaming detected: ${event.findings.map((f) => `${f.path} (${f.reason})`).join('; ')}`);
         return;
       }
       case 'approval_request': {
