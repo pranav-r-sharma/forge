@@ -2,7 +2,7 @@
   "name": "forge-local-agent",
   "displayName": "Forge — Local AI Coding Agent",
   "description": "A Cursor-style agentic coding assistant that runs entirely on local Ollama models. Agent/Ask/Plan modes, multitask chat tabs, .forge/rules + .forge/skills + .forge/hooks, repo-stored chat history, multi-file agent edits, inline Cmd+K editing, Tab autocomplete, and an opt-in production-grade web search/fetch tool — no cloud, no API keys, no telemetry, except web search itself if you turn it on.",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "publisher": "local-forge",
   "private": true,
   "engines": {
@@ -58,7 +58,8 @@
       { "command": "forge.showHwStatus", "title": "Forge: Show HW Utilization (tokens/sec, VRAM)" },
       { "command": "forge.openMemory", "title": "Forge: Open Memory File (.forge/memory.md)" },
       { "command": "forge.setWebSearchApiKey", "title": "Forge: Set Web Search API Key" },
-      { "command": "forge.openTerminal", "title": "Forge: Open Terminal" }
+      { "command": "forge.openTerminal", "title": "Forge: Open Terminal" },
+      { "command": "forge.exportAllChats", "title": "Forge: Export All Chats" }
     ],
     "menus": {
       "editor/context": [

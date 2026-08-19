@@ -9,6 +9,7 @@ import { MODES } from './agent/modes';
 import { logger } from './util/logger';
 import { WebSearchKeyStore, SECRET_BACKED_PROVIDERS, SecretBackedProviderId } from './websearch/keyStore';
 import { PROVIDER_MAP } from './websearch/searchService';
+import { ChatStore, StoredSession } from './forge/chatStore';
 
 /** Item "web search": provider API keys are stored via vscode.SecretStorage, not settings.json — see keyStore.ts for why. This is the interactive entry point (also reachable from the Settings panel's "Set API Key…" button, which just runs this same command). */
 export async function setWebSearchApiKeyCommand(keyStore: WebSearchKeyStore) {
@@ -326,6 +327,55 @@ The others are fire-and-forget notifications (logging, Slack pings, etc.).
   );
   await vscode.window.showTextDocument(readme);
   if (!exists) vscode.window.showInformationMessage('Forge: created .forge/hooks/README.md with the hook contract — add your scripts alongside it.');
+}
+
+/**
+ * Follow-up to "how can you ensure I don't lose chats" — a manual,
+ * complete-in-one-shot escape hatch alongside the automatic hardening in
+ * ChatStore (validate-before-commit, backup rotation, tiered recovery — see
+ * chatStore.ts). Bundles every saved chat, open AND closed/archived, into a
+ * single JSON file at a location you choose, so you can keep a copy
+ * somewhere Forge itself doesn't control (a synced folder, a git commit,
+ * wherever). Deliberately calls chatStore.load(id) rather than reading each
+ * `.json` file directly: load() is what runs the corrupted-session recovery
+ * hierarchy, so exporting also opportunistically repairs any chat that was
+ * sitting in a broken state, before it goes into the bundle.
+ */
+export async function exportAllChatsCommand(chatStore: ChatStore, forgeVersion: string) {
+  const summaries = await chatStore.listSessions();
+  if (summaries.length === 0) {
+    vscode.window.showInformationMessage('Forge: no saved chats to export.');
+    return;
+  }
+
+  const sessions: StoredSession[] = [];
+  const failed: string[] = [];
+  for (const s of summaries) {
+    const loaded = await chatStore.load(s.id);
+    if (loaded) {
+      sessions.push(loaded);
+    } else {
+      failed.push(s.title || s.id);
+    }
+  }
+
+  const bundle = { exportedAt: new Date().toISOString(), forgeVersion, sessions };
+  const defaultName = `forge-chats-export-${new Date().toISOString().slice(0, 10)}.json`;
+  const uri = await vscode.window.showSaveDialog({
+    defaultUri: vscode.Uri.file(defaultName),
+    filters: { JSON: ['json'] },
+    title: 'Forge: Export All Chats',
+  });
+  if (!uri) return;
+
+  await vscode.workspace.fs.writeFile(uri, Buffer.from(JSON.stringify(bundle, null, 2), 'utf8'));
+
+  const base = `Forge: exported ${sessions.length} chat(s) to ${uri.fsPath}.`;
+  vscode.window.showInformationMessage(
+    failed.length > 0
+      ? `${base} ${failed.length} chat(s) could not be loaded even after recovery and were skipped: ${failed.join(', ')}.`
+      : base
+  );
 }
 
 async function ensureFileWithContent(uri: vscode.Uri, content: string): Promise<boolean> {

@@ -18,6 +18,8 @@ Everything here is catalogued but not built. Ordered roughly by how much day-to-
 
 **Shipped in 0.9.0**: a mechanically-generated milestone log per turn plus a RAM-based `num_ctx` suggestion, Outcome-mode gaming detection for a check passed by disabling/weakening what it verifies rather than fixing the real problem, fork-a-chat at any checkpoint without losing the original conversation, recovery for chats left permanently unopenable by data already damaged before the 0.8.1 fix, and real terminal access — a user-facing **Forge: Open Terminal** command plus agent-facing background/long-running commands (`run_command`'s `{"background": true}` + the new `check_background_command` tool). See `CHANGELOG.md` for the full entry.
 
+**Shipped in 0.9.1**: hierarchical hardening of chat persistence, in direct response to a real corrupted-chat report — validate-before-commit and a rolling `.bak` backup on every save, a 4-tier recovery hierarchy (`.tmp` → `.bak` → crash-log reconstruction → empty shell), and a new **Forge: Export All Chats** command that bundles every saved chat into one portable JSON file (and opportunistically repairs any corrupted chat it touches along the way). See `CHANGELOG.md` for the full entry.
+
 ## 1. Everything else, grouped
 
 **Context & indexing**

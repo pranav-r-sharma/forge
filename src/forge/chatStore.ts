@@ -144,6 +144,10 @@ export class ChatStore {
    * immediately so this doesn't need recovering again on the next open.
    */
   private async recoverCorruptedSession(id: string, originalErr: unknown): Promise<StoredSession | undefined> {
+    // Tier 1: a leftover `<id>.json.tmp` — an abandoned write from the
+    // historical pre-0.8.1 race, or (0.9.1+) a .tmp left behind by a
+    // validate-before-commit rejection in saveInternal(). Might still hold
+    // valid, if slightly stale, content.
     const tmp = vscode.Uri.joinPath(this.chatDir, `${id}.json.tmp`);
     try {
       const bytes = await vscode.workspace.fs.readFile(tmp);
@@ -162,15 +166,57 @@ export class ChatStore {
       }
       return recovered;
     } catch {
-      /* no usable .tmp either — fall through to the synthetic-shell recovery below */
+      /* no usable .tmp — fall through to tier 2 */
+    }
+
+    // Tier 2 (0.9.1+): the rolling `<id>.json.bak` written by
+    // saveInternal()'s backup-rotation step — an exact copy of the
+    // session as of its second-to-last save. Up to one turn behind current,
+    // but a COMPLETE valid session rather than a reconstruction, so this is
+    // preferred over rebuilding from the crash log in tier 3.
+    const bak = vscode.Uri.joinPath(this.chatDir, `${id}.json.bak`);
+    try {
+      const bytes = await vscode.workspace.fs.readFile(bak);
+      const recovered = JSON.parse(Buffer.from(bytes).toString('utf8')) as StoredSession;
+      logger.warn(`Chat session ${id} failed to load (${String(originalErr)}) and had no usable .tmp; recovered from the rolling .bak backup (may be missing the most recent turn)`);
+      await this.saveInternal(recovered);
+      return recovered;
+    } catch {
+      /* no usable .bak either — fall through to tier 3 */
     }
 
     const idx = await this.readIndex();
     const summary = idx.sessions.find((s) => s.id === id);
     if (!summary) return undefined; // no index entry either — this id genuinely never existed, not a recovery case
-    logger.warn(`Chat session ${id} failed to load (${String(originalErr)}) and has no recoverable .tmp file; starting an empty shell so it can still be opened`);
+
+    // Tier 3 (0.9.1+): rebuild a readable-but-lossy transcript from the
+    // append-only crash-recovery log (see appendLog()/readLog()). The log
+    // uses a different write mechanism (plain fs.appendFile, never
+    // write-then-rename) and was never at risk from the original corruption
+    // bug, so it's often intact even when both tiers above come up empty —
+    // e.g. a session that only had one save ever before this 0.9.1
+    // hardening shipped, so no .bak was ever written for it.
+    const log = await this.readLog(id);
+    if (log.length > 0) {
+      const rebuilt = this.buildShellFromLog(id, summary, log);
+      logger.warn(`Chat session ${id} failed to load (${String(originalErr)}) and had no usable .tmp or .bak; reconstructed ${log.length} entries from the crash-recovery log`);
+      await this.saveInternal(rebuilt);
+      return rebuilt;
+    }
+
+    // Tier 4: nothing recoverable at all — synthesize a minimal empty shell
+    // so the chat is at least usable again, with a visible note explaining
+    // the loss.
+    logger.warn(`Chat session ${id} failed to load (${String(originalErr)}) and has no recoverable .tmp, .bak, or log; starting an empty shell so it can still be opened`);
+    const shell = this.buildEmptyShell(id, summary);
+    await this.saveInternal(shell);
+    return shell;
+  }
+
+  /** Tier 4 recovery: a minimal session shell with a visible note explaining that the earlier conversation is gone. Extracted so recoverCorruptedSession() can reuse the exact same message text it always has. */
+  private buildEmptyShell(id: string, summary: SessionSummary): StoredSession {
     const now = new Date().toISOString();
-    const shell: StoredSession = {
+    return {
       id,
       title: summary.title,
       mode: summary.mode,
@@ -187,8 +233,60 @@ export class ChatStore {
       ],
       modelHistory: [],
     };
-    await this.saveInternal(shell);
-    return shell;
+  }
+
+  /**
+   * Tier 3 recovery: rebuilds a readable transcript from the append-only
+   * crash-recovery log when both `.tmp` and `.bak` come up empty. This is
+   * lossy by construction — ChatSession truncates most log entries before
+   * writing them (user/assistant text to 300 chars, tool call/result/verify
+   * detail to ~200 chars — see the `this.log(...)` call sites in
+   * chatSession.ts) specifically to keep the log file itself small, and
+   * entries that don't map to a chat bubble (tool calls, mode changes,
+   * checkpoints, memory reviews) are rendered as plain system notes rather
+   * than reconstructed UI state — a tool's structured args/result are gone,
+   * only the truncated summary string survives. This is meant to recover
+   * SOMETHING legible, not to perfectly restore the original conversation —
+   * the disclaimer bubble at the top says so explicitly.
+   */
+  private buildShellFromLog(id: string, summary: SessionSummary, entries: LogEntry[]): StoredSession {
+    const now = new Date().toISOString();
+    const uiHistory: UiTranscriptEntry[] = [
+      {
+        kind: 'warning',
+        id: `recovered_log_${id}`,
+        text:
+          "This chat's saved history was lost (the file was corrupted or missing, and no backup copy was available). What follows was reconstructed from Forge's crash-recovery log and may be incomplete or truncated — treat it as a best-effort summary, not the exact original conversation.",
+        details: [],
+      },
+    ];
+    entries.forEach((entry, i) => {
+      const entryId = `recovered_log_${id}_${i}`;
+      switch (entry.kind) {
+        case 'user':
+          uiHistory.push({ kind: 'user', id: entryId, text: entry.detail });
+          break;
+        case 'final':
+          uiHistory.push({ kind: 'assistant', id: entryId, text: entry.detail });
+          break;
+        case 'error':
+          uiHistory.push({ kind: 'error', id: entryId, text: entry.detail });
+          break;
+        default:
+          uiHistory.push({ kind: 'system', id: entryId, text: `[${entry.kind}] ${entry.detail}` });
+          break;
+      }
+    });
+    return {
+      id,
+      title: summary.title,
+      mode: summary.mode,
+      model: '',
+      createdAt: now,
+      updatedAt: now,
+      uiHistory,
+      modelHistory: [],
+    };
   }
 
   async save(session: StoredSession): Promise<void> {
@@ -214,7 +312,50 @@ export class ChatStore {
       // APFS and ext4/NTFS, so the on-disk file is always either the old
       // complete version or the new complete version, never a partial one.
       const tmp = vscode.Uri.joinPath(this.chatDir, `${session.id}.json.tmp`);
-      await vscode.workspace.fs.writeFile(tmp, Buffer.from(JSON.stringify(session, null, 2), 'utf8'));
+      const serialized = Buffer.from(JSON.stringify(session, null, 2), 'utf8');
+      await vscode.workspace.fs.writeFile(tmp, serialized);
+
+      // Validate-before-commit (0.9.1+): read back exactly what was just
+      // written and confirm it parses before letting it become the session
+      // of record. writeFile() not throwing only means the OS accepted the
+      // write call — it doesn't guarantee every byte actually landed (a
+      // full disk, a flaky network filesystem, etc. can still produce
+      // truncated or garbled bytes on readback). Catching that here, before
+      // rename(), means a bad write aborts cleanly and leaves whatever was
+      // previously at `target` untouched, instead of promoting corrupt
+      // bytes into the one file this session depends on.
+      try {
+        const readBack = await vscode.workspace.fs.readFile(tmp);
+        JSON.parse(Buffer.from(readBack).toString('utf8'));
+      } catch (validateErr) {
+        logger.warn(`Refusing to persist chat session ${session.id}: just-written .tmp file failed to validate (${String(validateErr)}); leaving the previously saved version untouched`);
+        try {
+          await vscode.workspace.fs.delete(tmp);
+        } catch {
+          /* best-effort cleanup — a leftover .tmp here is still recoverable by tier 1 of recoverCorruptedSession() if it ever matters */
+        }
+        return;
+      }
+
+      // Backup rotation (0.9.1+): before overwriting `target`, best-effort
+      // copy its CURRENT bytes to `<id>.json.bak` — a rolling,
+      // one-generation-back backup that survives even if this new save
+      // later turns out to be wrong in some way validation above can't
+      // catch (e.g. a real bug wrote bad-but-valid-JSON content). Only
+      // rotate if the current target is itself valid JSON: if we're here
+      // via recoverCorruptedSession() re-persisting recovered content over
+      // a file that was already corrupt, blindly copying those corrupt
+      // bytes into .bak would silently destroy a previously good backup
+      // instead of preserving one.
+      try {
+        const priorBytes = await vscode.workspace.fs.readFile(target);
+        JSON.parse(Buffer.from(priorBytes).toString('utf8'));
+        const bak = vscode.Uri.joinPath(this.chatDir, `${session.id}.json.bak`);
+        await vscode.workspace.fs.writeFile(bak, priorBytes);
+      } catch {
+        /* no existing target yet (first save of a new session), or it was already corrupt — nothing valid to back up */
+      }
+
       await vscode.workspace.fs.rename(tmp, target, { overwrite: true });
       const idx = await this.readIndex();
       // Preserve the existing closed/open flag — a session's own content
@@ -330,6 +471,11 @@ export class ChatStore {
         await vscode.workspace.fs.delete(vscode.Uri.joinPath(this.chatDir, `${id}.json`));
       } catch {
         /* already gone */
+      }
+      try {
+        await vscode.workspace.fs.delete(vscode.Uri.joinPath(this.chatDir, `${id}.json.bak`));
+      } catch {
+        /* already gone / never existed */
       }
       try {
         await vscode.workspace.fs.delete(vscode.Uri.joinPath(this.chatDir, `${id}.log.jsonl`));
