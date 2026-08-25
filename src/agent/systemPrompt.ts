@@ -13,7 +13,7 @@ import { ForgeMode, MODES, toolsAllowedInMode } from './modes';
 export function buildSystemPrompt(
   workspaceName: string,
   mode: ForgeMode = 'agent',
-  extra?: { rulesText?: string; planContext?: string; memoryText?: string; milestonesText?: string }
+  extra?: { rulesText?: string; planContext?: string; memoryText?: string; milestonesText?: string; projectLogText?: string }
 ): string {
   const allowed = new Set(toolsAllowedInMode(mode));
   const visibleTools = TOOL_SPECS.filter((t) => allowed.has(t.name));
@@ -40,6 +40,7 @@ Rules for actions:
 - Before editing a file you haven't already read in this conversation, read it first.
 - For edits, prefer write_file with {"search","replace"} (a small, unique, exact snippet) over a full-file {"content"} rewrite whenever the file already exists and the change is localized — it's cheaper and less error-prone. Use {"content"} for new files or sweeping rewrites.
 - The "search" string must match the file's current content byte-for-byte (no line-number prefixes — those are only shown to you for orientation when reading). If write_file tells you the search text wasn't found or was ambiguous, re-read the file and try again with a more precise, unique snippet.
+- Whitespace and indentation in "replace" must exactly match the surrounding file's style (tabs vs. spaces, indent width) — copy the indentation from the "search" text you just matched rather than retyping it from scratch, since a plausible-looking but differently-indented replacement is exactly the kind of subtle diff that's easy to miss in review and breaks indentation-sensitive languages.
 - File edits you propose are staged for the user's review, not written to disk immediately — but for your own purposes you should treat them as applied and keep building on top of them within this conversation.
 - Shell commands need the user's approval (unless they match a safe auto-approve pattern). Use run_command to build, test, or inspect the environment — not to edit files.
 - If a tool result reports an error, adapt your next action instead of repeating the same call verbatim.
@@ -58,6 +59,7 @@ Rules for actions:
   ];
 
   if (extra?.memoryText) sections.push(extra.memoryText);
+  if (extra?.projectLogText) sections.push(extra.projectLogText);
   if (extra?.milestonesText) sections.push(extra.milestonesText);
   if (extra?.rulesText) sections.push(extra.rulesText);
   if (extra?.planContext) sections.push(`## Approved plan for this task\n${extra.planContext}\n\nExecute this plan now, step by step, using tools as needed. Deviate from it only if you discover it's wrong, and say so.`);

@@ -184,6 +184,28 @@ export class ChatSession {
     this.mode = mode;
     this.log('mode_change', mode);
     this.persist();
+    this.postModeChanged();
+  }
+
+  /**
+   * Item "doesn't recognize that the mode has changed, keeps saying I am in
+   * ask mode when it's in agent mode or auto mode": the webview only ever
+   * learned the current mode from a full `sessionSwitched`/`init` payload —
+   * anything that changed `this.mode` WITHOUT going through one of those
+   * (setMode already posts a full session switch's worth of state today, but
+   * executePlan's own agent-mode handoff never notified the webview at all)
+   * left the composer's mode pill silently stale. This posts a small,
+   * dedicated event so the webview updates immediately regardless of which
+   * code path changed the mode — see media/webview.js's `case 'modeChanged'`.
+   */
+  private postModeChanged() {
+    this.post({ type: 'modeChanged', sessionId: this.id, mode: this.mode });
+  }
+
+  /** Sets (or clears, with '') this chat's own model override — see model, resolveModelForMode(). Takes effect on the next send(), no restart needed. */
+  setModelOverride(model: string) {
+    this.model = model.trim();
+    this.persist();
   }
 
   /** Sets or clears this session's "definition of done" command (see modes.ts's modeSupportsVerifyCommand) — takes effect on the next send(), no restart needed. */
@@ -361,6 +383,7 @@ export class ChatSession {
     this.lastPlan = undefined;
     this.mode = 'agent';
     this.persist();
+    this.postModeChanged();
     await this.send('Execute the approved plan above, step by step.', [], { planContext: plan });
   }
 
@@ -449,8 +472,17 @@ export class ChatSession {
       ? toRelative(this.services.workspaceRoot, vscode.window.activeTextEditor.document.uri)
       : undefined;
     const rulesText = await this.services.rules.renderForPrompt(activeFileRel);
-    const memoryText = await this.services.memory.renderForPrompt();
+    // Item "based on the prompt relevant portions of the memory are selected
+    // rather than all": pass this turn's own text as the relevance query —
+    // see MemoryStore.renderForPrompt()'s doc comment for why this only
+    // changes anything once the fact list is already too big to fit in full.
+    const memoryText = await this.services.memory.renderForPrompt(effectiveText);
     const milestonesText = renderMilestonesForPrompt(this.checkpoints.list());
+    // Item "documentation skill... progress through a project can become
+    // context for new chats": every chat — not just this one — gets a digest
+    // of what's already happened elsewhere in the project, so a brand-new
+    // chat isn't starting from zero. See ChatStore.readProjectLogForPrompt().
+    const projectLogText = await this.services.chatStore.readProjectLogForPrompt();
 
     this.busy = true;
     this.post({ type: 'busy', sessionId: this.id, busy: true });
@@ -486,6 +518,7 @@ export class ChatSession {
           rulesText: rulesText || undefined,
           memoryText: memoryText || undefined,
           milestonesText,
+          projectLogText: projectLogText || undefined,
           planContext: opts?.planContext,
           compactionCache: this.compactionCache,
           verifyCommand: modeSupportsVerifyCommand(this.mode) && this.verifyCommand ? this.verifyCommand : undefined,
@@ -512,8 +545,15 @@ export class ChatSession {
       // digest just reflects whatever entries actually landed), but not if
       // the checkpoint itself was already dropped by a restore that
       // happened mid-turn (setMilestone no-ops on a missing id).
-      this.checkpoints.setMilestone(checkpointId, deriveMilestoneSummary(this.uiHistory.slice(turnStartUiIndex)));
+      const milestone = deriveMilestoneSummary(this.uiHistory.slice(turnStartUiIndex));
+      this.checkpoints.setMilestone(checkpointId, milestone);
       this.persist();
+      // Item "documentation skill": feed the exact same mechanically-generated
+      // digest into the workspace-wide project log — "unify into one system,"
+      // not a fourth logging mechanism alongside the per-turn milestone, the
+      // per-session crash-recovery log, and this. Best-effort/fire-and-forget,
+      // same as the chat-memory indexing call just below.
+      if (milestone) this.services.chatStore.appendProjectLog(this.title, milestone).catch((err) => logger.warn('project log append failed', String(err)));
       // Keep search_chat_history current — incremental (see ChatMemoryIndex),
       // so this is cheap on every turn except when this session actually
       // grew. Best-effort: a memory-index failure must never break the turn
@@ -557,7 +597,12 @@ export class ChatSession {
       const result = await this.services.memory.addFact(fact);
       if (result.added) added++;
     }
-    if (added > 0) this.log('memory_review', `auto-remembered ${added} fact(s): ${facts.slice(0, added).join('; ')}`);
+    if (added > 0) {
+      this.log('memory_review', `auto-remembered ${added} fact(s): ${facts.slice(0, added).join('; ')}`);
+      this.services.chatStore
+        .appendProjectLog(this.title, `Auto-remembered ${added} fact(s) from conversation: ${facts.slice(0, added).join('; ')}`)
+        .catch((err) => logger.warn('project log append failed', String(err)));
+    }
   }
 
   private handleAgentEvent(event: AgentEvent) {
@@ -669,7 +714,7 @@ export class ChatSession {
         // uiHistory/disk) shown in the composer footer while the agent
         // works. The webview itself honors forge.showStatusMessages to hide
         // it entirely if the user doesn't want it.
-        this.post({ type: 'statusUpdate', sessionId: this.id, text: event.text });
+        this.post({ type: 'statusUpdate', sessionId: this.id, text: event.text, activity: event.activity });
         return;
       }
       case 'subagent_start': {

@@ -849,6 +849,22 @@ body {
   color: var(--vscode-errorForeground);
 }
 
+/* ---------- background commands panel (item "kill commands from the chat
+   window") — reuses the all-chats-* row layout, so only the bits that
+   differ (not clickable, a "running" badge that should stand out) get
+   their own rules. ---------- */
+.bg-cmd-title {
+  cursor: default;
+}
+.bg-cmd-title:hover {
+  text-decoration: none;
+}
+.all-chats-badge.bg-cmd-running {
+  background: var(--vscode-testing-iconPassed, #2e9a44);
+  color: #fff;
+  opacity: 1;
+}
+
 /* ---------- custom confirm modal ----------
    VS Code webviews don't reliably support window.confirm()/alert() — see the
    comment in webview.js. This is a real modal so confirmations always work. */

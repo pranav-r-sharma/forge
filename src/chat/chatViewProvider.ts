@@ -16,7 +16,7 @@ import { WebSearchKeyStore, SECRET_BACKED_PROVIDERS } from '../websearch/keyStor
 import { MODES } from '../agent/modes';
 import { getConfig, setChatModel, setForgeSetting } from '../util/config';
 import { genId } from '../util/ids';
-import { toRelative } from '../util/paths';
+import { resolveWorkspacePath, toRelative } from '../util/paths';
 import { WorkspaceEntryIndex } from '../util/fileSearch';
 import { estimateSuggestedNumCtx, getGpuStatus, getRamStatus } from '../util/hwMetrics';
 import { logger } from '../util/logger';
@@ -382,7 +382,26 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         // backtick-quoted paths in prose — see webview.js's file-ref click
         // handler) route here. Try the file first, then a folder (reveal in
         // Explorer) since @-mentions can now attach either (item #5).
-        const uri = vscode.Uri.joinPath(this.workspaceRoot, msg.path);
+        //
+        // Item "file references don't open on click": this used to build the
+        // URI with a naive vscode.Uri.joinPath(workspaceRoot, msg.path)
+        // instead of the same resolveWorkspacePath() every file tool already
+        // uses. That matters because msg.path can carry things
+        // joinPath doesn't normalize away — a leading "./", a leading "/"
+        // that joinPath treats as an absolute-path replacement instead of a
+        // workspace-relative one, or backslashes from a path that started
+        // life on Windows — any of which silently produced a URI that didn't
+        // point at the real file, so showTextDocument's rejection always hit
+        // the "could not open" fallback. resolveWorkspacePath cleans exactly
+        // that up (and, as a bonus, refuses anything that would escape the
+        // workspace via "..").
+        let uri: vscode.Uri;
+        try {
+          uri = resolveWorkspacePath(this.workspaceRoot, msg.path);
+        } catch {
+          vscode.window.showWarningMessage(`Could not open ${msg.path}`);
+          return;
+        }
         vscode.window.showTextDocument(uri).then(undefined, async () => {
           try {
             const stat = await vscode.workspace.fs.stat(uri);
@@ -481,6 +500,38 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         this.post({ type: 'sessionSwitched', session: session.toSummaryState() });
         return;
       }
+      case 'setSessionModel': {
+        // Item "ability to run separate models in different chats" — the
+        // resolution priority (session override > per-mode routing > global
+        // default) already existed via resolveModelForMode(); the only thing
+        // missing was ever actually populating a session's own override.
+        const session = this.activeSession();
+        if (!session) return;
+        session.setModelOverride(msg.model);
+        this.post({ type: 'sessionSwitched', session: session.toSummaryState() });
+        return;
+      }
+      case 'listBackgroundCommands': {
+        this.post({ type: 'backgroundCommandsList', commands: this.backgroundProcesses.list() });
+        return;
+      }
+      case 'killBackgroundCommand': {
+        // Item "ability to kill commands while they are running from the
+        // chat window" — reuses BackgroundProcessManager.kill(), the same
+        // method the check_background_command tool's {"action":"kill"} path
+        // already calls; this just exposes it as a direct user action
+        // instead of requiring the model to be asked to do it.
+        const result = this.backgroundProcesses.kill(msg.id);
+        if (!result.found) {
+          this.post({ type: 'toast', level: 'error', text: 'That background command is no longer tracked (it may have already finished).' });
+        } else if (result.alreadyExited) {
+          this.post({ type: 'toast', level: 'info', text: 'That command had already finished.' });
+        } else {
+          this.post({ type: 'toast', level: 'info', text: 'Stop signal sent.' });
+        }
+        this.post({ type: 'backgroundCommandsList', commands: this.backgroundProcesses.list() });
+        return;
+      }
       case 'setWebSearchApiKey': {
         // The webview can't touch vscode.SecretStorage directly, so it asks
         // the extension host to run the real command (which shows its own
@@ -522,6 +573,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       subAgentMaxIterations: cfg.subAgentMaxIterations,
       maxSubAgentDepth: cfg.maxSubAgentDepth,
       showStatusMessages: cfg.showStatusMessages,
+      loopDetectionEnabled: cfg.loopDetectionEnabled,
       webSearchEnabled: cfg.webSearchEnabled,
       webSearchProvider: cfg.webSearchProvider,
       webSearchMaxResults: cfg.webSearchMaxResults,

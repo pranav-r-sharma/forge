@@ -465,6 +465,72 @@ export class ChatStore {
     }
   }
 
+  /**
+   * Item "documentation skill — every major decision, checkpoint, error and
+   * progress gets logged, and that can become context for new chats": a
+   * single workspace-wide, human-readable `.forge/project-log.md`,
+   * complementing (not duplicating) the per-session `.forge/chat/<id>.log.jsonl`
+   * crash-recovery log above. That log is per-chat, JSONL, and meant for
+   * machine reconstruction after data loss; this one is cross-chat, plain
+   * Markdown, and meant to actually be read — by a person opening it (**Forge:
+   * Open Project Log**) or by a brand-new chat's system prompt (see
+   * ChatSession.send()'s projectLogText), so starting a new chat isn't
+   * starting from zero context about what's already been done in this
+   * project. Reuses the same mechanically-generated milestone summary
+   * (chat/milestones.ts) that's already attached to each checkpoint — "unify
+   * into one system," not a fourth logging mechanism. Best-effort/append-only,
+   * same reasoning as appendLog(): a logging failure must never break the
+   * turn that just completed.
+   */
+  async appendProjectLog(chatTitle: string, text: string): Promise<void> {
+    const clean = text.trim();
+    if (!clean) return;
+    try {
+      const dir = vscode.Uri.joinPath(this.workspaceRoot, '.forge');
+      await vscode.workspace.fs.createDirectory(dir);
+      const stamp = new Date().toISOString();
+      const line = `- [${stamp}] (${chatTitle}) ${clean}\n`;
+      await fs.promises.appendFile(this.projectLogPath(), line, 'utf8');
+    } catch (err) {
+      logger.warn('Failed to append project log', String(err));
+    }
+  }
+
+  projectLogPath(): string {
+    return vscode.Uri.joinPath(this.workspaceRoot, '.forge', 'project-log.md').fsPath;
+  }
+
+  /**
+   * What gets spliced into every chat's system prompt (the actual fix for
+   * "a new chat starts with zero knowledge of what happened in every other
+   * chat before it") — capped the same way memory.ts's renderForPrompt() is,
+   * keeping the most recent entries so the cap can never itself blow the
+   * context budget it exists to protect.
+   */
+  async readProjectLogForPrompt(maxChars = 3000): Promise<string> {
+    let raw: string;
+    try {
+      raw = await fs.promises.readFile(this.projectLogPath(), 'utf8');
+    } catch {
+      return '';
+    }
+    const lines = raw
+      .split('\n')
+      .map((l) => l.trim())
+      .filter(Boolean);
+    if (lines.length === 0) return '';
+    const kept: string[] = [];
+    let total = 0;
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const line = lines[i];
+      if (total + line.length + 1 > maxChars) break;
+      kept.unshift(line);
+      total += line.length + 1;
+    }
+    const omitted = lines.length - kept.length;
+    return `## Project log (from .forge/project-log.md — a running, cross-chat record of what's already happened in this project; use it as context, and don't repeat work it says is already done)\n${kept.join('\n')}${omitted > 0 ? `\n(${omitted} earlier entries omitted — see .forge/project-log.md)` : ''}`;
+  }
+
   async delete(id: string): Promise<void> {
     return this.enqueue(async () => {
       try {

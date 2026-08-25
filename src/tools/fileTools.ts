@@ -124,6 +124,7 @@ export async function writeFileTool(args: Record<string, any>, ctx: ToolExecCont
 
   let newText: string;
   let kind: 'create' | 'modify';
+  let indentAdvisory: string | undefined;
 
   if (hasSearchReplace) {
     if (existing === undefined) {
@@ -145,6 +146,14 @@ export async function writeFileTool(args: Record<string, any>, ctx: ToolExecCont
     }
     newText = existing.replace(search, () => args.replace);
     kind = 'modify';
+    // Item "whitespace and indentation issues when doing targeted writes to
+    // existing files": advisory only — never blocks the edit or mutates
+    // newText, since a false positive (e.g. a one-line replacement with no
+    // indentation of its own) must never stop a legitimate edit. This just
+    // surfaces a heads-up in the tool result so the model (or a human
+    // reviewing the proposed diff) notices a likely tabs/spaces mismatch
+    // instead of it silently landing in the file.
+    indentAdvisory = detectIndentMismatch(existing, args.replace);
   } else if (typeof args.content === 'string') {
     newText = args.content;
     kind = existing === undefined ? 'create' : 'modify';
@@ -165,12 +174,50 @@ export async function writeFileTool(args: Record<string, any>, ctx: ToolExecCont
 
   const verb = kind === 'create' ? 'Created' : 'Updated';
   const verbPending = kind === 'create' ? 'creating' : 'updating';
+  const advisorySuffix = indentAdvisory ? `\n\n${indentAdvisory}` : '';
   return {
     ok: true,
     content: applied
-      ? `${verb} ${relPath}.`
-      : `Proposed ${verbPending} ${relPath} — awaiting your review in the chat panel (edit id ${id}). You may continue working; this file's content for you is now the proposed version.`,
+      ? `${verb} ${relPath}.${advisorySuffix}`
+      : `Proposed ${verbPending} ${relPath} — awaiting your review in the chat panel (edit id ${id}). You may continue working; this file's content for you is now the proposed version.${advisorySuffix}`,
   };
+}
+
+/** 'none' means the sample had no indented lines to judge from (e.g. a one-line snippet) — callers should treat that as "can't tell," not as a mismatch. */
+type DominantIndent = 'tab' | 'space' | 'none';
+
+/**
+ * Crude, dependency-free indent-style sniff: which whitespace character
+ * starts more of this text's non-empty lines. Not a real indentation
+ * parser — doesn't try to detect indent WIDTH, mixed-indent lines, or
+ * lines indented with a leading blank-then-tab — deliberately so, since
+ * this only needs to catch the common, high-confidence case ("this file is
+ * clearly tabs, this replacement is clearly spaces") without false-flagging
+ * on edge cases. Exported for direct unit testing.
+ */
+export function dominantIndentChar(text: string): DominantIndent {
+  let tabs = 0;
+  let spaces = 0;
+  for (const line of text.split('\n')) {
+    if (line.startsWith('\t')) tabs++;
+    else if (line.startsWith(' ')) spaces++;
+  }
+  if (tabs === 0 && spaces === 0) return 'none';
+  return tabs >= spaces ? 'tab' : 'space';
+}
+
+/**
+ * Item "whitespace and indentation issues when doing targeted writes to
+ * existing files": compares the existing file's dominant indent style
+ * against the replacement text's, returning a human-readable advisory (or
+ * undefined if there's nothing to flag — either they match, or one side has
+ * no indented lines to judge from at all). Exported for direct unit testing.
+ */
+export function detectIndentMismatch(existing: string, replace: string): string | undefined {
+  const fileIndent = dominantIndentChar(existing);
+  const replaceIndent = dominantIndentChar(replace);
+  if (fileIndent === 'none' || replaceIndent === 'none' || fileIndent === replaceIndent) return undefined;
+  return `Heads up: this file's indentation looks like it's mostly ${fileIndent === 'tab' ? 'tabs' : 'spaces'}, but the "replace" text you provided looks like it's using ${replaceIndent === 'tab' ? 'tabs' : 'spaces'} — double-check the indentation actually matches the surrounding code before treating this edit as done.`;
 }
 
 function countOccurrences(haystack: string, needle: string): number {

@@ -95,6 +95,73 @@ probably belongs in \`.forge/rules/\` instead.
   await vscode.window.showTextDocument(uri);
 }
 
+/**
+ * Item "documentation skill" — opens (creating if needed) `.forge/project-log.md`,
+ * the workspace-wide, cross-chat log every chat's system prompt also reads
+ * from (see ChatStore.readProjectLogForPrompt()). This command is purely for
+ * a human to read/skim it directly; entries themselves are appended
+ * automatically after every turn (ChatSession.send()'s finally block) — there's
+ * no "add an entry by hand" flow, since the whole point is that it's a
+ * mechanically-generated record of what actually happened, not a second
+ * place to remember to write things down.
+ */
+export async function openProjectLogCommand(chatStore: ChatStore) {
+  const path = chatStore.projectLogPath();
+  const uri = vscode.Uri.file(path);
+  try {
+    await vscode.workspace.fs.stat(uri);
+  } catch {
+    await ensureFileWithContent(
+      uri,
+      `# Forge project log
+
+A running, cross-chat record of what's happened in this project — appended to
+automatically after every turn in every chat (a one-line mechanically
+generated digest, the same one attached to that turn's checkpoint). Every
+chat's system prompt reads the most recent entries from this file, so a
+brand-new chat isn't starting from zero context about work already done
+elsewhere in the project. Not meant to be hand-edited (there's nothing wrong
+with doing so, but it'll just get more entries appended below whatever's
+here).
+`
+    );
+  }
+  await vscode.window.showTextDocument(uri);
+}
+
+/**
+ * Item "better way to handle memory as things change over time and
+ * irrelevant things get stuck in memory which bloats up the prompt" — the
+ * deterministic (no LLM call, no surprises) half of the memory-architecture
+ * fix. Shows every current fact pre-checked in a multi-select quick-pick;
+ * whatever the user leaves CHECKED is kept, anything they uncheck gets
+ * archived (not deleted — see MemoryStore.compact()) to
+ * `.forge/memory.archive.md`.
+ */
+export async function compactMemoryCommand(memory: MemoryStore) {
+  const facts = await memory.listFacts();
+  if (facts.length === 0) {
+    vscode.window.showInformationMessage('Forge: memory is already empty — nothing to compact.');
+    return;
+  }
+  const picked: { label: string; picked: boolean }[] | undefined = await vscode.window.showQuickPick(
+    facts.map((f) => ({ label: f, picked: true })),
+    {
+      title: 'Forge: Compact Memory — uncheck facts that are stale or no longer relevant',
+      canPickMany: true,
+      ignoreFocusOut: true,
+    }
+  );
+  if (picked === undefined) return; // cancelled — nothing changed
+  const kept = picked.map((p: { label: string; picked: boolean }) => p.label);
+  const result = await memory.compact(kept);
+  if (result.archived === 0) {
+    vscode.window.showInformationMessage('Forge: no facts were unchecked — memory unchanged.');
+  } else {
+    vscode.window.showInformationMessage(`Forge: archived ${result.archived} fact(s) to .forge/memory.archive.md. ${kept.length} fact(s) kept.`);
+  }
+}
+
 export async function selectChatModelCommand(ollama: OllamaClient) {
   const health = await ollama.health();
   if (!health.ok) {

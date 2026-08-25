@@ -32,7 +32,11 @@
     settingsOpen: false,
     settings: null, // populated lazily from 'settingsData' the first time the panel is opened
     numCtxOverride: undefined, // active session's per-chat context override, if any
+    sessionModel: '', // active session's own model override, if any — item "run separate models in different chats"
     statusText: '', // brief "what is the agent doing" line — item "brief status messages"
+    statusActivity: undefined, // machine-readable category paired with statusText — item "progress indicators"
+    bgCommandsOpen: false,
+    backgroundCommands: [], // item "ability to kill commands while running from the chat window"
     // Highest 'sessionsList'/'allChatsList' seq applied so far — a lower-seq
     // message that arrives late (two overlapping extension-host reads
     // resolving out of order) is discarded instead of rolling the tab strip
@@ -49,6 +53,7 @@
         <div class="forge-header-actions">
           <button id="btn-search" class="icon-btn" title="Search all chats">&#128269;</button>
           <button id="btn-all-chats" class="icon-btn" title="All chats (including closed ones)">&#128193;</button>
+          <button id="btn-bg-commands" class="icon-btn" title="Background commands">&#9881;&#9654;</button>
           <button id="btn-settings" class="icon-btn" title="Settings">&#9881;</button>
           <button id="btn-index" class="icon-btn" title="Index workspace for @codebase search">&#8635;</button>
           <button id="btn-new-chat" class="icon-btn" title="New chat">+</button>
@@ -62,6 +67,10 @@
       <div id="all-chats-panel" class="forge-search-panel" style="display:none;">
         <div class="all-chats-header">All chats <span class="all-chats-hint">closed chats are still saved — click to reopen</span></div>
         <div id="all-chats-list" class="search-results"></div>
+      </div>
+      <div id="bg-commands-panel" class="forge-search-panel" style="display:none;">
+        <div class="all-chats-header">Background commands <span class="all-chats-hint">started via run_command with background:true — shared across every chat</span></div>
+        <div id="bg-commands-list" class="search-results"></div>
       </div>
       <div id="settings-panel" class="forge-search-panel forge-settings-panel" style="display:none;">
         <div class="all-chats-header">Settings</div>
@@ -150,6 +159,9 @@
     allChatsBtn: document.getElementById('btn-all-chats'),
     allChatsPanel: document.getElementById('all-chats-panel'),
     allChatsList: document.getElementById('all-chats-list'),
+    bgCommandsBtn: document.getElementById('btn-bg-commands'),
+    bgCommandsPanel: document.getElementById('bg-commands-panel'),
+    bgCommandsList: document.getElementById('bg-commands-list'),
     confirmOverlay: document.getElementById('confirm-overlay'),
     confirmText: document.getElementById('confirm-modal-text'),
     confirmOk: document.getElementById('confirm-modal-ok'),
@@ -261,6 +273,10 @@
     state.searchOpen = !state.searchOpen;
     el.searchPanel.style.display = state.searchOpen ? 'flex' : 'none';
     if (state.searchOpen) {
+      if (state.bgCommandsOpen) {
+        state.bgCommandsOpen = false;
+        el.bgCommandsPanel.style.display = 'none';
+      }
       el.searchInput.value = '';
       el.searchResults.innerHTML = '';
       el.searchInput.focus();
@@ -314,6 +330,10 @@
         state.searchOpen = false;
         el.searchPanel.style.display = 'none';
       }
+      if (state.bgCommandsOpen) {
+        state.bgCommandsOpen = false;
+        el.bgCommandsPanel.style.display = 'none';
+      }
       vscodeApi.postMessage({ type: 'listAllChats' });
     }
   });
@@ -359,6 +379,50 @@
     }
   }
 
+  // ---------- background commands panel (item "ability to kill commands
+  // while they are running from the chat window") ----------
+  el.bgCommandsBtn.addEventListener('click', () => {
+    state.bgCommandsOpen = !state.bgCommandsOpen;
+    el.bgCommandsPanel.style.display = state.bgCommandsOpen ? 'flex' : 'none';
+    if (state.bgCommandsOpen) {
+      if (state.searchOpen) {
+        state.searchOpen = false;
+        el.searchPanel.style.display = 'none';
+      }
+      if (state.allChatsOpen) {
+        state.allChatsOpen = false;
+        el.allChatsPanel.style.display = 'none';
+      }
+      vscodeApi.postMessage({ type: 'listBackgroundCommands' });
+    }
+  });
+
+  function renderBackgroundCommands(commands) {
+    state.backgroundCommands = commands;
+    el.bgCommandsList.innerHTML = '';
+    if (commands.length === 0) {
+      el.bgCommandsList.innerHTML = '<div class="search-empty">No background commands — the agent starts one with run_command\'s {"background": true}.</div>';
+      return;
+    }
+    for (const c of commands) {
+      const item = document.createElement('div');
+      item.className = 'search-result-item all-chats-item';
+      item.innerHTML = `
+        <div class="all-chats-row">
+          <span class="all-chats-title bg-cmd-title" title="${escapeAttr(c.command)}"><code>${escapeHtml(truncateMiddleText(c.command, 60))}</code></span>
+          <span class="all-chats-badge ${c.status === 'running' ? 'bg-cmd-running' : ''}">${c.status === 'running' ? 'running' : `exited (${c.exitCode ?? 'unknown'})`}</span>
+          <span class="spacer"></span>
+          ${c.status === 'running' ? '<button class="link-btn bg-cmd-kill" title="Stop this command">&#9632; Stop</button>' : ''}
+        </div>
+      `;
+      const killBtn = item.querySelector('.bg-cmd-kill');
+      if (killBtn) {
+        killBtn.addEventListener('click', () => vscodeApi.postMessage({ type: 'killBackgroundCommand', id: c.id }));
+      }
+      el.bgCommandsList.appendChild(item);
+    }
+  }
+
   // ---------- settings panel (item "a new setting pane") ----------
   el.settingsBtn.addEventListener('click', () => {
     state.settingsOpen = !state.settingsOpen;
@@ -371,6 +435,10 @@
       if (state.allChatsOpen) {
         state.allChatsOpen = false;
         el.allChatsPanel.style.display = 'none';
+      }
+      if (state.bgCommandsOpen) {
+        state.bgCommandsOpen = false;
+        el.bgCommandsPanel.style.display = 'none';
       }
       vscodeApi.postMessage({ type: 'getSettings' });
     }
@@ -411,6 +479,11 @@
         `<input id="set-session-numctx" type="number" min="512" step="512" placeholder="${s.numCtx}" value="${state.numCtxOverride || ''}" />`
       )}
       ${renderNumCtxSuggestion()}
+      ${settingRow(
+        'Model for this chat',
+        'Overrides the global default (and any per-mode routing) for this one chat — item "run separate models in different chats".',
+        `<select id="set-session-model"><option value="">(use global default)</option>${state.models.map((m) => `<option value="${escapeAttr(m.name)}" ${m.name === state.sessionModel ? 'selected' : ''}>${escapeHtml(m.name)}</option>`).join('')}</select>`
+      )}
       <div class="settings-section-title">Global defaults</div>
       ${settingRow('Context window (forge.numCtx)', 'Applies to every chat without its own override.', `<input id="set-numCtx" type="number" min="512" step="512" value="${s.numCtx}" />`)}
       ${settingRow('Temperature', '', `<input id="set-temperature" type="number" min="0" max="2" step="0.1" value="${s.temperature}" />`)}
@@ -418,6 +491,7 @@
       ${settingRow('Require approval for file edits', '', `<input id="set-requireApprovalForWrites" type="checkbox" ${s.requireApprovalForWrites ? 'checked' : ''} />`)}
       ${settingRow('Require approval for commands', '', `<input id="set-requireApprovalForCommands" type="checkbox" ${s.requireApprovalForCommands ? 'checked' : ''} />`)}
       ${settingRow('Show brief status messages', 'e.g. "Reading foo.ts…" while the agent works.', `<input id="set-showStatusMessages" type="checkbox" ${s.showStatusMessages ? 'checked' : ''} />`)}
+      ${settingRow('Loop detection (Auto/Outcome mode)', 'Stops the agent if it looks like it\'s repeating the same action in a loop. check_background_command is always exempt regardless of this setting. Turn off if it\'s incorrectly triggering on legitimately repetitive work.', `<input id="set-loopDetectionEnabled" type="checkbox" ${s.loopDetectionEnabled ? 'checked' : ''} />`)}
       <div class="settings-section-title">Sub-agents</div>
       ${settingRow(
         'Sub-agent model',
@@ -444,6 +518,11 @@
       const v = e.target.value.trim();
       vscodeApi.postMessage({ type: 'setSessionNumCtx', numCtx: v ? parseInt(v, 10) : null });
     });
+    document.getElementById('set-session-model').addEventListener('change', (e) => {
+      state.sessionModel = e.target.value;
+      vscodeApi.postMessage({ type: 'setSessionModel', model: e.target.value });
+      renderModelBtn();
+    });
     const suggestBtn = document.getElementById('use-suggested-numctx');
     if (suggestBtn) {
       suggestBtn.addEventListener('click', () => {
@@ -464,11 +543,15 @@
         vscodeApi.postMessage({ type: 'updateSetting', key, value: e.target.checked });
       });
     }
-    // Web-search settings are handled by dedicated listeners below (rather
-    // than the generic loops above) since their config keys are dotted
-    // (webSearch.maxResults etc.) while their DOM ids are camelCase
-    // (set-webSearchMaxResults) — folding them into the generic loops would
+    // Web-search settings — and loop detection, same reason — are handled by
+    // dedicated listeners below (rather than the generic loop above) since
+    // their config keys are dotted (webSearch.maxResults, loopDetection.enabled)
+    // while their DOM ids are camelCase (set-webSearchMaxResults,
+    // set-loopDetectionEnabled) — folding them into the generic loop would
     // require deriving one from the other and getting it wrong silently.
+    document.getElementById('set-loopDetectionEnabled').addEventListener('change', (e) => {
+      vscodeApi.postMessage({ type: 'updateSetting', key: 'loopDetection.enabled', value: e.target.checked });
+    });
     document.getElementById('set-subAgentModel').addEventListener('change', (e) => {
       vscodeApi.postMessage({ type: 'updateSetting', key: 'subAgentModel', value: e.target.value });
     });
@@ -1038,7 +1121,18 @@
 
   // ---------- header / status ----------
   function renderModelBtn() {
-    el.modelBtn.textContent = state.chatModel ? `⚙ ${state.chatModel}` : '⚙ Select model…';
+    // Item "ability to run separate models in different chats": a session
+    // override (set via the Settings panel's "This chat" section) takes
+    // priority over the global default in the label itself, so it's obvious
+    // at a glance that this particular chat isn't using the global model —
+    // matching resolveModelForMode()'s own priority order server-side.
+    if (state.sessionModel) {
+      el.modelBtn.textContent = `⚙ ${state.sessionModel} (this chat)`;
+      el.modelBtn.title = `This chat is pinned to ${state.sessionModel}. Change in Settings → This chat → Model for this chat.`;
+    } else {
+      el.modelBtn.textContent = state.chatModel ? `⚙ ${state.chatModel}` : '⚙ Select model…';
+      el.modelBtn.title = 'Change the global default model';
+    }
   }
 
   function renderConnectionBanner() {
@@ -1074,13 +1168,16 @@
     state.checkpoints = session.checkpoints || [];
     state.verifyCommand = session.verifyCommand || '';
     state.numCtxOverride = session.numCtxOverride;
+    state.sessionModel = session.model || '';
     state.statusText = '';
+    state.statusActivity = undefined;
     renderStatusLine();
     renderModeStrip();
     renderAutoBanner();
     renderVerifyRow();
     renderTabStrip();
     renderBusy();
+    renderModelBtn();
     renderAllHistory();
   }
 
@@ -1120,11 +1217,31 @@
     el.hwReadout.title = titleLines.length ? titleLines.join('\n') : 'Click to check what Ollama currently has loaded';
   }
 
-  // ---------- brief status line (item "brief messages…") ----------
+  // ---------- brief status line (item "brief messages…" / "progress
+  // indicators — what file is being edited, is the model thinking/reading") ----------
+  // Maps AgentActivity (agent/types.ts) to a small icon so the status line
+  // reads at a glance instead of always showing the same generic spinner —
+  // this is the whole point of the activity field the agent loop started
+  // tagging every 'status' event with.
+  const ACTIVITY_ICONS = {
+    think: '\u{1F4AD}', // 💭
+    read: '\u{1F4D6}', // 📖
+    write: '\u{270F}\u{FE0F}', // ✏️
+    delete: '\u{1F5D1}\u{FE0F}', // 🗑️
+    run: '\u{2699}\u{FE0F}', // ⚙️
+    search: '\u{1F50D}', // 🔍
+    diagnostics: '\u{1FA7A}', // 🩺
+    memory: '\u{1F9E0}', // 🧠
+    delegate: '\u{1F91D}', // 🤝
+    verify: '\u{2705}', // ✅
+    web: '\u{1F310}', // 🌐
+    other: '\u{2699}\u{FE0F}', // ⚙️
+  };
   function renderStatusLine() {
     const show = !!state.statusText && (!state.settings || state.settings.showStatusMessages !== false);
     el.statusLine.style.display = show ? 'block' : 'none';
-    el.statusLine.textContent = state.statusText || '';
+    const icon = state.statusActivity && ACTIVITY_ICONS[state.statusActivity];
+    el.statusLine.textContent = (icon ? icon + ' ' : '') + (state.statusText || '');
   }
 
   // ---------- message handling ----------
@@ -1203,6 +1320,7 @@
           renderBusy();
           if (!msg.busy) {
             state.statusText = '';
+            state.statusActivity = undefined;
             renderStatusLine();
           }
         }
@@ -1212,6 +1330,7 @@
       case 'statusUpdate': {
         if (msg.sessionId !== state.activeSessionId) break;
         state.statusText = msg.text;
+        state.statusActivity = msg.activity;
         renderStatusLine();
         break;
       }
@@ -1280,6 +1399,23 @@
         renderAllChats(msg.sessions);
         break;
       }
+      case 'backgroundCommandsList': {
+        renderBackgroundCommands(msg.commands);
+        break;
+      }
+      case 'modeChanged': {
+        // Item "doesn't recognize that the mode has changed": a dedicated
+        // notification (see ChatSession.postModeChanged()) so the mode pill
+        // updates immediately no matter which server-side code path changed
+        // it — previously only a full sessionSwitched/init payload did this,
+        // which executePlan's agent-mode handoff never sent.
+        if (msg.sessionId !== state.activeSessionId) break;
+        state.activeMode = msg.mode;
+        renderModeStrip();
+        renderAutoBanner();
+        renderVerifyRow();
+        break;
+      }
     }
   });
 
@@ -1307,7 +1443,15 @@
         // `src/foo.ts`") becomes a clickable reference — click opens it in
         // the editor, same as clicking a tool card's path (see the
         // delegated .file-ref click handler and summarizeArgsHtml above).
-        html = html.replace(/`([^`]+)`/g, (m, code) => (looksLikePath(code) ? `<code class="file-ref" data-path="${code}">${code}</code>` : `<code>${code}</code>`));
+        // Item "file references don't open on click" (webview half): `code`
+        // here is already escapeHtml'd (from `let html = escapeHtml(...)`
+        // above) for TEXT-content purposes — `&`/`<`/`>` are safe, but a
+        // literal `"` isn't, and dropping it straight into `data-path="..."`
+        // would terminate the attribute early for any path containing one.
+        // Not escapeAttr(code): that would re-escape the `&`/`<`/`>` that
+        // are already escaped, double-encoding them. Just the one character
+        // that's actually unsafe in this specific context.
+        html = html.replace(/`([^`]+)`/g, (m, code) => (looksLikePath(code) ? `<code class="file-ref" data-path="${code.replace(/"/g, '&quot;')}">${code}</code>` : `<code>${code}</code>`));
         html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
         html = html.replace(/(^|[\s(])\*([^*\n]+)\*(?=[\s).,!?]|$)/g, '$1<em>$2</em>');
         html = html

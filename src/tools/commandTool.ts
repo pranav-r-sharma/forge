@@ -48,15 +48,73 @@ export async function runCommandTool(args: Record<string, any>, ctx: ToolExecCon
 
   const timeoutMs = Math.min(args.timeout_ms ? Number(args.timeout_ms) : DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS);
 
+  // Item "stop button freezes the chat" (also covers: a command that hits its
+  // own configured timeout but ignores SIGTERM): both the built-in
+  // spawn({timeout}) option and a bare child.kill() only ever signal the
+  // immediate child process. When that child is itself a shell running a
+  // pipeline/subprocess (the common case, since we always spawn with
+  // shell:true), the grandchildren can easily outlive it and keep the
+  // process's stdio pipes open — which means `close` never fires and this
+  // tool call's promise never resolves, wedging the whole turn (and, upstream
+  // in agentLoop.ts's raceToolCallWithCancellation, only papered over with a
+  // fake "aborted" result after a grace period — the process itself would
+  // still be running). Fix: spawn detached (POSIX: its own process group) so
+  // we can signal the whole tree via the negative-pid convention, and
+  // self-manage the timeout so both "hit configured timeout" and "user
+  // clicked Stop" go through the same SIGTERM-then-SIGKILL escalation.
+  const posix = process.platform !== 'win32';
+
   return new Promise<ToolResult>((resolve) => {
     let output = '';
     let settled = false;
+    let timedOut = false;
+    let killedByUser = false;
+    let escalated = false;
     const child = spawn(command, {
       shell: true,
       cwd,
-      timeout: timeoutMs,
+      detached: posix,
       env: { ...process.env, CI: '1', FORGE_AGENT: '1' },
     });
+
+    // Not typed as NodeJS.Signals: the sandboxed dev build's type shim
+    // (_devtools/shim.d.ts) doesn't declare the NodeJS namespace at all
+    // (same reason backgroundProcessManager.ts's SpawnedProcess avoids
+    // ChildProcess — see its doc comment), and the real @types/node type is
+    // structurally just a string literal union anyway. Only these two
+    // signals are ever actually sent here.
+    const killTree = (signal: 'SIGTERM' | 'SIGKILL') => {
+      try {
+        if (posix && typeof child.pid === 'number') {
+          process.kill(-child.pid, signal);
+        } else {
+          child.kill(signal);
+        }
+      } catch {
+        // Process (or process group) may already be gone — nothing to do.
+        try { child.kill(signal); } catch { /* noop */ }
+      }
+    };
+
+    let escalationTimer: ReturnType<typeof setTimeout> | undefined;
+    const beginKill = () => {
+      if (settled || escalated) return;
+      escalated = true;
+      killTree('SIGTERM');
+      // Grace period for a well-behaved process to exit on SIGTERM before we
+      // escalate — this is the actual fix for "ignores SIGTERM and hangs
+      // forever": previously there was nothing beyond the single signal.
+      escalationTimer = setTimeout(() => {
+        if (!settled) killTree('SIGKILL');
+      }, 2000);
+    };
+
+    const timeoutTimer = setTimeout(() => {
+      if (!settled) {
+        timedOut = true;
+        beginKill();
+      }
+    }, timeoutMs);
 
     const onData = (buf: Buffer) => {
       if (output.length < MAX_OUTPUT_CHARS) output += buf.toString('utf8');
@@ -66,13 +124,20 @@ export async function runCommandTool(args: Record<string, any>, ctx: ToolExecCon
 
     const cancelListener = ctx.cancellation.onCancellationRequested(() => {
       if (!settled) {
-        try { child.kill(); } catch { /* noop */ }
+        killedByUser = true;
+        beginKill();
       }
     });
+
+    const cleanupTimers = () => {
+      clearTimeout(timeoutTimer);
+      if (escalationTimer) clearTimeout(escalationTimer);
+    };
 
     child.on('error', (err: any) => {
       if (settled) return;
       settled = true;
+      cleanupTimers();
       cancelListener.dispose();
       resolve({ ok: false, content: `Failed to run command: ${err.message}` });
     });
@@ -80,9 +145,17 @@ export async function runCommandTool(args: Record<string, any>, ctx: ToolExecCon
     child.on('close', (code: number | null, signal: string | null) => {
       if (settled) return;
       settled = true;
+      cleanupTimers();
       cancelListener.dispose();
       const truncated = output.length >= MAX_OUTPUT_CHARS ? '\n... output truncated' : '';
-      const killedNote = signal === 'SIGTERM' ? `\n(command was terminated — possibly hit the ${timeoutMs}ms timeout)` : '';
+      let killedNote = '';
+      if (timedOut) {
+        killedNote = `\n(command was terminated — hit the ${timeoutMs}ms timeout${signal === 'SIGKILL' ? ' and had to be force-killed after ignoring the initial stop signal' : ''})`;
+      } else if (killedByUser) {
+        killedNote = `\n(command was terminated — Stop was requested${signal === 'SIGKILL' ? ' and it had to be force-killed after ignoring the initial stop signal' : ''})`;
+      } else if (signal) {
+        killedNote = `\n(command received signal ${signal})`;
+      }
       const header = `$ ${command}\n(exit code: ${code ?? 'unknown'}${signal ? `, signal: ${signal}` : ''})`;
       resolve({
         ok: code === 0,

@@ -24,6 +24,7 @@ import { ProviderCredentials } from './websearch/types';
 import {
   acceptAllEditsCommand,
   checkOllamaStatusCommand,
+  compactMemoryCommand,
   exportAllChatsCommand,
   indexWorkspaceCommand,
   newRuleCommand,
@@ -31,6 +32,7 @@ import {
   openDiffForFileCommand,
   openHooksFolderCommand,
   openMemoryFileCommand,
+  openProjectLogCommand,
   openTerminalCommand,
   rejectAllEditsCommand,
   selectChatModelCommand,
@@ -182,6 +184,8 @@ export async function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('forge.openHooksFolder', () => openHooksFolderCommand(workspaceRoot)),
     vscode.commands.registerCommand('forge.showHwStatus', () => showHwStatusCommand(ollama)),
     vscode.commands.registerCommand('forge.openMemory', () => openMemoryFileCommand(memory)),
+    vscode.commands.registerCommand('forge.compactMemory', () => compactMemoryCommand(memory)),
+    vscode.commands.registerCommand('forge.openProjectLog', () => openProjectLogCommand(chatStore)),
     vscode.commands.registerCommand('forge.setWebSearchApiKey', () => setWebSearchApiKeyCommand(webSearchKeyStore)),
     vscode.commands.registerCommand('forge.openTerminal', () => openTerminalCommand(workspaceRoot)),
     vscode.commands.registerCommand('forge.exportAllChats', () => exportAllChatsCommand(chatStore, context.extension.packageJSON.version))

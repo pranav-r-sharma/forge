@@ -29,6 +29,15 @@ export interface ForgeConfig {
   maxSubAgentDepth: number;
   /** Whether to show the brief "Reading foo.ts…" / "Thinking with <model>…" activity line in the composer footer while the agent works. */
   showStatusMessages: boolean;
+  /**
+   * Item "setting to toggle off loop detection in auto/outcome mode": on by
+   * default (the loop detector is a real safety net against a thrashing
+   * task), but some legitimately repetitive workflows trip it, so this lets
+   * it be switched off entirely. `check_background_command` is exempt from
+   * loop detection unconditionally, regardless of this setting — see
+   * checkLoop() in agentLoop.ts.
+   */
+  loopDetectionEnabled: boolean;
 
   // ---------- web search (item "a terrific web search tool") ----------
   // Off by default deliberately — this is the one Forge feature that
@@ -83,6 +92,7 @@ export function getConfig(): ForgeConfig {
     subAgentMaxIterations: cfg.get<number>('subAgentMaxIterations') ?? 40,
     maxSubAgentDepth: cfg.get<number>('maxSubAgentDepth') ?? 2,
     showStatusMessages: cfg.get<boolean>('showStatusMessages') ?? true,
+    loopDetectionEnabled: cfg.get<boolean>('loopDetection.enabled') ?? true,
     webSearchEnabled: cfg.get<boolean>('webSearch.enabled') ?? false,
     webSearchProvider: cfg.get<string>('webSearch.provider') || 'auto',
     webSearchMaxResults: cfg.get<number>('webSearch.maxResults') ?? 8,
@@ -120,6 +130,7 @@ export const SETTINGS_PANEL_KEYS = [
   'subAgentMaxIterations',
   'maxSubAgentDepth',
   'showStatusMessages',
+  'loopDetection.enabled',
   'webSearch.enabled',
   'webSearch.provider',
   'webSearch.maxResults',

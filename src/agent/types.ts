@@ -104,6 +104,15 @@ export interface ToolSpec {
   run: (args: Record<string, any>, ctx: ToolExecContext) => Promise<ToolResult>;
 }
 
+/**
+ * Item "progress indicators — what file is being edited, is the model
+ * thinking/reading/etc": a machine-readable category for a 'status' event,
+ * alongside its human-readable text, so the UI can show a distinct icon per
+ * kind of activity instead of a single generic spinner. See
+ * agentLoop.ts's describeToolCall() for tool->activity mapping.
+ */
+export type AgentActivity = 'think' | 'read' | 'write' | 'delete' | 'run' | 'search' | 'diagnostics' | 'memory' | 'delegate' | 'verify' | 'web' | 'other';
+
 /** Events streamed from the agent loop to the chat webview so the UI can render a live trace. */
 export type AgentEvent =
   | { type: 'token'; text: string }
@@ -121,7 +130,7 @@ export type AgentEvent =
   | { type: 'verify_result'; command: string; ok: boolean; summary: string }
   /** Item "Outcome mode introduces cheap tricks bypass" — see gamingDetection.ts. Emitted right after a verify_result whose check passed, only when that pass followed at least one failure and the heuristic scan flagged something in the writes made in response to it. Advisory only — never blocks the turn from completing. */
   | { type: 'verify_gaming_warning'; findings: { path: string; reason: string }[] }
-  | { type: 'status'; text: string }
+  | { type: 'status'; text: string; activity?: AgentActivity }
   | { type: 'subagent_start'; task: string; depth: number }
   | { type: 'subagent_result'; task: string; ok: boolean; summary: string; depth: number }
   | { type: 'done' }

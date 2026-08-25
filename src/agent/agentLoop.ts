@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { OllamaClient, keepAliveOpt } from '../ollama/client';
 import { ChatMessage, OllamaCallMetrics } from '../ollama/types';
-import { AgentEvent, ToolExecContext } from './types';
+import { AgentActivity, AgentEvent, ToolExecContext, ToolResult } from './types';
 import { buildSystemPrompt } from './systemPrompt';
 import { parseToolCall } from './toolProtocol';
 import { TOOL_MAP } from '../tools';
@@ -41,6 +41,8 @@ export interface AgentTurnOptions {
   memoryText?: string;
   /** Compact, mechanically-generated digest of prior turns this session (see chat/milestones.ts) — a cheap, always-available table of contents distinct from compaction's lossy LLM summary. */
   milestonesText?: string;
+  /** Item "documentation skill"/"unify into one system": the workspace-wide, cross-chat project log (see ChatStore.readProjectLogForPrompt()) — what makes a BRAND NEW chat aware of what's already happened in other chats, which milestonesText alone (this session's own history) can't provide. */
+  projectLogText?: string;
   planContext?: string;
   /** Carried across turns so compaction doesn't re-summarize from scratch every time — see ChatSession. */
   compactionCache?: CompactionCache;
@@ -97,35 +99,47 @@ function nextCallId(): string {
  */
 export const HARD_MAX_SUBAGENT_DEPTH = 4;
 
-/** Short, human-readable one-liner for what a tool call is about to do — item "brief messages to indicate what the AI agent/model is doing". Deliberately terse; the full detail is still in the tool card that follows. */
-function describeToolCall(tool: string, args: Record<string, any>): string {
+/**
+ * Short, human-readable one-liner for what a tool call is about to do — item
+ * "brief messages to indicate what the AI agent/model is doing" — paired
+ * with a machine-readable `activity` category (item "progress indicators:
+ * what file is being edited, is the model thinking/reading/etc") so the UI
+ * can render a distinct icon per kind of activity instead of one generic
+ * spinner for everything. Deliberately terse; the full detail is still in
+ * the tool card that follows.
+ */
+function describeToolCall(tool: string, args: Record<string, any>): { text: string; activity: AgentActivity } {
   switch (tool) {
     case 'read_file':
-      return `Reading ${args?.path ?? 'a file'}…`;
+      return { text: `Reading ${args?.path ?? 'a file'}…`, activity: 'read' };
     case 'list_dir':
-      return `Listing ${args?.path ?? 'workspace'}…`;
+      return { text: `Listing ${args?.path ?? 'workspace'}…`, activity: 'read' };
     case 'search_code':
-      return `Searching code for "${args?.query ?? ''}"…`;
+      return { text: `Searching code for "${args?.query ?? ''}"…`, activity: 'search' };
     case 'search_codebase':
-      return `Searching the codebase for "${args?.query ?? ''}"…`;
+      return { text: `Searching the codebase for "${args?.query ?? ''}"…`, activity: 'search' };
     case 'write_file':
-      return args?.delete ? `Deleting ${args?.path ?? 'a file'}…` : `Writing ${args?.path ?? 'a file'}…`;
+      return args?.delete
+        ? { text: `Deleting ${args?.path ?? 'a file'}…`, activity: 'delete' }
+        : { text: `Writing ${args?.path ?? 'a file'}…`, activity: 'write' };
     case 'run_command':
-      return `Running \`${args?.command ?? ''}\`…`;
+      return { text: `Running \`${args?.command ?? ''}\`…`, activity: 'run' };
+    case 'check_background_command':
+      return { text: 'Checking a background command…', activity: 'run' };
     case 'get_problems':
-      return `Checking diagnostics${args?.path ? ` for ${args.path}` : ''}…`;
+      return { text: `Checking diagnostics${args?.path ? ` for ${args.path}` : ''}…`, activity: 'diagnostics' };
     case 'remember':
-      return 'Saving a fact to memory…';
+      return { text: 'Saving a fact to memory…', activity: 'memory' };
     case 'search_chat_history':
-      return `Searching past chats for "${args?.query ?? ''}"…`;
+      return { text: `Searching past chats for "${args?.query ?? ''}"…`, activity: 'search' };
     case 'spawn_subagent':
-      return `Delegating to a sub-agent: ${truncateOneLine(String(args?.task ?? ''), 80)}`;
+      return { text: `Delegating to a sub-agent: ${truncateOneLine(String(args?.task ?? ''), 80)}`, activity: 'delegate' };
     case 'web_search':
-      return `Searching the web for "${truncateOneLine(String(args?.query ?? ''), 70)}"…`;
+      return { text: `Searching the web for "${truncateOneLine(String(args?.query ?? ''), 70)}"…`, activity: 'web' };
     case 'web_fetch':
-      return `Fetching ${truncateOneLine(String(args?.url ?? ''), 80)}…`;
+      return { text: `Fetching ${truncateOneLine(String(args?.url ?? ''), 80)}…`, activity: 'web' };
     default:
-      return `Calling ${tool}…`;
+      return { text: `Calling ${tool}…`, activity: 'other' };
   }
 }
 
@@ -191,6 +205,7 @@ export async function runAgentTurn(
     milestonesText: options.milestonesText,
     planContext: options.planContext,
     memoryText: options.memoryText,
+    projectLogText: options.projectLogText,
   });
   if (messages.length > 0 && messages[0].role === 'system') {
     messages[0] = { role: 'system', content: systemPrompt };
@@ -225,7 +240,7 @@ export async function runAgentTurn(
       const subCfg = getConfig();
       const subModel = subCfg.subAgentModel || model;
       emit({ type: 'subagent_start', task, depth: subAgentDepth + 1 });
-      emit({ type: 'status', text: `Sub-agent (depth ${subAgentDepth + 1}) starting: ${truncateOneLine(task, 90)}` });
+      emit({ type: 'status', text: `Sub-agent (depth ${subAgentDepth + 1}) starting: ${truncateOneLine(task, 90)}`, activity: 'delegate' });
       const subUserMessage = contextHint ? `${task}\n\n[Context from parent agent]\n${contextHint}` : task;
       // Sub-agents only ever report their final answer back to the parent —
       // their own tool-call chatter is real (it still shows up via `emit`
@@ -259,6 +274,7 @@ export async function runAgentTurn(
             mode: 'auto', // sub-agents are always fully autonomous — no approval prompts (see isAutonomousMode).
             rulesText: options.rulesText,
             memoryText: options.memoryText,
+            projectLogText: options.projectLogText,
             subAgentDepth: subAgentDepth + 1,
             maxIterationsOverride: subCfg.subAgentMaxIterations,
             numCtx,
@@ -300,7 +316,7 @@ export async function runAgentTurn(
     // Item "brief messages indicating what the AI agent/model is doing":
     // announce the model doing the thinking before the (potentially slow)
     // call starts, not just after a tool call is chosen.
-    emit({ type: 'status', text: subAgentDepth > 0 ? `Sub-agent thinking with ${model}…` : `Thinking with ${model}…` });
+    emit({ type: 'status', text: subAgentDepth > 0 ? `Sub-agent thinking with ${model}…` : `Thinking with ${model}…`, activity: 'think' });
     let fullText = '';
     try {
       fullText = await deps.ollama.chat({
@@ -354,7 +370,7 @@ export async function runAgentTurn(
       // check gets fed straight back in as evidence and the loop continues,
       // which is what makes OUTCOME mode's iterate-until-true promise real.
       if (options.verifyCommand) {
-        emit({ type: 'status', text: `Verifying: ${truncateOneLine(options.verifyCommand, 80)}…` });
+        emit({ type: 'status', text: `Verifying: ${truncateOneLine(options.verifyCommand, 80)}…`, activity: 'verify' });
         emit({ type: 'verify_start', command: options.verifyCommand, draftText: fullText.trim() });
         const verify = await runVerifyCommand(options.verifyCommand, deps.workspaceRoot.fsPath, cancellation);
         emit({ type: 'verify_result', command: options.verifyCommand, ok: verify.ok, summary: summarize(verify.output) });
@@ -391,7 +407,8 @@ export async function runAgentTurn(
 
     const spec = TOOL_MAP[call.tool];
     const callId = nextCallId();
-    emit({ type: 'status', text: describeToolCall(call.tool, call.args) });
+    const described = describeToolCall(call.tool, call.args);
+    emit({ type: 'status', text: described.text, activity: described.activity });
     emit({ type: 'tool_call', tool: call.tool, args: call.args, callId });
 
     if (!spec) {
@@ -427,7 +444,7 @@ export async function runAgentTurn(
 
     let result;
     try {
-      result = await spec.run(call.args, toolCtx);
+      result = await raceToolCallWithCancellation(spec.run(call.args, toolCtx), cancellation);
     } catch (err: any) {
       logger.error(`tool ${call.tool} threw`, err);
       result = { ok: false, content: `Tool "${call.tool}" crashed: ${err?.message || err}` };
@@ -472,8 +489,22 @@ export async function runAgentTurn(
   return { messages, compactionCache };
 }
 
-/** Item #7: feeds one step's outcome to the loop detector and, if it looks stuck, emits an error + done and reports back to the caller to stop. This is the real safety net now that maxAgentIterations/autoModeMaxIterations are generous-to-effectively-unbounded (see config.ts). */
-function checkLoop(
+/**
+ * Item #7: feeds one step's outcome to the loop detector and, if it looks
+ * stuck, emits an error + done and reports back to the caller to stop. This
+ * is the real safety net now that maxAgentIterations/autoModeMaxIterations
+ * are generous-to-effectively-unbounded (see config.ts).
+ *
+ * Two exceptions, both from the "loop detection toggle" request:
+ * - `check_background_command` is NEVER counted, toggle or no toggle —
+ *   polling a long-running background process (that's the whole point of
+ *   background commands) is *supposed* to look like the same call
+ *   repeated, and flagging that as a stuck loop would defeat the feature.
+ * - Everything else is skipped entirely when `forge.loopDetection.enabled`
+ *   is turned off, for a task where the repetition genuinely is expected
+ *   and the user would rather not be interrupted.
+ */
+export function checkLoop(
   detector: LoopDetector,
   tool: string,
   args: Record<string, any>,
@@ -481,14 +512,67 @@ function checkLoop(
   resultContent: string,
   emit: (event: AgentEvent) => void
 ): boolean {
+  if (tool === 'check_background_command') return false;
+  if (!getConfig().loopDetectionEnabled) return false;
   const check = detector.record(signatureForStep(tool, args, ok, resultContent));
   if (!check.looping) return false;
   emit({
     type: 'error',
-    message: `Forge stopped: possible loop detected. ${check.reason} You can ask me to try a different approach, or continue if this was actually expected.`,
+    message: `Forge stopped: possible loop detected. ${check.reason} You can ask me to try a different approach, or continue if this was actually expected. (Loop detection can be turned off in Settings if this keeps happening for legitimately repetitive work.)`,
   });
   emit({ type: 'done' });
   return true;
+}
+
+/**
+ * Item 5/8's fix ("stop works but freezes the chat, unusable afterward"):
+ * even with commandTool.ts's SIGTERM->SIGKILL escalation, some tool call
+ * could in principle still never settle (a hung native call, a bug in a
+ * less-common tool, a web request whose own timeout hasn't fired yet).
+ * Without this, a single stuck `spec.run()` blocks this `await` forever,
+ * which blocks `runAgentTurn()` from ever returning, which leaves
+ * ChatSession.busy stuck `true` forever — a stop button that "worked" but
+ * left the chat permanently unusable, unable to accept new messages.
+ *
+ * This races the real tool call against "cancellation fired, and it's now
+ * been TOOL_ABORT_GRACE_MS since" — if the grace period elapses with no real
+ * result, the turn treats it as aborted rather than waiting forever. The
+ * real process (if any) is still asked to terminate via `cancellation`
+ * itself (see commandTool.ts); this is a backstop for when that doesn't
+ * happen fast enough, not a replacement for actually killing it — if the
+ * real promise does eventually settle after this fires, it's simply
+ * ignored (the `settled` guard below), so nothing double-applies.
+ */
+export const TOOL_ABORT_GRACE_MS = 4000;
+export function raceToolCallWithCancellation(promise: Promise<ToolResult>, cancellation: vscode.CancellationToken): Promise<ToolResult> {
+  return new Promise<ToolResult>((resolve, reject) => {
+    let settled = false;
+    let sub: vscode.Disposable | undefined;
+    const finish = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
+      sub?.dispose();
+      fn();
+    };
+    promise.then(
+      (r) => finish(() => resolve(r)),
+      (err) => finish(() => reject(err))
+    );
+    const armGraceTimer = () =>
+      setTimeout(() => {
+        finish(() =>
+          resolve({
+            ok: false,
+            content: 'Tool call aborted after Stop was requested — the underlying process may still be finishing termination in the background. If this keeps happening for the same tool, please report it.',
+          })
+        );
+      }, TOOL_ABORT_GRACE_MS);
+    if (cancellation.isCancellationRequested) {
+      armGraceTimer();
+    } else {
+      sub = cancellation.onCancellationRequested(() => armGraceTimer());
+    }
+  });
 }
 
 function summarize(content: string, maxLen = 220): string {

@@ -57,25 +57,62 @@ export class MemoryStore {
     return this.facts(await this.readRaw());
   }
 
-  /** What gets spliced into the system prompt — capped so a large memory file can't itself blow the context budget it exists to protect. */
-  async renderForPrompt(): Promise<string> {
+  /**
+   * What gets spliced into the system prompt — capped so a large memory file
+   * can't itself blow the context budget it exists to protect.
+   *
+   * Item "memory has sliding window but loses important information" /
+   * "based on the prompt relevant portions of the memory are selected rather
+   * than all": when `queryText` is given (the user's current message) and
+   * the full fact list doesn't fit under the cap anyway, facts are ranked by
+   * simple keyword overlap against `queryText` instead of pure recency, so a
+   * fact relevant to what's actually being asked right now survives the cut
+   * even if it's old, while a stale-but-recent fact about an unrelated part
+   * of the project doesn't crowd it out. Deliberately NOT a real embedding —
+   * see the memory-architecture discussion this was scoped down from; this
+   * is a cheap, dependency-free approximation that's still strictly better
+   * than "always keep the newest N". No queryText (or nothing to trim)
+   * falls back to the original recency-only behavior.
+   */
+  async renderForPrompt(queryText?: string): Promise<string> {
     const raw = await this.readRaw();
     const facts = this.facts(raw);
     if (facts.length === 0) return '';
     let body = facts.map((f) => `- ${f}`).join('\n');
     if (body.length > MAX_RENDER_CHARS) {
-      // Keep the most recent facts (end of file) — those are more likely to
-      // reflect the current state of the project than very old ones, and
-      // this is exactly the situation renderForPrompt exists to bound.
-      const kept: string[] = [];
-      let total = 0;
-      for (let i = facts.length - 1; i >= 0; i--) {
-        const line = `- ${facts[i]}`;
-        if (total + line.length + 1 > MAX_RENDER_CHARS) break;
-        kept.unshift(line);
-        total += line.length + 1;
+      const queryWords = queryText ? tokenize(queryText) : new Set<string>();
+      if (queryWords.size > 0) {
+        // Rank by (relevance score desc, recency desc) so ties still prefer
+        // newer facts, then greedily keep highest-ranked facts under the cap
+        // — re-sorted back into original (chronological) order for display
+        // so the rendered list still reads top-to-bottom sensibly.
+        const scored = facts.map((f, i) => ({ fact: f, index: i, score: overlapScore(tokenize(f), queryWords) }));
+        scored.sort((a, b) => b.score - a.score || b.index - a.index);
+        const kept: typeof scored = [];
+        let total = 0;
+        for (const s of scored) {
+          const line = `- ${s.fact}`;
+          if (total + line.length + 1 > MAX_RENDER_CHARS) continue; // keep scanning — a later, smaller fact may still fit
+          kept.push(s);
+          total += line.length + 1;
+        }
+        kept.sort((a, b) => a.index - b.index);
+        const omitted = facts.length - kept.length;
+        body = kept.map((s) => `- ${s.fact}`).join('\n') + (omitted > 0 ? `\n(${omitted} less-relevant fact(s) omitted — see .forge/memory.md)` : '');
+      } else {
+        // Keep the most recent facts (end of file) — those are more likely
+        // to reflect the current state of the project than very old ones,
+        // and this is exactly the situation renderForPrompt exists to bound.
+        const kept: string[] = [];
+        let total = 0;
+        for (let i = facts.length - 1; i >= 0; i--) {
+          const line = `- ${facts[i]}`;
+          if (total + line.length + 1 > MAX_RENDER_CHARS) break;
+          kept.unshift(line);
+          total += line.length + 1;
+        }
+        body = kept.join('\n') + `\n(${facts.length - kept.length} older fact(s) omitted — see .forge/memory.md)`;
       }
-      body = kept.join('\n') + `\n(${facts.length - kept.length} older fact(s) omitted — see .forge/memory.md)`;
     }
     return `## Remembered facts (from .forge/memory.md — durable, curated by you and the user; trust these over guessing)\n${body}`;
   }
@@ -105,4 +142,60 @@ export class MemoryStore {
       return { added: false, reason: 'Failed to write .forge/memory.md.' };
     }
   }
+
+  /**
+   * Item "better way to handle memory as things change over time and
+   * irrelevant things get stuck in memory which bloats up the prompt" —
+   * the deterministic (no LLM call) half of the fix: **Forge: Compact
+   * Memory** shows every current fact as a multi-select quick-pick, and
+   * whatever's left UNCHECKED gets passed here to be removed. Nothing is
+   * ever silently discarded — dropped facts are archived to
+   * `.forge/memory.archive.md` (append-only, newest batch last) rather than
+   * deleted outright, so a compaction that turns out to have been too
+   * aggressive is still recoverable by hand.
+   */
+  async compact(keptFacts: string[]): Promise<{ archived: number }> {
+    const raw = await this.readRaw();
+    const existing = this.facts(raw);
+    const keepSet = new Set(keptFacts.map((f) => f.trim()));
+    const kept = existing.filter((f) => keepSet.has(f));
+    const dropped = existing.filter((f) => !keepSet.has(f));
+    if (dropped.length === 0) return { archived: 0 };
+
+    await this.writeRaw(kept.map((f) => `- ${f}`).join('\n') + (kept.length ? '\n' : ''));
+
+    try {
+      const archiveUri = vscode.Uri.joinPath(this.workspaceRoot, '.forge', 'memory.archive.md');
+      let archiveExisting = '';
+      try {
+        archiveExisting = Buffer.from(await vscode.workspace.fs.readFile(archiveUri)).toString('utf8');
+      } catch {
+        /* no archive yet */
+      }
+      const stamp = new Date().toISOString();
+      const block = `\n## Compacted ${stamp}\n${dropped.map((f) => `- ${f}`).join('\n')}\n`;
+      await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(this.workspaceRoot, '.forge'));
+      await vscode.workspace.fs.writeFile(archiveUri, Buffer.from(archiveExisting + block, 'utf8'));
+    } catch (err) {
+      logger.warn('Failed to write .forge/memory.archive.md', String(err));
+    }
+    return { archived: dropped.length };
+  }
+}
+
+/** Lowercased words of length >= 3, stripped of punctuation — deliberately tiny/dependency-free, not a real tokenizer. Shared by renderForPrompt's relevance ranking. */
+function tokenize(text: string): Set<string> {
+  const words = text
+    .toLowerCase()
+    .replace(/[^a-z0-9_\s]/g, ' ')
+    .split(/\s+/)
+    .filter((w) => w.length >= 3);
+  return new Set(words);
+}
+
+/** Count of words shared between two token sets — the whole "model" behind the keyword-overlap relevance ranking. Exported for direct unit testing. */
+export function overlapScore(a: Set<string>, b: Set<string>): number {
+  let score = 0;
+  for (const w of a) if (b.has(w)) score++;
+  return score;
 }

@@ -1,4 +1,4 @@
-import { PendingEditSerialized } from '../agent/types';
+import { AgentActivity, PendingEditSerialized } from '../agent/types';
 import { ForgeMode } from '../agent/modes';
 import { SessionSummary } from '../forge/chatStore';
 import { OllamaCallMetrics } from '../ollama/types';
@@ -70,6 +70,7 @@ export interface SettingsSnapshot {
   subAgentMaxIterations: number;
   maxSubAgentDepth: number;
   showStatusMessages: boolean;
+  loopDetectionEnabled: boolean;
   webSearchEnabled: boolean;
   webSearchProvider: string;
   webSearchMaxResults: number;
@@ -77,6 +78,16 @@ export interface SettingsSnapshot {
   webSearchSearxngUrl: string;
   /** Every known provider id + display name + whether it currently has usable credentials (a key stored in SecretStorage, or — for SearXNG — a configured instance URL). DuckDuckGo is always "configured" since it needs no credentials. Never includes the actual secret values. */
   webSearchProviders: { id: string; displayName: string; requiresApiKey: boolean; configured: boolean }[];
+}
+
+/** Item "ability to kill commands while they are running from the chat window" — see tools/backgroundProcessManager.ts. */
+export interface BackgroundCommandInfo {
+  id: string;
+  command: string;
+  cwd: string;
+  status: 'running' | 'exited';
+  exitCode: number | null;
+  startedAt: string;
 }
 
 export interface SearchResultItem {
@@ -144,8 +155,12 @@ export type ExtensionToWebviewMessage =
   | { type: 'chatForked'; sessionId: string; message: string; ok: boolean }
   | { type: 'searchResults'; query: string; results: SearchResultItem[] }
   | { type: 'allChatsList'; seq: number; sessions: SessionSummary[] }
-  | { type: 'statusUpdate'; sessionId: string; text: string }
-  | { type: 'settingsData'; settings: SettingsSnapshot };
+  | { type: 'statusUpdate'; sessionId: string; text: string; activity?: AgentActivity }
+  | { type: 'settingsData'; settings: SettingsSnapshot }
+  /** Item "doesn't recognize that the mode has changed": a dedicated, always-fired notification so the composer's mode pill can never go stale — see ChatSession.postModeChanged(). */
+  | { type: 'modeChanged'; sessionId: string; mode: ForgeMode }
+  /** Item "ability to kill commands while they are running from the chat window" — a snapshot of every background command (see tools/backgroundProcessManager.ts), refreshed on request via the 'listBackgroundCommands' message. */
+  | { type: 'backgroundCommandsList'; commands: BackgroundCommandInfo[] };
 
 export type WebviewToExtensionMessage =
   | { type: 'ready' }
@@ -179,4 +194,9 @@ export type WebviewToExtensionMessage =
   | { type: 'updateSetting'; key: string; value: any }
   | { type: 'setSessionNumCtx'; numCtx: number | null }
   | { type: 'setWebSearchApiKey' }
-  | { type: 'clearWebSearchApiKey'; providerId: string };
+  | { type: 'clearWebSearchApiKey'; providerId: string }
+  /** Item "ability to run separate models in different chats" — sets (empty string clears) this one chat's own model override. See ChatSession.setModelOverride()/resolveModelForMode(). */
+  | { type: 'setSessionModel'; model: string }
+  /** Item "ability to kill commands while they are running from the chat window". */
+  | { type: 'listBackgroundCommands' }
+  | { type: 'killBackgroundCommand'; id: string };
