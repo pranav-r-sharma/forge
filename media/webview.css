@@ -1059,3 +1059,8 @@ body {
   color: var(--vscode-badge-foreground, inherit);
   opacity: 0.75;
 }
+
+/* ---------- MCP server status (Settings panel) — reuses .wsp-row/.wsp-status ---------- */
+.mcp-status {
+  margin-top: 4px;
+}

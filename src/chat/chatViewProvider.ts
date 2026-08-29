@@ -13,6 +13,7 @@ import { ChatStore, SessionSummary } from '../forge/chatStore';
 import { PROVIDERS, WebSearchService } from '../websearch/searchService';
 import { WebFetchService } from '../websearch/fetchService';
 import { WebSearchKeyStore, SECRET_BACKED_PROVIDERS } from '../websearch/keyStore';
+import { McpManager } from '../mcp/mcpManager';
 import { MODES } from '../agent/modes';
 import { getConfig, setChatModel, setForgeSetting } from '../util/config';
 import { genId } from '../util/ids';
@@ -100,10 +101,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     private readonly webSearchService: WebSearchService,
     private readonly webFetchService: WebFetchService,
     private readonly keyStore: WebSearchKeyStore,
+    private readonly mcpManager: McpManager,
     private readonly workspaceRoot: vscode.Uri,
     private readonly workspaceName: string
   ) {
-    this.services = { ollama, pendingEdits, backgroundProcesses, workspaceIndex, chatMemoryIndex, rules, skills, hooks, memory, chatStore, webSearchService, webFetchService, workspaceRoot, workspaceName };
+    this.services = { ollama, pendingEdits, backgroundProcesses, workspaceIndex, chatMemoryIndex, rules, skills, hooks, memory, chatStore, webSearchService, webFetchService, mcpManager, workspaceRoot, workspaceName };
     this.entryIndex = new WorkspaceEntryIndex(workspaceRoot);
     this.pendingEdits.onDidChange((edits) => this.post({ type: 'pendingEdits', edits }));
   }
@@ -574,6 +576,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       maxSubAgentDepth: cfg.maxSubAgentDepth,
       showStatusMessages: cfg.showStatusMessages,
       loopDetectionEnabled: cfg.loopDetectionEnabled,
+      structuredOutputEnabled: cfg.structuredOutputEnabled,
+      planFirstEnabled: cfg.planFirstEnabled,
+      selfCritiqueEnabled: cfg.selfCritiqueEnabled,
+      bestOfNEnabled: cfg.bestOfNEnabled,
+      mcpStatus: this.mcpManager.status(),
       webSearchEnabled: cfg.webSearchEnabled,
       webSearchProvider: cfg.webSearchProvider,
       webSearchMaxResults: cfg.webSearchMaxResults,

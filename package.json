@@ -2,7 +2,7 @@
   "name": "forge-local-agent",
   "displayName": "Forge — Local AI Coding Agent",
   "description": "A Cursor-style agentic coding assistant that runs entirely on local Ollama models. Agent/Ask/Plan modes, multitask chat tabs, .forge/rules + .forge/skills + .forge/hooks, repo-stored chat history, multi-file agent edits, inline Cmd+K editing, Tab autocomplete, and an opt-in production-grade web search/fetch tool — no cloud, no API keys, no telemetry, except web search itself if you turn it on.",
-  "version": "0.10.0",
+  "version": "0.11.0",
   "publisher": "local-forge",
   "private": true,
   "engines": {
@@ -61,7 +61,8 @@
       { "command": "forge.openProjectLog", "title": "Forge: Open Project Log" },
       { "command": "forge.setWebSearchApiKey", "title": "Forge: Set Web Search API Key" },
       { "command": "forge.openTerminal", "title": "Forge: Open Terminal" },
-      { "command": "forge.exportAllChats", "title": "Forge: Export All Chats" }
+      { "command": "forge.exportAllChats", "title": "Forge: Export All Chats" },
+      { "command": "forge.reloadMcpServers", "title": "Forge: Reload MCP Servers" }
     ],
     "menus": {
       "editor/context": [
@@ -104,7 +105,7 @@
         "forge.embeddingModel": {
           "type": "string",
           "default": "nomic-embed-text",
-          "description": "Ollama embedding model used to index the workspace for @codebase search. If not installed, Forge falls back to keyword search automatically."
+          "description": "Ollama embedding model used to index the workspace for @codebase search. If not installed, Forge falls back to keyword search automatically. nomic-embed-text is a general-purpose TEXT embedding model — for a code-heavy repo, a code-tuned model (e.g. \"ollama pull embeddinggemma\", ~622MB, or the much larger nomic-embed-code for higher accuracy at real VRAM/latency cost) tends to noticeably improve search_codebase relevance on top of the structural (boundary-aware) chunking Forge already does."
         },
         "forge.temperature": {
           "type": "number",
@@ -247,6 +248,52 @@
           "type": "string",
           "default": "",
           "description": "Base URL of a self-hosted SearXNG instance (e.g. \"https://searx.example.com\"), used when forge.webSearch.provider is \"searxng\" or as part of the \"auto\" fallback chain. Not a secret — stored as a plain setting, unlike API keys (see \"Forge: Set Web Search API Key\")."
+        },
+        "forge.structuredOutput.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Use Ollama's schema-constrained decoding (the 'format' request field) for the tool-call contract instead of the fenced ```forge_action``` text block. Can eliminate malformed-tool-call parsing bugs entirely when your model/Ollama version honor it well — OFF by default because this can't be verified against a live model in every environment; try it and turn it back off if it hurts your model's reasoning quality or Ollama version doesn't support it well. Falls back gracefully to the ordinary text parser for any response that doesn't respect the schema."
+        },
+        "forge.planFirst.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Before acting in Agent/Auto/Outcome mode, make one extra no-tool 'think first' model call (grounded with a few relevant codebase-search snippets) and give the agent its own short plan for the turn before the first action. Off by default — it's one additional full model call per turn."
+        },
+        "forge.selfCritique.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "After a non-trivial file edit (see forge.selfCritique.minLines), make one extra tightly-scoped model call asking whether the change looks correct, and feed the answer back to the agent alongside the edit's own result. Off by default — one additional model call per qualifying edit."
+        },
+        "forge.selfCritique.minLines": {
+          "type": "number",
+          "default": 40,
+          "description": "Minimum lines in a write_file call's content/replace text before forge.selfCritique.enabled triggers a self-critique pass on it."
+        },
+        "forge.bestOfN.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "For a large full-file rewrite of an existing file (see forge.bestOfN.samples), sample several candidate completions instead of trusting the first one, and keep the one that scores best on a cheap correctness heuristic (no dropped/truncated content, no new bracket-balance regression). Off by default — N model calls instead of 1 for that one high-risk step."
+        },
+        "forge.bestOfN.samples": {
+          "type": "number",
+          "default": 3,
+          "description": "How many candidates to sample when forge.bestOfN.enabled triggers (capped at 5)."
+        },
+        "forge.mcp.servers": {
+          "type": "array",
+          "default": [],
+          "description": "MCP servers Forge spawns and connects to at startup, exposing their tools to the agent natively (namespaced as mcp_<server>_<tool>, approval-gated like run_command). Each entry: {\"name\": \"my-server\", \"command\": \"npx\", \"args\": [\"-y\", \"@some/mcp-server\"], \"env\": {\"API_KEY\": \"...\"}}. Changing this requires \"Forge: Reload MCP Servers\" to take effect. Note env values here live in plain settings.json, not VS Code's SecretStorage — see README's Known limitations before putting a real secret in a shared/synced settings file.",
+          "items": {
+            "type": "object",
+            "required": ["name", "command"],
+            "properties": {
+              "name": { "type": "string", "description": "Short identifier used to namespace this server's tools." },
+              "command": { "type": "string", "description": "Executable to spawn (e.g. \"npx\", \"node\", \"python\", or an absolute path)." },
+              "args": { "type": "array", "items": { "type": "string" } },
+              "cwd": { "type": "string" },
+              "env": { "type": "object" }
+            }
+          }
         }
       }
     }

@@ -1,9 +1,13 @@
 import * as vscode from 'vscode';
 import { OllamaClient, keepAliveOpt } from '../ollama/client';
 import { ChatMessage, OllamaCallMetrics } from '../ollama/types';
-import { AgentActivity, AgentEvent, ToolExecContext, ToolResult } from './types';
-import { buildSystemPrompt } from './systemPrompt';
+import { AgentActivity, AgentEvent, ToolCall, ToolExecContext, ToolResult } from './types';
+import { buildSystemPrompt, buildTurnContextPrefix } from './systemPrompt';
 import { parseToolCall } from './toolProtocol';
+import { parseStructuredResponse, STRUCTURED_RESPONSE_SCHEMA } from './structuredOutput';
+import { generatePlanFirst, renderPlanFirstForPrompt } from './planFirst';
+import { shouldCritique, critiqueEdit } from './selfCritique';
+import { sampleBestOfNForRewrite, MIN_LINES_FOR_BEST_OF_N } from './bestOfN';
 import { TOOL_MAP } from '../tools';
 import { PendingEditManager } from '../tools/editApply';
 import { ApprovalBroker } from './approvalBroker';
@@ -11,12 +15,14 @@ import { ForgeMode, isAutonomousMode, toolsAllowedInMode } from './modes';
 import { HookRunner } from '../forge/hooks';
 import { getConfig } from '../util/config';
 import { logger } from '../util/logger';
+import { resolveWorkspacePath } from '../util/paths';
 import { CompactionCache, hardCapOversizedMessages, maybeCompact, pruneStaleReadsView } from './contextManager';
 import { LoopDetector, signatureForStep } from './loopDetector';
 import { findUnverifiedClaims } from './claimChecker';
 import { runVerifyCommand } from './verifyCheck';
 import { detectSuspiciousVerifyBypass } from './gamingDetection';
 import { BackgroundProcessManager } from '../tools/backgroundProcessManager';
+import { DynamicToolSpec } from '../mcp/mcpTypes';
 
 export interface AgentDeps {
   ollama: OllamaClient;
@@ -31,6 +37,8 @@ export interface AgentDeps {
   webFetch?: (url: string, offset?: number, length?: number) => Promise<import('../websearch/types').WebFetchResult>;
   /** Item "ability to interact and use the terminal" — see tools/backgroundProcessManager.ts. Workspace-scoped and shared across every chat tab, same as pendingEdits. */
   backgroundProcesses: BackgroundProcessManager;
+  /** Tools contributed by connected MCP servers ("native MCP connection") — see mcp/mcpManager.ts. Undefined/empty when no servers are configured. Available in Agent/Auto/Outcome modes only (same reasoning as write_file/run_command — see the mode gating in the main loop below), never Ask/Plan. */
+  mcpTools?: DynamicToolSpec[];
   workspaceRoot: vscode.Uri;
   workspaceName: string;
 }
@@ -38,10 +46,18 @@ export interface AgentDeps {
 export interface AgentTurnOptions {
   mode: ForgeMode;
   rulesText?: string;
+  /**
+   * Durable facts from .forge/memory.md. NOTE: as of the prompt-prefix
+   * stability fix, this (and milestonesText/projectLogText below) is no
+   * longer spliced into the system message — see systemPrompt.ts's
+   * buildSystemPrompt() doc comment for why content that grows every turn
+   * doesn't belong there, and buildTurnContextPrefix()/this file's wiring
+   * for where it goes instead (prepended to this turn's own user message).
+   */
   memoryText?: string;
-  /** Compact, mechanically-generated digest of prior turns this session (see chat/milestones.ts) — a cheap, always-available table of contents distinct from compaction's lossy LLM summary. */
+  /** Compact, mechanically-generated digest of prior turns this session (see chat/milestones.ts) — a cheap, always-available table of contents distinct from compaction's lossy LLM summary. See memoryText's note above on where this is actually injected. */
   milestonesText?: string;
-  /** Item "documentation skill"/"unify into one system": the workspace-wide, cross-chat project log (see ChatStore.readProjectLogForPrompt()) — what makes a BRAND NEW chat aware of what's already happened in other chats, which milestonesText alone (this session's own history) can't provide. */
+  /** Item "documentation skill"/"unify into one system": the workspace-wide, cross-chat project log (see ChatStore.readProjectLogForPrompt()) — what makes a BRAND NEW chat aware of what's already happened in other chats, which milestonesText alone (this session's own history) can't provide. See memoryText's note above on where this is actually injected. */
   projectLogText?: string;
   planContext?: string;
   /** Carried across turns so compaction doesn't re-summarize from scratch every time — see ChatSession. */
@@ -149,6 +165,27 @@ function truncateOneLine(s: string, maxLen: number): string {
 }
 
 /**
+ * Turns one raw model response into (a) the tool call to execute, if any,
+ * and (b) the human-readable text to actually show/check for a final
+ * answer. When structured output is enabled, `fullText` is expected to be a
+ * JSON envelope (see structuredOutput.ts) — but a local model not respecting
+ * the requested format is an expected, not exceptional, outcome, so an
+ * unparseable envelope falls straight through to the ordinary defensive
+ * fenced-block parser rather than erroring the turn. Exported for direct
+ * unit testing.
+ */
+export function resolveModelResponse(fullText: string, structuredOutputEnabled: boolean): { call: ToolCall | null; displayText: string } {
+  if (structuredOutputEnabled) {
+    const structured = parseStructuredResponse(fullText);
+    if (structured) {
+      if (structured.call) return { call: structured.call, displayText: fullText };
+      return { call: null, displayText: structured.finalText ?? '' };
+    }
+  }
+  return { call: parseToolCall(fullText), displayText: fullText };
+}
+
+/**
  * Runs one full agent "turn": repeatedly calls the model, executes at most
  * one tool per round-trip, and feeds the result back — a ReAct-style loop —
  * until the model produces a plain-text final answer, the iteration cap is
@@ -185,6 +222,14 @@ export async function runAgentTurn(
 
   const messages: ChatMessage[] = [...history];
   const allowedTools = new Set(toolsAllowedInMode(options.mode));
+  // Native MCP tool connection: merged in alongside the built-in tool map at
+  // every lookup site below, namespaced (mcp_<server>_<tool>) so it can
+  // never collide with a built-in name — see mcp/mcpManager.ts.
+  const mcpToolMap = new Map((deps.mcpTools || []).map((t) => [t.name, t] as const));
+  // Opt-in constrained-decoding tool-call contract (see structuredOutput.ts)
+  // — never applies in Plan mode, which has no tools and always replies in
+  // plain text regardless of this setting.
+  const structuredOutputEnabled = cfg.structuredOutputEnabled && options.mode !== 'plan';
   const loopDetector = new LoopDetector();
   let compactionCache = options.compactionCache;
   // Item "Outcome mode introduces cheap tricks bypass" (gamingDetection.ts):
@@ -199,20 +244,50 @@ export async function runAgentTurn(
 
   // Mode/rules can change between turns (user flips the mode dropdown, edits
   // a rule file, etc.) — always refresh the system prompt rather than trusting
-  // whatever was pinned as messages[0] from a previous turn.
+  // whatever was pinned as messages[0] from a previous turn. Memory/project-
+  // log/milestones text is deliberately NOT passed here — see
+  // buildSystemPrompt()'s doc comment on prompt-prefix stability; it's
+  // prepended to this turn's own user message below instead.
   const systemPrompt = buildSystemPrompt(deps.workspaceName, options.mode, {
     rulesText: options.rulesText,
-    milestonesText: options.milestonesText,
     planContext: options.planContext,
-    memoryText: options.memoryText,
-    projectLogText: options.projectLogText,
+    mcpTools: deps.mcpTools,
+    structuredOutput: structuredOutputEnabled,
   });
   if (messages.length > 0 && messages[0].role === 'system') {
     messages[0] = { role: 'system', content: systemPrompt };
   } else {
     messages.unshift({ role: 'system', content: systemPrompt });
   }
-  messages.push({ role: 'user', content: userMessage });
+
+  const turnContextPrefix = buildTurnContextPrefix({
+    memoryText: options.memoryText,
+    projectLogText: options.projectLogText,
+    milestonesText: options.milestonesText,
+  });
+
+  // Optional "separate planner/executor prompts" pass (forge.planFirst.enabled)
+  // — one extra no-tool-schema reasoning call before the main ReAct loop
+  // starts, grounded with a few codebase-search hits. Never in Ask (nothing
+  // to plan — it's read-only Q&A) or Plan mode (which IS the plan). See
+  // planFirst.ts's doc comment for the rationale.
+  let planBlock = '';
+  const planFirstEnabled = cfg.planFirstEnabled && (options.mode === 'agent' || options.mode === 'auto' || options.mode === 'outcome');
+  if (planFirstEnabled) {
+    emit({ type: 'status', text: 'Planning before acting…', activity: 'think' });
+    const planText = await generatePlanFirst({
+      ollama: deps.ollama,
+      model,
+      userMessage,
+      recentMessages: messages.slice(-6),
+      codebaseSearch: deps.codebaseSearch,
+      signal: cancellationToAbortSignal(cancellation),
+      numCtx,
+    });
+    if (planText) planBlock = renderPlanFirstForPrompt(planText) + '\n\n';
+  }
+
+  messages.push({ role: 'user', content: `${turnContextPrefix}${planBlock}${userMessage}` });
 
   const toolCtx: ToolExecContext = {
     workspaceRoot: deps.workspaceRoot,
@@ -326,6 +401,7 @@ export async function runAgentTurn(
         signal: cancellationToAbortSignal(cancellation),
         numCtx,
         keepAliveMinutes: keepAliveOpt(cfg.keepAliveMinutes),
+        format: structuredOutputEnabled ? STRUCTURED_RESPONSE_SCHEMA : undefined,
         onToken: (token) => emit({ type: 'token', text: token }),
         onMetrics: (metrics) => emit({ type: 'metrics', metrics }),
       });
@@ -347,14 +423,21 @@ export async function runAgentTurn(
       return { messages, compactionCache };
     }
 
-    const call = options.mode === 'plan' ? null : parseToolCall(fullText);
+    // structuredOutputEnabled: try the JSON envelope first, but a local model
+    // ignoring the requested format from time to time is expected, not
+    // exceptional — resolveModelResponse() falls back to the ordinary
+    // defensive fenced-block parser whenever the envelope doesn't parse, so
+    // a turn never fails just because the model drifted from the schema.
+    let { call, displayText } = options.mode === 'plan'
+      ? { call: null as ToolCall | null, displayText: fullText }
+      : resolveModelResponse(fullText, structuredOutputEnabled);
 
     if (!call) {
       // Item #10: catch the model claiming it made a change ("created
       // `foo.ts`") that no write_file call actually backs up, and give it a
       // couple of chances to either actually do it or correct the claim,
       // instead of shipping a confidently wrong final answer.
-      const unverified = findUnverifiedClaims(fullText, messages);
+      const unverified = findUnverifiedClaims(displayText, messages);
       if (unverified.length > 0 && hallucinationNudges < 2) {
         hallucinationNudges++;
         messages.push({ role: 'assistant', content: fullText });
@@ -371,7 +454,7 @@ export async function runAgentTurn(
       // which is what makes OUTCOME mode's iterate-until-true promise real.
       if (options.verifyCommand) {
         emit({ type: 'status', text: `Verifying: ${truncateOneLine(options.verifyCommand, 80)}…`, activity: 'verify' });
-        emit({ type: 'verify_start', command: options.verifyCommand, draftText: fullText.trim() });
+        emit({ type: 'verify_start', command: options.verifyCommand, draftText: displayText.trim() });
         const verify = await runVerifyCommand(options.verifyCommand, deps.workspaceRoot.fsPath, cancellation);
         emit({ type: 'verify_result', command: options.verifyCommand, ok: verify.ok, summary: summarize(verify.output) });
         if (cancellation.isCancellationRequested) {
@@ -396,7 +479,7 @@ export async function runAgentTurn(
         writesSinceLastVerify = [];
       }
 
-      emit({ type: 'final', text: fullText.trim(), unverifiedClaims: unverified.length > 0 ? unverified : undefined });
+      emit({ type: 'final', text: displayText.trim(), unverifiedClaims: unverified.length > 0 ? unverified : undefined });
       emit({ type: 'done' });
       return { messages, compactionCache };
     }
@@ -405,22 +488,75 @@ export async function runAgentTurn(
     // prior tool calls across iterations.
     messages.push({ role: 'assistant', content: fullText });
 
-    const spec = TOOL_MAP[call.tool];
+    // Self-consistency / best-of-N for the single riskiest step in the loop:
+    // a full-file rewrite of an existing file (forge.bestOfN.enabled, off by
+    // default — see bestOfN.ts for the full rationale and scoring). This can
+    // swap `call` (and the just-pushed assistant message) for a
+    // better-scoring resampled candidate; it never blocks or retries the
+    // turn if resampling itself fails.
+    if (
+      cfg.bestOfNEnabled &&
+      call.tool === 'write_file' &&
+      !call.args?.delete &&
+      typeof call.args?.content === 'string' &&
+      call.args.content.split('\n').length >= MIN_LINES_FOR_BEST_OF_N
+    ) {
+      const rewritePath: string | undefined = call.args?.path ?? call.args?.file;
+      if (rewritePath) {
+        try {
+          const uri = resolveWorkspacePath(deps.workspaceRoot, rewritePath);
+          const existingFileText = await deps.pendingEdits.readEffective(uri);
+          if (existingFileText !== undefined) {
+            emit({ type: 'status', text: `Sampling ${cfg.bestOfNSamples} candidate rewrites of ${rewritePath} to pick the best…`, activity: 'think' });
+            const best = await sampleBestOfNForRewrite({
+              ollama: deps.ollama,
+              promptView,
+              model,
+              temperature: cfg.temperature,
+              numCtx,
+              signal: cancellationToAbortSignal(cancellation),
+              samples: cfg.bestOfNSamples,
+              firstCandidate: { fullText, call },
+              existingFileText,
+              expectedPath: rewritePath,
+            });
+            if (best.call && best.fullText !== fullText) {
+              call = best.call;
+              fullText = best.fullText;
+              messages[messages.length - 1] = { role: 'assistant', content: best.fullText };
+            }
+          }
+        } catch (err) {
+          logger.warn('best-of-N rewrite sampling failed, using the original candidate', String(err));
+        }
+      }
+    }
+
+    const builtInSpec = TOOL_MAP[call.tool];
+    const mcpSpec = builtInSpec ? undefined : mcpToolMap.get(call.tool);
+    const resolvedSpec = builtInSpec || mcpSpec;
     const callId = nextCallId();
     const described = describeToolCall(call.tool, call.args);
     emit({ type: 'status', text: described.text, activity: described.activity });
     emit({ type: 'tool_call', tool: call.tool, args: call.args, callId });
 
-    if (!spec) {
-      const errMsg = `Unknown tool "${call.tool}". Available tools: ${Object.keys(TOOL_MAP).join(', ')}.`;
+    if (!resolvedSpec) {
+      const errMsg = `Unknown tool "${call.tool}". Available tools: ${[...Object.keys(TOOL_MAP), ...mcpToolMap.keys()].join(', ')}.`;
       emit({ type: 'tool_result', callId, ok: false, summary: errMsg });
       messages.push({ role: 'user', content: `[Tool error]\n${errMsg}` });
       if (checkLoop(loopDetector, call.tool, call.args, false, errMsg, emit)) return { messages, compactionCache };
       continue;
     }
 
-    if (!allowedTools.has(spec.name)) {
-      const errMsg = `"${spec.name}" is not available in ${options.mode} mode. ${
+    // MCP tools aren't part of the ToolName-typed allowedTools set (their
+    // names are arbitrary, server-defined strings) — gated instead by the
+    // same "full read/write/run access" modes write_file/run_command already
+    // require, never Ask (read-only) or Plan (no tools at all).
+    const modeAllowsThisTool = mcpSpec
+      ? options.mode === 'agent' || options.mode === 'auto' || options.mode === 'outcome'
+      : allowedTools.has(builtInSpec!.name);
+    if (!modeAllowsThisTool) {
+      const errMsg = `"${resolvedSpec.name}" is not available in ${options.mode} mode. ${
         options.mode === 'ask' ? 'Ask mode is read-only — tell the user to switch to Agent mode for edits/commands.' : ''
       }`;
       emit({ type: 'tool_result', callId, ok: false, summary: errMsg });
@@ -429,9 +565,12 @@ export async function runAgentTurn(
       continue;
     }
 
-    // Gating hooks for the two side-effecting tools.
-    if (spec.name === 'write_file' || spec.name === 'run_command') {
-      const hookEvent = spec.name === 'write_file' ? 'before-write' : 'before-command';
+    // Gating hooks for the two built-in side-effecting tools. (MCP tools
+    // have their own approval gate inside mcpManager.ts's tool wrapper —
+    // reusing the same before-write/before-command hook names for
+    // arbitrary third-party MCP tools wouldn't mean anything meaningful.)
+    if (resolvedSpec.name === 'write_file' || resolvedSpec.name === 'run_command') {
+      const hookEvent = resolvedSpec.name === 'write_file' ? 'before-write' : 'before-command';
       const hookResult = await deps.hooks.run(hookEvent, { tool: call.tool, args: call.args });
       if (hookResult.blocked) {
         const msg = `Blocked by .forge/hooks/${hookEvent}${hookResult.message ? `: ${hookResult.message}` : '.'}`;
@@ -444,13 +583,13 @@ export async function runAgentTurn(
 
     let result;
     try {
-      result = await raceToolCallWithCancellation(spec.run(call.args, toolCtx), cancellation);
+      result = await raceToolCallWithCancellation(resolvedSpec.run(call.args, toolCtx), cancellation);
     } catch (err: any) {
       logger.error(`tool ${call.tool} threw`, err);
       result = { ok: false, content: `Tool "${call.tool}" crashed: ${err?.message || err}` };
     }
 
-    if (spec.name === 'write_file' && result.ok) {
+    if (resolvedSpec.name === 'write_file' && result.ok) {
       deps.hooks.run('after-write', { args: call.args }).catch(() => {});
       // Record for gamingDetection.ts below — the text actually being
       // written (full-content or the search/replace pair) is already right
@@ -458,8 +597,28 @@ export async function runAgentTurn(
       const path = typeof call.args?.path === 'string' ? call.args.path : '';
       const text = [call.args?.content, call.args?.search, call.args?.replace].filter((v) => typeof v === 'string').join('\n');
       writesSinceLastVerify.push({ path, text });
-    } else if (spec.name === 'run_command' && result.ok) {
+    } else if (resolvedSpec.name === 'run_command' && result.ok) {
       deps.hooks.run('after-command', { args: call.args }).catch(() => {});
+    }
+
+    // Optional self-critique pass (forge.selfCritique.enabled, off by
+    // default) — one extra, tightly-scoped model call asking "does this
+    // look right," folded into the SAME tool result the model reacts to
+    // next, so a caught mistake can be fixed within this same turn rather
+    // than only surfacing later in human review. See selfCritique.ts.
+    let critique: string | undefined;
+    if (resolvedSpec.name === 'write_file' && result.ok && cfg.selfCritiqueEnabled && shouldCritique(call.args, cfg.selfCritiqueMinLines)) {
+      const writtenText = typeof call.args?.content === 'string' ? call.args.content : typeof call.args?.replace === 'string' ? call.args.replace : '';
+      const critiquePath = typeof call.args?.path === 'string' ? call.args.path : call.args?.file ?? 'the file';
+      emit({ type: 'status', text: `Double-checking the edit to ${critiquePath}…`, activity: 'verify' });
+      critique = await critiqueEdit({
+        ollama: deps.ollama,
+        model,
+        path: critiquePath,
+        writtenText,
+        isFullRewrite: typeof call.args?.content === 'string',
+        signal: cancellationToAbortSignal(cancellation),
+      });
     }
 
     // Note: when write_file stages an edit it goes through toolCtx.proposeEdit,
@@ -467,14 +626,16 @@ export async function runAgentTurn(
     // PendingEditManager.onDidChange to refresh the review cards, so no extra
     // event is needed here.
 
+    const resultContentForModel = critique ? `${result.content}\n\n[Self-critique] ${critique}` : result.content;
+
     emit({
       type: 'tool_result',
       callId,
       ok: result.ok,
-      summary: summarize(result.content),
+      summary: summarize(resultContentForModel),
     });
 
-    messages.push({ role: 'user', content: `[Tool "${call.tool}" result]\n${result.content}` });
+    messages.push({ role: 'user', content: `[Tool "${call.tool}" result]\n${resultContentForModel}` });
 
     if (checkLoop(loopDetector, call.tool, call.args, result.ok, result.content, emit)) {
       return { messages, compactionCache };

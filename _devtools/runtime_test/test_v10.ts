@@ -26,7 +26,7 @@ import { getConfig, setForgeSetting } from '../../src/util/config';
 import { MemoryStore, overlapScore } from '../../src/forge/memory';
 import { ChatStore } from '../../src/forge/chatStore';
 import { writeFileTool, dominantIndentChar, detectIndentMismatch } from '../../src/tools/fileTools';
-import { buildSystemPrompt } from '../../src/agent/systemPrompt';
+import { buildSystemPrompt, buildTurnContextPrefix } from '../../src/agent/systemPrompt';
 import { ChatSession } from '../../src/chat/chatSession';
 import { PendingEditManager } from '../../src/tools/editApply';
 import { BackgroundProcessManager } from '../../src/tools/backgroundProcessManager';
@@ -355,12 +355,21 @@ async function testWriteFileToolNoAdvisoryWhenIndentMatches() {
 }
 
 // ---------- agent/systemPrompt.ts: project log section + whitespace wording ----------
+//
+// NOTE (0.11.0): projectLogText/memoryText/milestonesText moved OUT of
+// buildSystemPrompt() and into buildTurnContextPrefix() as part of the
+// prompt-prefix-stability fix (see systemPrompt.ts's doc comment) — this
+// test was updated in place to match rather than left asserting stale
+// 0.10.0 behavior. buildSystemPrompt() itself never mentions the project log
+// at all anymore; that's intentional, not a regression.
 
 function testSystemPromptIncludesProjectLogWhenProvided() {
-  const withLog = buildSystemPrompt('demo', 'agent', { projectLogText: '## Project log (from .forge/project-log.md)\n- did a thing' });
-  ok(withLog.includes('## Project log') && withLog.includes('did a thing'), 'projectLogText is spliced into the system prompt when provided');
-  const withoutLog = buildSystemPrompt('demo', 'agent', {});
-  ok(!withoutLog.includes('## Project log'), 'no project-log section appears when none is supplied — a workspace with no history yet gets a normal prompt');
+  const prefix = buildTurnContextPrefix({ projectLogText: '## Project log (from .forge/project-log.md)\n- did a thing' });
+  ok(prefix.includes('## Project log') && prefix.includes('did a thing'), 'projectLogText is spliced into the turn context prefix when provided');
+  const withoutLog = buildTurnContextPrefix({});
+  ok(withoutLog === '', 'no project-log content appears when none is supplied — a workspace with no history yet gets an empty prefix');
+  const systemPrompt = buildSystemPrompt('demo', 'agent', {});
+  ok(!systemPrompt.includes('## Project log'), 'buildSystemPrompt() itself never includes the project log — it belongs in the per-turn prefix now, not the cached system message');
 }
 
 function testSystemPromptWarnsAboutReplaceWhitespace() {

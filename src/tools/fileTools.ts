@@ -125,6 +125,7 @@ export async function writeFileTool(args: Record<string, any>, ctx: ToolExecCont
   let newText: string;
   let kind: 'create' | 'modify';
   let indentAdvisory: string | undefined;
+  let fuzzyMatchAdvisory: string | undefined;
 
   if (hasSearchReplace) {
     if (existing === undefined) {
@@ -133,19 +134,41 @@ export async function writeFileTool(args: Record<string, any>, ctx: ToolExecCont
     const search: string = args.search;
     const occurrences = countOccurrences(existing, search);
     if (occurrences === 0) {
-      return {
-        ok: false,
-        content: `The "search" text was not found in ${relPath}. It must match the file's current content exactly (whitespace included, no line-number gutters). Re-read the file and try a smaller, unique snippet.`,
-      };
-    }
-    if (occurrences > 1) {
+      // Local models are weaker than frontier ones at reproducing a file's
+      // exact whitespace/indentation byte-for-byte, and that's exactly the
+      // case where an otherwise-correct search snippet fails outright. Before
+      // giving up, retry with whitespace-normalized line matching: if every
+      // line of "search" matches the corresponding line of some run in the
+      // file once each side is trimmed and internal runs of whitespace are
+      // collapsed, that's almost certainly the intended location — just typed
+      // with different indentation. See findFuzzyLineMatches()'s doc comment
+      // for the (deliberate) scope limits of this fallback.
+      const fuzzyMatches = findFuzzyLineMatches(existing, search);
+      if (fuzzyMatches.length === 1) {
+        newText = applyFuzzyMatch(existing, fuzzyMatches[0], args.replace);
+        kind = 'modify';
+        fuzzyMatchAdvisory =
+          'Note: "search" did not match this file\'s content byte-for-byte, but matched once the whitespace/indentation on each line was normalized, so the edit was applied at that location anyway. Double-check the resulting indentation in the diff before treating this as done — copy it from the surrounding lines if it looks off.';
+      } else if (fuzzyMatches.length > 1) {
+        return {
+          ok: false,
+          content: `The "search" text was not found in ${relPath} byte-for-byte, and even after normalizing whitespace it still matches ${fuzzyMatches.length} places, which is ambiguous. Include more surrounding context so it uniquely identifies one location.`,
+        };
+      } else {
+        return {
+          ok: false,
+          content: `The "search" text was not found in ${relPath}, even after trying a whitespace-tolerant match. It must match the file's current content (line content, ignoring pure indentation/spacing differences — no line-number gutters). Re-read the file and try a smaller, unique snippet.`,
+        };
+      }
+    } else if (occurrences > 1) {
       return {
         ok: false,
         content: `The "search" text matches ${occurrences} places in ${relPath}, which is ambiguous. Include more surrounding context so it uniquely identifies one location.`,
       };
+    } else {
+      newText = existing.replace(search, () => args.replace);
+      kind = 'modify';
     }
-    newText = existing.replace(search, () => args.replace);
-    kind = 'modify';
     // Item "whitespace and indentation issues when doing targeted writes to
     // existing files": advisory only — never blocks the edit or mutates
     // newText, since a false positive (e.g. a one-line replacement with no
@@ -168,19 +191,119 @@ export async function writeFileTool(args: Record<string, any>, ctx: ToolExecCont
     return { ok: true, content: `No changes — ${relPath} already matches the requested content.` };
   }
 
+  // Cheap, string/comment-unaware sanity check on the resulting file as a
+  // whole (not just the edited region) — see detectBalanceRegression()'s doc
+  // comment for why this is deliberately conservative (only fires when the
+  // file was balanced before the edit and is not after) to keep false
+  // positives rare. Advisory only, same as indentAdvisory — never blocks.
+  const balanceAdvisory = existing !== undefined ? detectBalanceRegression(existing, newText) : undefined;
+
   const { id, applied } = await ctx.proposeEdit(
     { uri, relativePath: relPath, originalText: existing ?? '', newText, kind },
     );
 
   const verb = kind === 'create' ? 'Created' : 'Updated';
   const verbPending = kind === 'create' ? 'creating' : 'updating';
-  const advisorySuffix = indentAdvisory ? `\n\n${indentAdvisory}` : '';
+  const advisories = [fuzzyMatchAdvisory, indentAdvisory, balanceAdvisory].filter(Boolean);
+  const advisorySuffix = advisories.length ? `\n\n${advisories.join('\n\n')}` : '';
   return {
     ok: true,
     content: applied
       ? `${verb} ${relPath}.${advisorySuffix}`
       : `Proposed ${verbPending} ${relPath} — awaiting your review in the chat panel (edit id ${id}). You may continue working; this file's content for you is now the proposed version.${advisorySuffix}`,
   };
+}
+
+/** A whitespace-normalized-line match location, expressed as an exclusive line range into the existing file's `text.split('\n')`. */
+interface FuzzyLineMatch {
+  startLine: number;
+  endLine: number;
+}
+
+/** Trims each line and collapses internal whitespace runs to a single space, for comparison purposes only — never used to build the actual replacement text. */
+function normalizeLineForMatch(line: string): string {
+  return line.trim().replace(/\s+/g, ' ');
+}
+
+/**
+ * Fallback for write_file's search/replace when a byte-exact match fails:
+ * looks for a contiguous run of lines in `existing` whose whitespace-
+ * normalized content matches `search`'s lines, one-for-one line-count and
+ * all. Deliberately scoped to WHOLE-line content — if `search`'s first or
+ * last line is a fragment of a longer real line (a sub-line snippet), this
+ * will not match it, since the whole real line (once normalized) won't equal
+ * just the fragment. That's an intentional limit: this exists to recover
+ * from the specific, common failure mode of a model retyping otherwise-
+ * correct lines with the wrong indentation, not to be a general fuzzy-
+ * substring matcher — a sub-line search is expected to keep working (or
+ * fail) via the byte-exact path above.
+ */
+export function findFuzzyLineMatches(existing: string, search: string): FuzzyLineMatch[] {
+  const existingLines = existing.split('\n');
+  const searchLines = search.split('\n');
+  const n = searchLines.length;
+  if (n === 0 || existingLines.length < n) return [];
+  const normSearch = searchLines.map(normalizeLineForMatch);
+  // A search block that's entirely blank once normalized can't uniquely
+  // locate anything — refuse rather than "matching" the first N blank lines.
+  if (normSearch.every((l) => l === '')) return [];
+
+  const matches: FuzzyLineMatch[] = [];
+  for (let i = 0; i + n <= existingLines.length; i++) {
+    let ok = true;
+    for (let j = 0; j < n; j++) {
+      if (normalizeLineForMatch(existingLines[i + j]) !== normSearch[j]) {
+        ok = false;
+        break;
+      }
+    }
+    if (ok) matches.push({ startLine: i, endLine: i + n });
+  }
+  return matches;
+}
+
+/** Splices `replace` in place of the matched line range, reconstructing the full file via line join/split — see findFuzzyLineMatches()'s doc comment for the matching rules this assumes. */
+function applyFuzzyMatch(existing: string, match: FuzzyLineMatch, replace: string): string {
+  const existingLines = existing.split('\n');
+  const replaceLines = replace.split('\n');
+  const spliced = [...existingLines.slice(0, match.startLine), ...replaceLines, ...existingLines.slice(match.endLine)];
+  return spliced.join('\n');
+}
+
+/**
+ * Crude, string/comment-unaware balance check: counts `{}`/`()`/`[]` across
+ * the WHOLE file (not just the edited region) before and after the edit, and
+ * flags a bracket type that was balanced before but isn't after. Doesn't
+ * understand string literals, comments, template placeholders, or regexes —
+ * a brace inside a string is counted the same as real code — so this WILL
+ * occasionally false-positive; it's advisory only, exactly like
+ * detectIndentMismatch(), and never blocks or alters the edit. Exported for
+ * direct unit testing.
+ */
+export function detectBalanceRegression(existingFull: string, newFull: string): string | undefined {
+  const pairs: [string, string, string][] = [
+    ['{', '}', 'curly braces'],
+    ['(', ')', 'parentheses'],
+    ['[', ']', 'square brackets'],
+  ];
+  const regressed: string[] = [];
+  for (const [open, close, label] of pairs) {
+    const before = bracketDelta(existingFull, open, close);
+    const after = bracketDelta(newFull, open, close);
+    if (before === 0 && after !== 0) regressed.push(label);
+  }
+  if (regressed.length === 0) return undefined;
+  return `Heads up: this edit appears to leave ${regressed.join(' and ')} unbalanced in the resulting file (they looked balanced before the edit). This is a crude check that doesn't understand strings/comments/regexes, so it can be a false alarm — but it's worth a second look at the diff before treating this as done.`;
+}
+
+function bracketDelta(text: string, open: string, close: string): number {
+  let depth = 0;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === open) depth++;
+    else if (ch === close) depth--;
+  }
+  return depth;
 }
 
 /** 'none' means the sample had no indented lines to judge from (e.g. a one-line snippet) — callers should treat that as "can't tell," not as a mismatch. */

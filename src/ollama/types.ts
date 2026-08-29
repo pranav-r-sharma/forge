@@ -100,6 +100,14 @@ export interface ChatRequestOptions {
   keepAliveMinutes?: number;
   /** Called once with perf metrics parsed from the final stream chunk, if the server reported them. */
   onMetrics?: (metrics: OllamaCallMetrics) => void;
+  /**
+   * Ollama's structured-output field: either a JSON Schema object (the model
+   * is constrained to emit JSON matching it) or the literal string "json"
+   * (unconstrained-shape JSON mode). See agent/structuredOutput.ts for why
+   * Forge only ever sends the schema form, gated behind
+   * forge.structuredOutput.enabled.
+   */
+  format?: Record<string, any> | 'json';
 }
 
 export interface GenerateRequestOptions {

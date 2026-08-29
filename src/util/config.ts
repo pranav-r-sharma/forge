@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { ForgeMode } from '../agent/modes';
+import { McpServerConfig } from '../mcp/mcpTypes';
 
 /** Strongly-typed accessor for the `forge.*` settings, re-read on every call so live edits apply immediately. */
 export interface ForgeConfig {
@@ -38,6 +39,26 @@ export interface ForgeConfig {
    * checkLoop() in agentLoop.ts.
    */
   loopDetectionEnabled: boolean;
+
+  /**
+   * Opt-in structured-output tool calling (see agent/structuredOutput.ts):
+   * off by default because this sandbox has no live Ollama server to verify
+   * how well constrained decoding actually behaves with Forge's target local
+   * models — try it, and turn it back off if it doesn't help your model.
+   */
+  structuredOutputEnabled: boolean;
+  /** Optional internal no-tool "think first" pass at the start of a turn in Agent/Auto/Outcome mode — see agent/planFirst.ts. Off by default: it's an extra full model call on every turn, real latency cost for a real (but not universally needed) accuracy gain. */
+  planFirstEnabled: boolean;
+  /** Optional extra model call after a large/risky edit asking "does this look right" before it's staged — see agent/selfCritique.ts. Off by default, same latency-cost reasoning as planFirstEnabled. */
+  selfCritiqueEnabled: boolean;
+  /** Minimum combined added+removed lines for an edit to trigger a self-critique pass — see agent/selfCritique.ts's shouldCritique(). */
+  selfCritiqueMinLines: number;
+  /** Sample N candidates and pick the best for Outcome-mode plan generation / large rewrites (see agent/bestOfN.ts) instead of trusting a single generation. Off by default — N model calls instead of 1 is a real latency/compute cost. */
+  bestOfNEnabled: boolean;
+  bestOfNSamples: number;
+
+  /** Configured MCP servers Forge spawns and connects to at startup — see mcp/mcpManager.ts. Empty by default (no MCP integration unless you add one). */
+  mcpServers: McpServerConfig[];
 
   // ---------- web search (item "a terrific web search tool") ----------
   // Off by default deliberately — this is the one Forge feature that
@@ -93,6 +114,13 @@ export function getConfig(): ForgeConfig {
     maxSubAgentDepth: cfg.get<number>('maxSubAgentDepth') ?? 2,
     showStatusMessages: cfg.get<boolean>('showStatusMessages') ?? true,
     loopDetectionEnabled: cfg.get<boolean>('loopDetection.enabled') ?? true,
+    structuredOutputEnabled: cfg.get<boolean>('structuredOutput.enabled') ?? false,
+    planFirstEnabled: cfg.get<boolean>('planFirst.enabled') ?? false,
+    selfCritiqueEnabled: cfg.get<boolean>('selfCritique.enabled') ?? false,
+    selfCritiqueMinLines: cfg.get<number>('selfCritique.minLines') ?? 40,
+    bestOfNEnabled: cfg.get<boolean>('bestOfN.enabled') ?? false,
+    bestOfNSamples: cfg.get<number>('bestOfN.samples') ?? 3,
+    mcpServers: cfg.get<McpServerConfig[]>('mcp.servers') || [],
     webSearchEnabled: cfg.get<boolean>('webSearch.enabled') ?? false,
     webSearchProvider: cfg.get<string>('webSearch.provider') || 'auto',
     webSearchMaxResults: cfg.get<number>('webSearch.maxResults') ?? 8,
@@ -131,6 +159,12 @@ export const SETTINGS_PANEL_KEYS = [
   'maxSubAgentDepth',
   'showStatusMessages',
   'loopDetection.enabled',
+  'structuredOutput.enabled',
+  'planFirst.enabled',
+  'selfCritique.enabled',
+  'selfCritique.minLines',
+  'bestOfN.enabled',
+  'bestOfN.samples',
   'webSearch.enabled',
   'webSearch.provider',
   'webSearch.maxResults',

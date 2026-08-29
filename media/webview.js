@@ -492,6 +492,14 @@
       ${settingRow('Require approval for commands', '', `<input id="set-requireApprovalForCommands" type="checkbox" ${s.requireApprovalForCommands ? 'checked' : ''} />`)}
       ${settingRow('Show brief status messages', 'e.g. "Reading foo.ts…" while the agent works.', `<input id="set-showStatusMessages" type="checkbox" ${s.showStatusMessages ? 'checked' : ''} />`)}
       ${settingRow('Loop detection (Auto/Outcome mode)', 'Stops the agent if it looks like it\'s repeating the same action in a loop. check_background_command is always exempt regardless of this setting. Turn off if it\'s incorrectly triggering on legitimately repetitive work.', `<input id="set-loopDetectionEnabled" type="checkbox" ${s.loopDetectionEnabled ? 'checked' : ''} />`)}
+      <div class="settings-section-title">Advanced / experimental (each costs extra model calls — try, keep only what helps your model)</div>
+      ${settingRow('Structured tool-call output', 'Uses Ollama\'s schema-constrained decoding for the tool-call contract instead of the fenced text block — can eliminate malformed-tool-call bugs if your model/Ollama version honor it well. Falls back automatically for any response that doesn\'t respect the schema.', `<input id="set-structuredOutputEnabled" type="checkbox" ${s.structuredOutputEnabled ? 'checked' : ''} />`)}
+      ${settingRow('Plan before acting', 'One extra no-tool "think first" model call at the start of each Agent/Auto/Outcome turn, grounded with relevant codebase snippets.', `<input id="set-planFirstEnabled" type="checkbox" ${s.planFirstEnabled ? 'checked' : ''} />`)}
+      ${settingRow('Self-critique large edits', 'One extra model call after a large edit asking "does this look right," fed back to the agent alongside the edit result.', `<input id="set-selfCritiqueEnabled" type="checkbox" ${s.selfCritiqueEnabled ? 'checked' : ''} />`)}
+      ${settingRow('Best-of-N for large rewrites', 'Samples several candidates for a large full-file rewrite of an existing file and keeps the best-scoring one instead of trusting the first.', `<input id="set-bestOfNEnabled" type="checkbox" ${s.bestOfNEnabled ? 'checked' : ''} />`)}
+      <div class="settings-section-title">MCP servers</div>
+      <div id="mcp-status" class="mcp-status"></div>
+      <div class="setting-hint">Configure servers via forge.mcp.servers in settings.json, then run "Forge: Reload MCP Servers".</div>
       <div class="settings-section-title">Sub-agents</div>
       ${settingRow(
         'Sub-agent model',
@@ -513,6 +521,7 @@
       <div id="websearch-providers" class="websearch-providers"></div>
     `;
     renderWebSearchProviders(s.webSearchProviders || []);
+    renderMcpStatus(s.mcpStatus || []);
 
     document.getElementById('set-session-numctx').addEventListener('change', (e) => {
       const v = e.target.value.trim();
@@ -552,6 +561,18 @@
     document.getElementById('set-loopDetectionEnabled').addEventListener('change', (e) => {
       vscodeApi.postMessage({ type: 'updateSetting', key: 'loopDetection.enabled', value: e.target.checked });
     });
+    document.getElementById('set-structuredOutputEnabled').addEventListener('change', (e) => {
+      vscodeApi.postMessage({ type: 'updateSetting', key: 'structuredOutput.enabled', value: e.target.checked });
+    });
+    document.getElementById('set-planFirstEnabled').addEventListener('change', (e) => {
+      vscodeApi.postMessage({ type: 'updateSetting', key: 'planFirst.enabled', value: e.target.checked });
+    });
+    document.getElementById('set-selfCritiqueEnabled').addEventListener('change', (e) => {
+      vscodeApi.postMessage({ type: 'updateSetting', key: 'selfCritique.enabled', value: e.target.checked });
+    });
+    document.getElementById('set-bestOfNEnabled').addEventListener('change', (e) => {
+      vscodeApi.postMessage({ type: 'updateSetting', key: 'bestOfN.enabled', value: e.target.checked });
+    });
     document.getElementById('set-subAgentModel').addEventListener('change', (e) => {
       vscodeApi.postMessage({ type: 'updateSetting', key: 'subAgentModel', value: e.target.value });
     });
@@ -574,6 +595,24 @@
       const value = e.target.value.trim();
       searxngCommitTimer = setTimeout(() => vscodeApi.postMessage({ type: 'updateSetting', key: 'webSearch.searxngUrl', value }), 600);
     });
+  }
+
+  /** Connection status for every configured MCP server (forge.mcp.servers) — see mcp/mcpManager.ts. Read-only here; servers are configured in settings.json and reconnected via "Forge: Reload MCP Servers". */
+  function renderMcpStatus(servers) {
+    const host = document.getElementById('mcp-status');
+    if (!host) return;
+    if (servers.length === 0) {
+      host.innerHTML = '<div class="search-empty">No MCP servers configured.</div>';
+      return;
+    }
+    host.innerHTML = servers
+      .map((s) => {
+        const status = s.connected
+          ? `<span class="wsp-status wsp-configured">connected · ${s.toolCount} tool${s.toolCount === 1 ? '' : 's'}</span>`
+          : '<span class="wsp-status wsp-missing">not connected</span>';
+        return `<div class="wsp-row"><span class="wsp-name">${escapeHtml(s.server)}</span>${status}</div>`;
+      })
+      .join('');
   }
 
   /** Per-provider "configured / not configured" status + a button to set/clear its API key, for the providers that need one — see websearch/keyStore.ts. Never shows the actual key, only whether one is stored. */

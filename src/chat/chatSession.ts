@@ -20,6 +20,7 @@ import { ChatStore, StoredSession, deriveTitle } from '../forge/chatStore';
 import { deriveMilestoneSummary, renderMilestonesForPrompt } from './milestones';
 import { WebSearchService } from '../websearch/searchService';
 import { WebFetchService } from '../websearch/fetchService';
+import { McpManager } from '../mcp/mcpManager';
 import { getConfig, resolveModelForMode } from '../util/config';
 import { genId } from '../util/ids';
 import { toRelative } from '../util/paths';
@@ -42,6 +43,8 @@ export interface ChatSessionServices {
   chatStore: ChatStore;
   webSearchService: WebSearchService;
   webFetchService: WebFetchService;
+  /** Native MCP tool connection ("I want them to natively connect to this Agent") — see mcp/mcpManager.ts. */
+  mcpManager: McpManager;
   workspaceRoot: vscode.Uri;
   workspaceName: string;
 }
@@ -507,6 +510,7 @@ export class ChatSession {
           // for why this is Forge's one opt-in-required tool.
           webSearch: cfg.webSearchEnabled ? (q) => this.services.webSearchService.search(q) : undefined,
           webFetch: cfg.webSearchEnabled ? (url, offset, length) => this.services.webFetchService.fetch(url, offset, length) : undefined,
+          mcpTools: this.services.mcpManager.listToolSpecs(),
           workspaceRoot: this.services.workspaceRoot,
           workspaceName: this.services.workspaceName,
         },

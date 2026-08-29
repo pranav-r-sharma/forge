@@ -93,6 +93,7 @@ export class OllamaClient {
       messages: opts.messages,
       stream: true,
       ...(opts.keepAliveMinutes !== undefined ? { keep_alive: opts.keepAliveMinutes === -1 ? -1 : `${opts.keepAliveMinutes}m` } : {}),
+      ...(opts.format ? { format: opts.format } : {}),
       options: {
         temperature: opts.temperature ?? 0.2,
         ...(opts.numCtx ? { num_ctx: opts.numCtx } : {}),

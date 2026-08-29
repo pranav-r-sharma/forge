@@ -22,6 +22,7 @@ import { MemoryStore } from '../../src/forge/memory';
 import { WebSearchService } from '../../src/websearch/searchService';
 import { WebFetchService } from '../../src/websearch/fetchService';
 import { WebSearchKeyStore } from '../../src/websearch/keyStore';
+import { McpManager } from '../../src/mcp/mcpManager';
 import { BackgroundProcessManager } from '../../src/tools/backgroundProcessManager';
 import { CheckpointStore } from '../../src/agent/checkpoints';
 import { deriveMilestoneSummary, renderMilestonesForPrompt } from '../../src/chat/milestones';
@@ -72,6 +73,9 @@ function makeProvider() {
   const webFetchService = new WebFetchService(() => ({ timeoutMs: 5000, respectRobotsTxt: true, maxFetchChars: 500000, cacheTtlMinutes: 10 }));
   const fakeSecrets: any = { get: async () => undefined, store: async () => {}, delete: async () => {}, onDidChange: () => ({ dispose() {} }) };
   const keyStore = new WebSearchKeyStore(fakeSecrets);
+  // No servers configured, so this never spawns anything — just satisfies
+  // the constructor's now-required mcpManager param (added in 0.11.0).
+  const mcpManager = new McpManager(() => []);
   const fakeContext: any = {
     subscriptions: [],
     extensionUri: workspaceRoot,
@@ -97,6 +101,7 @@ function makeProvider() {
     webSearchService,
     webFetchService,
     keyStore,
+    mcpManager,
     workspaceRoot,
     'test-workspace'
   );

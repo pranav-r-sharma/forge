@@ -10,6 +10,7 @@ import { logger } from './util/logger';
 import { WebSearchKeyStore, SECRET_BACKED_PROVIDERS, SecretBackedProviderId } from './websearch/keyStore';
 import { PROVIDER_MAP } from './websearch/searchService';
 import { ChatStore, StoredSession } from './forge/chatStore';
+import { McpManager } from './mcp/mcpManager';
 
 /** Item "web search": provider API keys are stored via vscode.SecretStorage, not settings.json — see keyStore.ts for why. This is the interactive entry point (also reachable from the Settings panel's "Set API Key…" button, which just runs this same command). */
 export async function setWebSearchApiKeyCommand(keyStore: WebSearchKeyStore) {
@@ -443,6 +444,30 @@ export async function exportAllChatsCommand(chatStore: ChatStore, forgeVersion: 
       ? `${base} ${failed.length} chat(s) could not be loaded even after recovery and were skipped: ${failed.join(', ')}.`
       : base
   );
+}
+
+/**
+ * "I want them to natively connect to this Agent" — re-spawns every server
+ * in `forge.mcp.servers` and re-lists their tools, for after editing that
+ * setting or restarting a server that crashed. See mcp/mcpManager.ts.
+ */
+export async function reloadMcpServersCommand(mcpManager: McpManager) {
+  await vscode.window.withProgress(
+    { location: vscode.ProgressLocation.Notification, title: 'Forge: reloading MCP servers…' },
+    async () => mcpManager.reload()
+  );
+  const statuses = mcpManager.status();
+  const errors = mcpManager.lastStartErrors();
+  if (statuses.length === 0) {
+    vscode.window.showInformationMessage('Forge: no MCP servers configured (forge.mcp.servers is empty).');
+    return;
+  }
+  const summary = statuses.map((s) => `${s.server}: ${s.connected ? `${s.toolCount} tool(s)` : 'failed to connect'}`).join('; ');
+  if (errors.length > 0) {
+    vscode.window.showWarningMessage(`Forge: MCP reload — ${summary}. Errors: ${errors.join(' | ')}`);
+  } else {
+    vscode.window.showInformationMessage(`Forge: MCP reload — ${summary}.`);
+  }
 }
 
 async function ensureFileWithContent(uri: vscode.Uri, content: string): Promise<boolean> {

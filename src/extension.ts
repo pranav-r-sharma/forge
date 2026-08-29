@@ -3,6 +3,7 @@ import * as os from 'os';
 import { OllamaClient } from './ollama/client';
 import { getConfig } from './util/config';
 import { logger } from './util/logger';
+import { toRelative } from './util/paths';
 import { PendingEditManager } from './tools/editApply';
 import { BackgroundProcessManager } from './tools/backgroundProcessManager';
 import { DiffContentProvider, FORGE_DIFF_SCHEME } from './tools/diffContentProvider';
@@ -21,6 +22,7 @@ import { WebSearchKeyStore } from './websearch/keyStore';
 import { WebSearchService } from './websearch/searchService';
 import { WebFetchService } from './websearch/fetchService';
 import { ProviderCredentials } from './websearch/types';
+import { McpManager } from './mcp/mcpManager';
 import {
   acceptAllEditsCommand,
   checkOllamaStatusCommand,
@@ -34,6 +36,7 @@ import {
   openMemoryFileCommand,
   openProjectLogCommand,
   openTerminalCommand,
+  reloadMcpServersCommand,
   rejectAllEditsCommand,
   selectChatModelCommand,
   selectCompletionModelCommand,
@@ -44,6 +47,8 @@ import {
 
 /** Module-level so deactivate() (a separate top-level function, no closure over activate()'s locals) can reach it to kill any still-running background commands — see BackgroundProcessManager.disposeAll()'s doc comment. */
 let activeBackgroundProcesses: BackgroundProcessManager | undefined;
+/** Same reasoning as activeBackgroundProcesses — an MCP server is a real spawned child process too, and must not be left running orphaned after the extension host shuts down or reloads. */
+let activeMcpManager: McpManager | undefined;
 
 export async function activate(context: vscode.ExtensionContext) {
   logger.init(context);
@@ -60,8 +65,23 @@ export async function activate(context: vscode.ExtensionContext) {
   const pendingEdits = new PendingEditManager(workspaceRoot);
   const backgroundProcesses = new BackgroundProcessManager();
   activeBackgroundProcesses = backgroundProcesses;
-  const workspaceIndex = new WorkspaceIndex(ollama, workspaceRoot, context.storageUri, () => getConfig().embeddingModel);
+  // Item "recently-edited-files and open-tabs weighting": injected as a
+  // closure (rather than WorkspaceIndex reading vscode.window.tabGroups
+  // itself) so the index stays testable without a real editor UI — see
+  // WorkspaceIndex.search()'s doc comment and test_v11.ts.
+  const getOpenWorkspacePaths = (): Set<string> => {
+    const open = new Set<string>();
+    for (const group of vscode.window.tabGroups.all) {
+      for (const tab of group.tabs) {
+        const input = tab.input as { uri?: vscode.Uri } | undefined;
+        if (input?.uri) open.add(toRelative(workspaceRoot, input.uri));
+      }
+    }
+    return open;
+  };
+  const workspaceIndex = new WorkspaceIndex(ollama, workspaceRoot, context.storageUri, () => getConfig().embeddingModel, getOpenWorkspacePaths);
   await workspaceIndex.loadCache();
+  context.subscriptions.push(pendingEdits.onBeforeWrite((relPath) => workspaceIndex.markRecentlyTouched(relPath)));
 
   const chatMemoryIndex = new ChatMemoryIndex(ollama, context.storageUri, () => getConfig().embeddingModel);
   await chatMemoryIndex.loadCache();
@@ -98,6 +118,15 @@ export async function activate(context: vscode.ExtensionContext) {
     },
     getWebSearchCredentials
   );
+  // Native MCP tool connection ("I want them to natively connect to this
+  // Agent"): spawns every server in forge.mcp.servers and lists its tools.
+  // Best-effort and non-blocking — one server failing (or being slow) to
+  // start never holds up activation or breaks any other server; a chat sent
+  // before this resolves just sees no MCP tools yet for that one turn.
+  const mcpManager = new McpManager(() => getConfig().mcpServers);
+  activeMcpManager = mcpManager;
+  mcpManager.start().catch((err) => logger.warn('MCP manager start failed', String(err)));
+
   const webFetchService = new WebFetchService(() => {
     const cfg = getConfig();
     return {
@@ -123,6 +152,7 @@ export async function activate(context: vscode.ExtensionContext) {
     webSearchService,
     webFetchService,
     webSearchKeyStore,
+    mcpManager,
     workspaceRoot,
     workspaceName
   );
@@ -188,7 +218,8 @@ export async function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('forge.openProjectLog', () => openProjectLogCommand(chatStore)),
     vscode.commands.registerCommand('forge.setWebSearchApiKey', () => setWebSearchApiKeyCommand(webSearchKeyStore)),
     vscode.commands.registerCommand('forge.openTerminal', () => openTerminalCommand(workspaceRoot)),
-    vscode.commands.registerCommand('forge.exportAllChats', () => exportAllChatsCommand(chatStore, context.extension.packageJSON.version))
+    vscode.commands.registerCommand('forge.exportAllChats', () => exportAllChatsCommand(chatStore, context.extension.packageJSON.version)),
+    vscode.commands.registerCommand('forge.reloadMcpServers', () => reloadMcpServersCommand(mcpManager))
   );
 
   // Best-effort background warm-up: don't block activation on network I/O.
@@ -206,9 +237,10 @@ export async function activate(context: vscode.ExtensionContext) {
 export function deactivate() {
   // Everything else registered in context.subscriptions is disposed
   // automatically — in-memory pending edits are intentionally
-  // session-scoped and need no cleanup. Background commands are the one
-  // exception: they're real OS child processes (a dev server, a watcher)
-  // that would otherwise keep running orphaned after the extension host
-  // shuts down or reloads, with no way left to reach them.
+  // session-scoped and need no cleanup. Background commands and MCP servers
+  // are the exceptions: both are real OS child processes (a dev server, a
+  // watcher, an MCP server) that would otherwise keep running orphaned after
+  // the extension host shuts down or reloads, with no way left to reach them.
   activeBackgroundProcesses?.disposeAll();
+  activeMcpManager?.disposeAll();
 }

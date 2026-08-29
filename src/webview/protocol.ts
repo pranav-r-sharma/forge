@@ -71,6 +71,12 @@ export interface SettingsSnapshot {
   maxSubAgentDepth: number;
   showStatusMessages: boolean;
   loopDetectionEnabled: boolean;
+  structuredOutputEnabled: boolean;
+  planFirstEnabled: boolean;
+  selfCritiqueEnabled: boolean;
+  bestOfNEnabled: boolean;
+  /** Snapshot of every configured MCP server's connection state — see mcp/mcpManager.ts. */
+  mcpStatus: { server: string; connected: boolean; toolCount: number }[];
   webSearchEnabled: boolean;
   webSearchProvider: string;
   webSearchMaxResults: number;
