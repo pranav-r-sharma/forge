@@ -1,6 +1,6 @@
 # Forge cheat sheet — every feature, what it does, how, and when to use it
 
-A single-file reference to everything Forge can do, from the first release through **0.11.0**. Organized by what you're trying to do, not by version — each entry says what it does, how it actually works (briefly), and when you'd reach for it. For "what changed and why," see `CHANGELOG.md`; for setup/prerequisites, see `README.md`; for Cursor-feature-by-feature parity, see `CURSOR_PARITY.md`.
+A single-file reference to everything Forge can do, from the first release through **0.12.0**. Organized by what you're trying to do, not by version — each entry says what it does, how it actually works (briefly), and when you'd reach for it. For "what changed and why," see `CHANGELOG.md`; for setup/prerequisites, see `README.md`; for Cursor-feature-by-feature parity, see `CURSOR_PARITY.md`.
 
 Version tags like *(0.9.0)* mark when something shipped, so you can tell what's new since you last looked at this.
 
@@ -43,8 +43,8 @@ Switch anytime from the mode strip above the message box. *(Ask/Plan/Auto: v2. O
 | **Review before write** | Every proposed file edit is staged, not written to disk, until you accept it — per-file or **Accept All** — from the chat panel or a real VS Code diff view (**Forge: Review Proposed Change**). | The default safety net in Agent/Outcome mode. Turn off with `forge.requireApprovalForWrites: false` if you want edits to land immediately (Auto mode always bypasses this). |
 | **Targeted edits (search/replace)** | The agent's preferred edit shape for existing files: a small, unique `{"search","replace"}` snippet rather than rewriting the whole file. | Cheaper, safer, and easier to review than a full rewrite — this is what you want for most localized changes. |
 | **Fuzzy whitespace-normalized fallback** *(0.11.0)* | If a `{"search","replace"}` call's search text doesn't match byte-for-byte, Forge retries with whitespace-normalized whole-line matching (trims + collapses internal whitespace) before giving up. Exactly one match → applies with an advisory note; 2+ matches → refused as ambiguous, same as the byte-exact case. | Kicks in automatically — recovers the common local-model failure mode of retyping the right lines with the wrong indentation. Doesn't help with a sub-line fragment or genuinely different content; those still need a corrected `search` string. |
+| **Real indentation repair** *(0.12.0 — supersedes the 0.10.0 advisory)* | Detects the file's real indent unit (tabs vs. spaces, space width via GCD estimation over its existing indented lines), measures the `replace` block's own indent depths, and remaps each line to the file's unit at the matching depth — before the edit lands, on both the exact-match and fuzzy-match paths. Template-literal-aware so it never touches whitespace-looking characters inside a JS/TS template string; falls back to leaving a block untouched if it can't confidently determine both the file's unit and the block's structure. | Automatic, no setting. This is what actually fixes the "right content, wrong indent depth/style" failure mode instead of only flagging it — see `reindentReplacement()` in `src/tools/fileTools.ts`. |
 | **Balance-regression advisory** *(0.11.0)* | A crude, free check comparing `{}`/`()`/`[]` counts before and after an edit — flags a bracket type that was balanced before and isn't after, right in the tool result. Advisory only, never blocks. | Always on. Treat it as a nudge to double-check the diff, not a guarantee something's wrong (or right) — it doesn't understand strings/comments. |
-| **Indentation-mismatch advisory** *(0.10.0)* | Compares the file's dominant indent character (tabs vs. spaces) against a replacement's, flagging a likely mismatch. Advisory only. | Same as above — a heads-up, not a block. |
 | **Cmd+K inline edit** | Select code, describe the change in an input box, get an in-place diff you accept (Cmd+Enter) or reject (Cmd+⌫). One pending inline edit at a time. | Quick, surgical, single-selection edits where opening the full chat feels heavyweight. |
 | **Tab autocomplete** | Ghost-text completions from a local fill-in-middle model as you type, via Ollama's `/api/generate` with `prompt`/`suffix` — works across qwen2.5-coder, deepseek-coder, starcoder2, codegemma, codellama, etc. without per-model special-token handling. | Pick a small, fast dedicated model (`forge.completionModel`) rather than reusing a big chat model — **Forge: Select Autocomplete Model**. Toggle on/off with **Forge: Toggle Tab Autocomplete**. |
 | **`get_problems` tool** | Lets the agent read the editor's own diagnostics (errors/warnings) for a file or the whole workspace. | Not yet auto-invoked after every edit (roadmap) — the agent calls it when it decides to check, or you can ask it to. |
@@ -81,12 +81,13 @@ Switch anytime from the mode strip above the message box. *(Ask/Plan/Auto: v2. O
 
 ---
 
-## 6. MCP servers *(0.11.0)*
+## 6. MCP servers *(0.11.0; HTTP transport 0.12.0)*
 
 | Feature | What it does | How / when |
 |---|---|---|
 | **Native MCP client** | Forge connects to your own [MCP](https://modelcontextprotocol.io) servers and exposes their tools to the agent alongside its built-ins — same protocol Claude Desktop/Code and Cursor use. Hand-written stdio JSON-RPC client, zero new npm dependencies. | Configure `forge.mcp.servers` in `settings.json`: `[{ "name": "github", "command": "npx", "args": ["-y", "@modelcontextprotocol/server-github"], "env": { "GITHUB_TOKEN": "..." } }]`. |
-| **Namespaced tool names** | Each remote tool shows up as `mcp_<server>_<tool>` (e.g. `mcp_github_search_issues`) — can't collide with a built-in tool or another server's tool. | Automatic. |
+| **Streamable HTTP transport** *(0.12.0)* | A second transport for a custom MCP server you run as a standing network service instead of spawning per-chat over stdio — `{ "name": "my-tool", "url": "http://host:port/mcp", "headers": {...} }` in the same `forge.mcp.servers` list. Speaks MCP's Streamable HTTP spec (JSON-RPC over HTTP POST, `Mcp-Session-Id`, SSE-framed responses) via a hand-written client (`mcp/mcpHttpClient.ts`), same zero-dependency approach as the stdio client. | Your own MCP server is already a long-lived service rather than something Forge should spawn/own the lifecycle of — point Forge at its URL instead of a `command`. Standardization note: if your server already speaks MCP's stdio JSON-RPC correctly, nothing changes; a network-exposed custom server specifically needs the Streamable HTTP transport, not a bespoke REST shape — see README's "MCP servers" section for the full answer. |
+| **Namespaced tool names** | Each remote tool shows up as `mcp_<server>_<tool>` (e.g. `mcp_github_search_issues`) — can't collide with a built-in tool or another server's tool, regardless of which transport that server uses. | Automatic. |
 | **Approval-gated** | An MCP tool call goes through the exact same approval channel `run_command` uses — your `forge.autoApproveCommands`/`requireApprovalForCommands` settings apply here too. Available in Agent/Auto/Outcome modes only, never Ask/Plan. | Nothing extra to set up — it's the same trust model as shell commands, since an MCP tool is arbitrary third-party code with side effects Forge can't inspect ahead of time. |
 | **Forge: Reload MCP Servers** | Disposes every connected client and reconnects from the latest `forge.mcp.servers` config. | After editing the config, or to restart a server that crashed. |
 | **Status in Settings panel** | The ⚙ Settings panel's "MCP servers" section shows per-server connected/tool-count status. | Checking whether a server actually connected before wondering why the agent "doesn't have" a tool you expected. |
@@ -134,7 +135,24 @@ Known gap: server config (including any API token in a server's `env`) lives in 
 
 ---
 
-## 11. Models — routing, per-chat overrides, HW visibility
+## 11. Checkpoint-safe resumption & orchestration mode *(0.12.0)*
+
+Local hardware can get interrupted mid-task in a way a cloud-hosted agent doesn't have to worry about — a reload, a restart, a machine that needs a break, or a big Auto/Outcome run you want to pick up again later instead of redoing. These four pieces are the answer:
+
+| Feature | What it does | How / when |
+|---|---|---|
+| **Immediate model-history persistence** | The conversation history the *model* sees is now saved the instant each tool call/result is added to it, not batched until the whole turn finishes. Fixes the root cause where an interrupted turn could resume with the model's own next prompt silently missing its last few steps. | Automatic, invisible — nothing to turn on. This is what makes the rest of this section actually safe to rely on. |
+| **Task ledger (`plan_tasks` / `update_task`)** | Two built-in tools, always available in Agent/Auto/Outcome (not gated behind Orchestration mode below) — break a goal into named tasks, mark each `in_progress`/`done`/`failed` with a short outcome. Rendered into every turn's prompt automatically, same mechanism as milestones/memory/project-log. | Mandatory, not opt-in — the model uses these on any nontrivial multi-step Agent/Auto/Outcome turn so a resumed turn has an accurate record of what's actually finished. |
+| **Auto-tracked sub-agent delegations** | Every `spawn_subagent` call is recorded on the ledger automatically the moment it starts and resolved with its summary the moment it returns — zero extra tool calls needed from the model. | Automatic whenever `spawn_subagent` is used, orchestration mode or not. |
+| **Per-task log** (`.forge/chat/<id>.tasks.md`) | Each ledger entry's full outcome (not just the inline one-liner) is appended here as it's marked done/failed — a plain, human-readable "what happened" log separate from the JSON transcript and the crash-recovery `.log.jsonl`. | Skimming what a long autonomous run actually did without replaying the whole transcript. |
+| **Orchestration mode toggle** | A per-chat checkbox (Agent/Auto/Outcome only) that changes the system prompt to have the model act as an orchestrator: plan on the ledger, dispatch pieces to `spawn_subagent` one at a time (sequential — the agent loop only ever makes one tool call per round-trip anyway), read back each outcome, decide what's next. Same tools either way — this only changes the *instructions* for using them. | A task that's naturally several independent chunks (e.g. "add tests for these 4 modules") where you want the main transcript to stay a high-level plan-and-report loop instead of one long inline chain. |
+| **Detached chat panel** | **Forge: Open Chat in New Panel (detached from sidebar)** opens the same live session in a main-editor-area panel, separate from the Activity Bar sidebar — same `ChatSession`, updates in both places at once. | Wanting the chat next to a file instead of competing with the Explorer for sidebar space. Not specific to orchestration, but shipped in this round for the same "your setup, your layout" reasoning. |
+
+Known limitation: restoring a checkpoint (section 2) doesn't rewind the task ledger to match — see README's Known limitations.
+
+---
+
+## 12. Models — routing, per-chat overrides, HW visibility
 
 | Feature | What it does | How / when |
 |---|---|---|
@@ -147,7 +165,7 @@ Known gap: server config (including any API token in a server's `env`) lives in 
 
 ---
 
-## 12. Accuracy levers *(0.11.0, opt-in — all off by default)*
+## 13. Accuracy levers *(0.11.0, opt-in — all off by default)*
 
 Each trades extra model calls (latency/compute) for a specific reliability improvement. None is on by default because this project has no way to verify against a live server whether it's a net win for your particular model/hardware — try one at a time, watch what changes, turn it back off if it doesn't help.
 
@@ -160,7 +178,7 @@ Each trades extra model calls (latency/compute) for a specific reliability impro
 
 ---
 
-## 13. Settings panel & full settings reference
+## 14. Settings panel & full settings reference
 
 Click ⚙ in the chat header for an in-chat panel covering the settings worth tweaking often: context window (global + per-chat), temperature, approval toggles, keep-alive, status-message visibility, loop detection, the four accuracy levers above, sub-agent model/budget/depth, MCP server status, and the core web-search settings. Everything else is a plain `forge.*` VS Code setting.
 
@@ -193,7 +211,7 @@ Click ⚙ in the chat header for an in-chat panel covering the settings worth tw
 | `forge.selfCritique.minLines` | `40` | Threshold for self-critique |
 | `forge.bestOfN.enabled` | `false` | See "Accuracy levers" above |
 | `forge.bestOfN.samples` | `3` | Candidates sampled when best-of-N is on |
-| `forge.mcp.servers` | `[]` | MCP servers to connect to |
+| `forge.mcp.servers` | `[]` | MCP servers to connect to — stdio (`command`) or, new in 0.12.0, Streamable HTTP (`url`) shape per entry |
 | `forge.webSearch.enabled` | `false` | Turns on `web_search`/`web_fetch` |
 | `forge.webSearch.provider` | `auto` | `auto`/`tavily`/`brave`/`google`/`searxng`/`duckduckgo` |
 | `forge.webSearch.maxResults` | `8` | Results per `web_search` call |
@@ -206,7 +224,7 @@ Click ⚙ in the chat header for an in-chat panel covering the settings worth tw
 
 ---
 
-## 14. Command Palette reference
+## 15. Command Palette reference
 
 Every `Forge: …` command in one place:
 
@@ -238,15 +256,17 @@ Every `Forge: …` command in one place:
 | **Forge: Open Terminal** | Opens a real VS Code integrated terminal |
 | **Forge: Export All Chats** | Bundles every saved chat into one JSON file |
 | **Forge: Reload MCP Servers** *(0.11.0)* | Reconnects every configured MCP server |
+| **Forge: Open Chat in New Panel (detached from sidebar)** *(0.12.0)* | Opens/refocuses the current chat in a main-editor-area panel, in sync with the sidebar view |
 
 ---
 
-## 15. If you only remember five things
+## 16. If you only remember six things
 
 1. **Restore to here** (on any message) undoes that message's turn and every file it touched — this is what makes Auto/Outcome mode safe to actually use hands-off.
 2. **`.forge/memory.md`** + **`.forge/project-log.md`** are how Forge avoids re-explaining your project every new chat — worth glancing at occasionally (**Forge: Compact Memory** if either gets noisy).
 3. **`@codebase`** (semantic search) beats `search_code` (literal grep) for "what handles X" questions; use literal search when you know the exact string/symbol.
 4. **The four 0.11.0 accuracy levers are opt-in for a reason** — try one, judge it on your own hardware/model, don't assume all four together is strictly better (more model calls, more latency).
-5. **MCP servers (`forge.mcp.servers`) turn Forge from "has its own built-in tools" into "has whatever tools you connect"** — the same approval gate as shell commands applies, since a connected server is arbitrary third-party code.
+5. **MCP servers (`forge.mcp.servers`) turn Forge from "has its own built-in tools" into "has whatever tools you connect"** — the same approval gate as shell commands applies, since a connected server is arbitrary third-party code; as of 0.12.0 that includes servers reachable over HTTP, not just ones Forge spawns itself.
+6. **The task ledger + immediate history persistence (0.12.0) exist for one reason: your hardware, unlike a cloud agent's, can get interrupted mid-turn** — a long Auto/Outcome run now resumes accurately instead of redoing finished work, and Orchestration mode is the same idea applied deliberately to a task you break into sub-agent-sized pieces up front.
 
 See `CHANGELOG.md` for exactly what shipped when and how it was verified, `ROADMAP.md` for what's cataloged but not built yet, and `CURSOR_PARITY.md` for the full Cursor feature-by-feature comparison.
