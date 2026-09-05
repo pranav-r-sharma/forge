@@ -39,6 +39,8 @@ export interface AgentDeps {
   backgroundProcesses: BackgroundProcessManager;
   /** Tools contributed by connected MCP servers ("native MCP connection") — see mcp/mcpManager.ts. Undefined/empty when no servers are configured. Available in Agent/Auto/Outcome modes only (same reasoning as write_file/run_command — see the mode gating in the main loop below), never Ask/Plan. */
   mcpTools?: DynamicToolSpec[];
+  /** See ToolExecContext.taskLedger's doc comment (agent/types.ts) — backs the plan_tasks/update_task tools and the automatic spawn_subagent ledger instrumentation below. Threaded straight through into toolCtx unchanged, and reused as-is for every nested sub-agent turn (same session, same ledger — see the spawnSubAgent closure passing `deps` through verbatim). */
+  taskLedger: ToolExecContext['taskLedger'];
   workspaceRoot: vscode.Uri;
   workspaceName: string;
 }
@@ -59,6 +61,10 @@ export interface AgentTurnOptions {
   milestonesText?: string;
   /** Item "documentation skill"/"unify into one system": the workspace-wide, cross-chat project log (see ChatStore.readProjectLogForPrompt()) — what makes a BRAND NEW chat aware of what's already happened in other chats, which milestonesText alone (this session's own history) can't provide. See memoryText's note above on where this is actually injected. */
   projectLogText?: string;
+  /** Item 4a: mechanically-rendered task-ledger digest (see agent/taskLedger.ts's renderTaskLedgerForPrompt()) — what's already done/in-progress/failed this session, so a resumed or fresh agent doesn't redo finished work. Same "grows every turn, doesn't belong in the cached system message" reasoning as memoryText — see buildTurnContextPrefix's note above on where this is actually injected. */
+  taskLedgerText?: string;
+  /** Item 4c: per-chat orchestration-mode toggle — see ChatSession.orchestrationEnabled and systemPrompt.ts's buildSystemPrompt() doc comment on what this does and doesn't change. */
+  orchestrationEnabled?: boolean;
   planContext?: string;
   /** Carried across turns so compaction doesn't re-summarize from scratch every time — see ChatSession. */
   compactionCache?: CompactionCache;
@@ -221,6 +227,16 @@ export async function runAgentTurn(
   const subAgentDepth = options.subAgentDepth ?? 0;
 
   const messages: ChatMessage[] = [...history];
+  // See AgentEvent's 'history_snapshot' doc comment (types.ts) for the full
+  // "why": every mutation of `messages` from here on goes through this
+  // wrapper instead of a bare push, so ChatSession can persist the
+  // model-facing transcript incrementally — the same way uiHistory already
+  // persists per UI event — instead of only learning about it after the
+  // whole turn returns. Emits a fresh copy each time; never the live array.
+  const pushMsg = (msg: ChatMessage) => {
+    messages.push(msg);
+    emit({ type: 'history_snapshot', messages: [...messages] });
+  };
   const allowedTools = new Set(toolsAllowedInMode(options.mode));
   // Native MCP tool connection: merged in alongside the built-in tool map at
   // every lookup site below, namespaced (mcp_<server>_<tool>) so it can
@@ -253,6 +269,7 @@ export async function runAgentTurn(
     planContext: options.planContext,
     mcpTools: deps.mcpTools,
     structuredOutput: structuredOutputEnabled,
+    orchestrationEnabled: options.orchestrationEnabled,
   });
   if (messages.length > 0 && messages[0].role === 'system') {
     messages[0] = { role: 'system', content: systemPrompt };
@@ -264,6 +281,7 @@ export async function runAgentTurn(
     memoryText: options.memoryText,
     projectLogText: options.projectLogText,
     milestonesText: options.milestonesText,
+    taskLedgerText: options.taskLedgerText,
   });
 
   // Optional "separate planner/executor prompts" pass (forge.planFirst.enabled)
@@ -287,7 +305,7 @@ export async function runAgentTurn(
     if (planText) planBlock = renderPlanFirstForPrompt(planText) + '\n\n';
   }
 
-  messages.push({ role: 'user', content: `${turnContextPrefix}${planBlock}${userMessage}` });
+  pushMsg({ role: 'user', content: `${turnContextPrefix}${planBlock}${userMessage}` });
 
   const toolCtx: ToolExecContext = {
     workspaceRoot: deps.workspaceRoot,
@@ -300,6 +318,7 @@ export async function runAgentTurn(
     chatMemorySearch: deps.chatMemorySearch,
     webSearch: deps.webSearch,
     webFetch: deps.webFetch,
+    taskLedger: deps.taskLedger,
     startBackgroundCommand: (command, cwd) => deps.backgroundProcesses.start(command, cwd),
     checkBackgroundCommand: (id) => deps.backgroundProcesses.check(id),
     killBackgroundCommand: (id) => deps.backgroundProcesses.kill(id),
@@ -316,6 +335,19 @@ export async function runAgentTurn(
       const subModel = subCfg.subAgentModel || model;
       emit({ type: 'subagent_start', task, depth: subAgentDepth + 1 });
       emit({ type: 'status', text: `Sub-agent (depth ${subAgentDepth + 1}) starting: ${truncateOneLine(task, 90)}`, activity: 'delegate' });
+      // Mandatory checkpoint-progress framework (item 4a/4b/4c): every
+      // spawn_subagent call is automatically recorded as a task-ledger entry
+      // — no model discipline required, unlike plan_tasks/update_task which
+      // the model has to remember to call. This is what makes "a new agent
+      // picks up after an interruption instead of redoing work" actually
+      // hold for the most common form of delegated work (sub-agents) even
+      // when orchestration mode is off and the model never touches the
+      // ledger tools itself. Guarded — deps.taskLedger is only guaranteed
+      // present for real ChatSession-driven turns; some direct/test callers
+      // of runAgentTurn don't wire it up, and that must never break
+      // spawn_subagent itself.
+      const ledgerTaskId = deps.taskLedger?.addTasks([task])[0];
+      if (ledgerTaskId) deps.taskLedger!.updateTask(ledgerTaskId, 'in_progress');
       const subUserMessage = contextHint ? `${task}\n\n[Context from parent agent]\n${contextHint}` : task;
       // Sub-agents only ever report their final answer back to the parent —
       // their own tool-call chatter is real (it still shows up via `emit`
@@ -359,6 +391,7 @@ export async function runAgentTurn(
         outcome = { ok: false, summary: `Sub-agent crashed: ${err?.message || err}` };
       }
       emit({ type: 'subagent_result', task, ok: outcome.ok, summary: outcome.summary, depth: subAgentDepth + 1 });
+      if (ledgerTaskId) deps.taskLedger!.updateTask(ledgerTaskId, outcome.ok ? 'done' : 'failed', outcome.summary);
       return outcome;
     },
     config: {
@@ -440,12 +473,12 @@ export async function runAgentTurn(
       const unverified = findUnverifiedClaims(displayText, messages);
       if (unverified.length > 0 && hallucinationNudges < 2) {
         hallucinationNudges++;
-        messages.push({ role: 'assistant', content: fullText });
+        pushMsg({ role: 'assistant', content: fullText });
         const nudge = `[System check] You said you changed ${unverified.map((p) => `\`${p}\``).join(', ')}, but no write_file call for ${unverified.length === 1 ? 'that path' : 'those paths'} appears anywhere in this conversation. If you meant to make that change, call write_file now. If it's already done and this check is wrong, just continue — but don't simply repeat the same claim without acting or correcting it.`;
-        messages.push({ role: 'user', content: nudge });
+        pushMsg({ role: 'user', content: nudge });
         continue;
       }
-      messages.push({ role: 'assistant', content: fullText });
+      pushMsg({ role: 'assistant', content: fullText });
 
       // "Definition of done": a plain-text final answer isn't the actual end
       // of the turn if a verify command is configured — Forge, not the
@@ -463,7 +496,7 @@ export async function runAgentTurn(
         }
         if (!verify.ok) {
           const nudge = `[Definition-of-done check failed]\n${verify.output}\n\nThe goal is not met yet — this is real evidence, not an opinion. Diagnose why and keep working; do not repeat the same "done" claim without either fixing the underlying issue or explaining concretely why this check itself is wrong (e.g. it tests the wrong thing). Do NOT make this check pass by disabling, skipping, or weakening what it verifies (e.g. skipping/deleting the failing test, neutering an assertion, silencing an error instead of fixing it, or editing the check command itself) — Forge scans for exactly that pattern and will flag it to the user, and it does not actually satisfy the user's goal even if the command exits 0.`;
-          messages.push({ role: 'user', content: nudge });
+          pushMsg({ role: 'user', content: nudge });
           sawFailedVerify = true;
           writesSinceLastVerify = [];
           if (checkLoop(loopDetector, '__verify__', { command: options.verifyCommand }, false, verify.output, emit)) {
@@ -486,7 +519,7 @@ export async function runAgentTurn(
 
     // Keep the model's own transcript of what it did, so it has memory of
     // prior tool calls across iterations.
-    messages.push({ role: 'assistant', content: fullText });
+    pushMsg({ role: 'assistant', content: fullText });
 
     // Self-consistency / best-of-N for the single riskiest step in the loop:
     // a full-file rewrite of an existing file (forge.bestOfN.enabled, off by
@@ -543,7 +576,7 @@ export async function runAgentTurn(
     if (!resolvedSpec) {
       const errMsg = `Unknown tool "${call.tool}". Available tools: ${[...Object.keys(TOOL_MAP), ...mcpToolMap.keys()].join(', ')}.`;
       emit({ type: 'tool_result', callId, ok: false, summary: errMsg });
-      messages.push({ role: 'user', content: `[Tool error]\n${errMsg}` });
+      pushMsg({ role: 'user', content: `[Tool error]\n${errMsg}` });
       if (checkLoop(loopDetector, call.tool, call.args, false, errMsg, emit)) return { messages, compactionCache };
       continue;
     }
@@ -560,7 +593,7 @@ export async function runAgentTurn(
         options.mode === 'ask' ? 'Ask mode is read-only — tell the user to switch to Agent mode for edits/commands.' : ''
       }`;
       emit({ type: 'tool_result', callId, ok: false, summary: errMsg });
-      messages.push({ role: 'user', content: `[Tool error]\n${errMsg}` });
+      pushMsg({ role: 'user', content: `[Tool error]\n${errMsg}` });
       if (checkLoop(loopDetector, call.tool, call.args, false, errMsg, emit)) return { messages, compactionCache };
       continue;
     }
@@ -575,7 +608,7 @@ export async function runAgentTurn(
       if (hookResult.blocked) {
         const msg = `Blocked by .forge/hooks/${hookEvent}${hookResult.message ? `: ${hookResult.message}` : '.'}`;
         emit({ type: 'tool_result', callId, ok: false, summary: msg });
-        messages.push({ role: 'user', content: `[Tool error]\n${msg}` });
+        pushMsg({ role: 'user', content: `[Tool error]\n${msg}` });
         if (checkLoop(loopDetector, call.tool, call.args, false, msg, emit)) return { messages, compactionCache };
         continue;
       }
@@ -635,7 +668,7 @@ export async function runAgentTurn(
       summary: summarize(resultContentForModel),
     });
 
-    messages.push({ role: 'user', content: `[Tool "${call.tool}" result]\n${resultContentForModel}` });
+    pushMsg({ role: 'user', content: `[Tool "${call.tool}" result]\n${resultContentForModel}` });
 
     if (checkLoop(loopDetector, call.tool, call.args, result.ok, result.content, emit)) {
       return { messages, compactionCache };

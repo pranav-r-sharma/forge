@@ -9,6 +9,7 @@ import { AgentEvent } from '../agent/types';
 import { ForgeMode, isAutonomousMode, modeSupportsVerifyCommand } from '../agent/modes';
 import { CheckpointStore } from '../agent/checkpoints';
 import { CompactionCache } from '../agent/contextManager';
+import { TaskLedger, TaskLedgerEntry, renderTaskLedgerForPrompt } from '../agent/taskLedger';
 import { WorkspaceIndex } from '../indexing/workspaceIndex';
 import { ChatMemoryIndex, extractSearchableText } from '../indexing/chatMemoryIndex';
 import { RulesEngine } from '../forge/rules';
@@ -71,6 +72,10 @@ export class ChatSession {
   verifyCommand = '';
   /** Per-chat context-window override (item "tweak context limits per chat") — undefined = use the global forge.numCtx default. See setNumCtxOverride(). */
   numCtxOverride: number | undefined;
+  /** Mandatory checkpoint-progress framework (item 4a/4b) — see agent/taskLedger.ts's doc comment. Always active regardless of orchestrationEnabled below; populated via plan_tasks/update_task and automatically for every spawn_subagent call. */
+  private taskLedger = new TaskLedger();
+  /** Orchestration-mode toggle (item 4c) — see setOrchestrationEnabled(). Off by default; changes the system prompt's instructions, not tool availability (see systemPrompt.ts). */
+  orchestrationEnabled = false;
   uiHistory: UiTranscriptEntry[] = [];
   modelHistory: ChatMessage[] = [];
   busy = false;
@@ -134,6 +139,8 @@ export class ChatSession {
     s.turnsSinceMemoryReview = stored.turnsSinceMemoryReview || 0;
     s.titleManuallySet = stored.titleManuallySet || false;
     s.numCtxOverride = stored.numCtxOverride;
+    s.taskLedger = TaskLedger.fromJSON(stored.taskLedger);
+    s.orchestrationEnabled = stored.orchestrationEnabled || false;
     return s;
   }
 
@@ -153,6 +160,8 @@ export class ChatSession {
       turnsSinceMemoryReview: this.turnsSinceMemoryReview,
       titleManuallySet: this.titleManuallySet || undefined,
       numCtxOverride: this.numCtxOverride,
+      taskLedger: this.taskLedger.list().length ? this.taskLedger.toJSON() : undefined,
+      orchestrationEnabled: this.orchestrationEnabled || undefined,
     };
   }
 
@@ -167,7 +176,38 @@ export class ChatSession {
       checkpoints: this.checkpoints.list().map((c) => ({ id: c.id, label: c.label, createdAt: c.createdAt, milestone: c.milestone })),
       verifyCommand: this.verifyCommand || undefined,
       numCtxOverride: this.numCtxOverride,
+      taskLedger: this.taskLedger.list(),
+      orchestrationEnabled: this.orchestrationEnabled,
     };
+  }
+
+  /**
+   * Item 4c: toggles orchestration mode for this chat — see
+   * systemPrompt.ts's buildSystemPrompt() doc comment for exactly what this
+   * does and doesn't change (instructions, not tool availability). Takes
+   * effect on the next send(), no restart needed — same pattern as
+   * setModelOverride()/setVerifyCommand().
+   */
+  setOrchestrationEnabled(enabled: boolean) {
+    this.orchestrationEnabled = !!enabled;
+    this.persist();
+  }
+
+  /**
+   * Item 4a/4b: applies a task-ledger mutation, mechanically logs it (both
+   * the JSONL crash-recovery log and the human-readable per-task Markdown
+   * report — see ChatStore.appendTaskReport()'s doc comment), and persists
+   * the session immediately — exactly the same "apply then persist without
+   * waiting for the turn to finish" treatment as pushEntry()/uiHistory and
+   * the 'history_snapshot' handler/modelHistory, so an interruption loses
+   * neither the raw transcript, the model-facing history, NOR the
+   * structured task state.
+   */
+  private onTaskLedgerChanged(entry: TaskLedgerEntry) {
+    this.log('task', `[${entry.status}] ${entry.description}${entry.summary ? ` — ${entry.summary}` : ''}`);
+    this.services.chatStore.appendTaskReport(this.id, entry).catch((err) => logger.warn('task report append failed', String(err)));
+    this.persist();
+    this.post({ type: 'taskLedgerUpdate', sessionId: this.id, tasks: this.taskLedger.list() });
   }
 
   /** Releases the shared PendingEditManager subscription. Call this whenever a session is removed from ChatViewProvider's in-memory map (closed/deleted), so closing many tabs over a long-running VS Code session doesn't accumulate dead listeners on the workspace-wide PendingEditManager. */
@@ -179,7 +219,7 @@ export class ChatSession {
     this.services.chatStore.save(this.toStored()).catch((err) => logger.warn('session persist failed', String(err)));
   }
 
-  private log(kind: 'user' | 'tool_call' | 'tool_result' | 'final' | 'error' | 'checkpoint' | 'mode_change' | 'verify' | 'memory_review', detail: string) {
+  private log(kind: 'user' | 'tool_call' | 'tool_result' | 'final' | 'error' | 'checkpoint' | 'mode_change' | 'verify' | 'memory_review' | 'task', detail: string) {
     this.services.chatStore.appendLog(this.id, { ts: nowIso(), kind, detail }).catch(() => {});
   }
 
@@ -318,6 +358,8 @@ export class ChatSession {
     forked.model = this.model;
     forked.verifyCommand = this.verifyCommand;
     forked.numCtxOverride = this.numCtxOverride;
+    forked.orchestrationEnabled = this.orchestrationEnabled;
+    forked.taskLedger = TaskLedger.fromJSON(JSON.parse(JSON.stringify(this.taskLedger.toJSON())));
     // Deep-clone via JSON round-trip: these are plain, serializable objects
     // (the same shape persisted to disk), so this is cheap and — more
     // importantly — guarantees the fork shares no mutable object references
@@ -481,6 +523,12 @@ export class ChatSession {
     // changes anything once the fact list is already too big to fit in full.
     const memoryText = await this.services.memory.renderForPrompt(effectiveText);
     const milestonesText = renderMilestonesForPrompt(this.checkpoints.list());
+    // Item 4a: mechanically-rendered task-ledger digest — see
+    // agent/taskLedger.ts's doc comment for why this exists alongside the
+    // milestone log rather than duplicating it (milestones summarize what a
+    // whole TURN did; the ledger tracks a bigger plan's individual tasks
+    // across possibly many turns/interruptions).
+    const taskLedgerText = renderTaskLedgerForPrompt(this.taskLedger.list());
     // Item "documentation skill... progress through a project can become
     // context for new chats": every chat — not just this one — gets a digest
     // of what's already happened elsewhere in the project, so a brand-new
@@ -511,6 +559,22 @@ export class ChatSession {
           webSearch: cfg.webSearchEnabled ? (q) => this.services.webSearchService.search(q) : undefined,
           webFetch: cfg.webSearchEnabled ? (url, offset, length) => this.services.webFetchService.fetch(url, offset, length) : undefined,
           mcpTools: this.services.mcpManager.listToolSpecs(),
+          taskLedger: {
+            addTasks: (descriptions, parentTaskId) => {
+              const ids = descriptions.map((d) => {
+                const entry = this.taskLedger.add(d, parentTaskId);
+                this.onTaskLedgerChanged(entry);
+                return entry.id;
+              });
+              return ids;
+            },
+            updateTask: (id, status, summary) => {
+              const entry = this.taskLedger.setStatus(id, status, summary);
+              if (entry) this.onTaskLedgerChanged(entry);
+              return !!entry;
+            },
+            list: () => this.taskLedger.list(),
+          },
           workspaceRoot: this.services.workspaceRoot,
           workspaceName: this.services.workspaceName,
         },
@@ -523,6 +587,8 @@ export class ChatSession {
           memoryText: memoryText || undefined,
           milestonesText,
           projectLogText: projectLogText || undefined,
+          taskLedgerText,
+          orchestrationEnabled: this.orchestrationEnabled,
           planContext: opts?.planContext,
           compactionCache: this.compactionCache,
           verifyCommand: modeSupportsVerifyCommand(this.mode) && this.verifyCommand ? this.verifyCommand : undefined,
@@ -611,6 +677,24 @@ export class ChatSession {
 
   private handleAgentEvent(event: AgentEvent) {
     switch (event.type) {
+      case 'history_snapshot': {
+        // Fix for "an interrupted turn loses its model-facing context, even
+        // though the UI transcript survives" (see AgentEvent's doc comment
+        // in agent/types.ts for the full root-cause writeup): apply the
+        // agent loop's model-facing transcript to this.modelHistory the
+        // moment it changes — every tool round-trip, every nudge, every
+        // final answer — and persist it immediately, exactly the same way
+        // pushEntry() already persists uiHistory on every UI event. Before
+        // this, this.modelHistory was only ever reassigned once
+        // runAgentTurn() fully returned, so a mid-turn crash/host-restart
+        // resumed the NEXT turn from the PREVIOUS turn's history — Ollama
+        // had no memory of the file edits/commands/tool results the agent
+        // had already made, even though the UI still showed them, which is
+        // exactly what causes a resuming agent to redundantly redo work.
+        this.modelHistory = event.messages;
+        this.persist();
+        return;
+      }
       case 'thought_start': {
         const id = genId('a');
         this.currentAssistantId = id;

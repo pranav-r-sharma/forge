@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { OllamaCallMetrics } from '../ollama/types';
+import { ChatMessage, OllamaCallMetrics } from '../ollama/types';
 import { WebFetchResult, WebSearchResult } from '../websearch/types';
 
 /** Names of every tool the agent may invoke. Kept as a union so callers get exhaustiveness checks. */
@@ -15,6 +15,8 @@ export type ToolName =
   | 'remember'
   | 'search_chat_history'
   | 'spawn_subagent'
+  | 'plan_tasks'
+  | 'update_task'
   | 'web_search'
   | 'web_fetch';
 
@@ -66,6 +68,24 @@ export interface ToolExecContext {
    * so a sub-agent can't spawn an unbounded tree of sub-agents.
    */
   spawnSubAgent: (task: string, contextHint?: string) => Promise<{ ok: boolean; summary: string }>;
+  /**
+   * Mandatory checkpoint-progress framework (item 4a/4b/4c — see
+   * agent/taskLedger.ts's doc comment for the full rationale): backs the
+   * plan_tasks/update_task tools (tools/taskLedgerTools.ts). Always present
+   * whenever spawn_subagent is (same mode gating — see modes.ts's
+   * ALL_TOOLS), independent of whether orchestration mode is toggled on for
+   * this chat; ChatSession supplies the actual implementation (ledger
+   * mutation + persistence + per-task report file), agentLoop.ts and the
+   * tool wrappers only ever see this narrow interface.
+   */
+  taskLedger: {
+    /** Creates one or more new pending tasks (optionally children of an existing one) and returns their ids. */
+    addTasks: (descriptions: string[], parentTaskId?: string) => string[];
+    /** Updates one task's status (and optionally its outcome summary). Returns false if `id` doesn't exist. */
+    updateTask: (id: string, status: 'in_progress' | 'done' | 'failed', summary?: string) => boolean;
+    /** Current ledger snapshot, for the update_task tool to report back a legible confirmation and for plan_tasks to avoid creating obvious duplicates. */
+    list: () => { id: string; description: string; status: string; summary?: string; parentTaskId?: string }[];
+  };
   /**
    * Web search (item "a terrific web search tool"). Undefined when
    * forge.webSearch.enabled is false — the web_search/web_fetch tool
@@ -133,6 +153,27 @@ export type AgentEvent =
   | { type: 'status'; text: string; activity?: AgentActivity }
   | { type: 'subagent_start'; task: string; depth: number }
   | { type: 'subagent_result'; task: string; ok: boolean; summary: string; depth: number }
+  /**
+   * Fired every time the model-facing transcript (agentLoop.ts's local
+   * `messages` array) grows by one entry — right after the system prompt is
+   * (re)pinned, after every tool-call/tool-result round-trip, after every
+   * plan-first/verify/hallucination-check nudge, and after the final answer
+   * is recorded. This is the fix for the "an interrupted turn loses its
+   * model-facing context, even though the UI transcript survives" gap:
+   * before this event existed, ChatSession only learned the turn's updated
+   * `modelHistory` once `runAgentTurn()` fully RETURNED (see
+   * ChatSession.send()'s `this.modelHistory = result.messages`), so a
+   * mid-turn crash/host-restart left the next turn resuming from the
+   * PREVIOUS turn's history — Ollama-facing context for everything the
+   * agent just did (file edits, commands, tool results) was gone, and a
+   * fresh agent would re-discover/redo work it (from the UI's point of
+   * view) already finished. ChatSession now applies this incrementally to
+   * `this.modelHistory` and persists it exactly like it already does for
+   * `uiHistory` via pushEntry() — see ChatSession.handleAgentEvent()'s
+   * 'history_snapshot' case. `messages` here is always a fresh copy (never
+   * the loop's own live array) so a subscriber can hold onto it safely.
+   */
+  | { type: 'history_snapshot'; messages: ChatMessage[] }
   | { type: 'done' }
   | { type: 'aborted' };
 

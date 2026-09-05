@@ -1,5 +1,6 @@
 import { AgentActivity, PendingEditSerialized } from '../agent/types';
 import { ForgeMode } from '../agent/modes';
+import { TaskLedgerEntry } from '../agent/taskLedger';
 import { SessionSummary } from '../forge/chatStore';
 import { OllamaCallMetrics } from '../ollama/types';
 import { FileSearchEntry } from '../util/fileSearch';
@@ -57,6 +58,10 @@ export interface SessionState {
   verifyCommand?: string;
   /** Per-chat context-window override — see ChatSession.numCtxOverride. undefined = use the global forge.numCtx default. */
   numCtxOverride?: number;
+  /** Mandatory checkpoint-progress framework (item 4a/4b) — see agent/taskLedger.ts. Always present (possibly empty) so the UI can render a progress panel whenever there's something to show, without a separate "does this chat even have a ledger" round-trip. */
+  taskLedger: TaskLedgerEntry[];
+  /** Orchestration-mode toggle (item 4c) — see ChatSession.orchestrationEnabled. */
+  orchestrationEnabled: boolean;
 }
 
 /** Snapshot of the settings the in-webview Settings panel can read/write (item "a new setting pane") — see util/config.ts's SETTINGS_PANEL_KEYS. */
@@ -166,7 +171,9 @@ export type ExtensionToWebviewMessage =
   /** Item "doesn't recognize that the mode has changed": a dedicated, always-fired notification so the composer's mode pill can never go stale — see ChatSession.postModeChanged(). */
   | { type: 'modeChanged'; sessionId: string; mode: ForgeMode }
   /** Item "ability to kill commands while they are running from the chat window" — a snapshot of every background command (see tools/backgroundProcessManager.ts), refreshed on request via the 'listBackgroundCommands' message. */
-  | { type: 'backgroundCommandsList'; commands: BackgroundCommandInfo[] };
+  | { type: 'backgroundCommandsList'; commands: BackgroundCommandInfo[] }
+  /** Item 4a/4b: live push whenever the task ledger changes (plan_tasks/update_task/an auto-instrumented spawn_subagent call) — lets a progress panel update immediately instead of only on the next full session switch. */
+  | { type: 'taskLedgerUpdate'; sessionId: string; tasks: TaskLedgerEntry[] };
 
 export type WebviewToExtensionMessage =
   | { type: 'ready' }
@@ -205,4 +212,6 @@ export type WebviewToExtensionMessage =
   | { type: 'setSessionModel'; model: string }
   /** Item "ability to kill commands while they are running from the chat window". */
   | { type: 'listBackgroundCommands' }
-  | { type: 'killBackgroundCommand'; id: string };
+  | { type: 'killBackgroundCommand'; id: string }
+  /** Item 4c: per-chat orchestration-mode toggle — see ChatSession.setOrchestrationEnabled(). */
+  | { type: 'setOrchestrationMode'; enabled: boolean };

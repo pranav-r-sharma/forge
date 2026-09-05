@@ -676,6 +676,32 @@ body {
 
 .verify-card .tool-name { color: var(--vscode-charts-purple, #b180d7); }
 
+.forge-orch-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 2px 4px;
+  font-size: 0.85em;
+}
+.orch-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  opacity: 0.85;
+  white-space: nowrap;
+}
+.orch-toggle input {
+  cursor: pointer;
+}
+.orch-progress {
+  opacity: 0.65;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: help;
+}
+
 .msg-user-wrap {
   display: flex;
   flex-direction: column;

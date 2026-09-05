@@ -24,6 +24,8 @@ const ALL_TOOLS: ToolName[] = [
   'remember',
   'search_chat_history',
   'spawn_subagent',
+  'plan_tasks',
+  'update_task',
   'web_search',
   'web_fetch',
 ];

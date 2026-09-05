@@ -23,6 +23,8 @@
     attachedFiles: [],
     checkpoints: [], // {id, label, createdAt} for the active session
     verifyCommand: '', // optional "definition of done" command for the active session (Agent/Auto/Outcome modes)
+    orchestrationEnabled: false, // item 4c: per-chat orchestration-mode toggle
+    taskLedger: [], // item 4a/4b: mandatory checkpoint-progress ledger for the active session, [{id, description, status, summary, parentTaskId}]
     hwStatus: { loadedModels: [] },
     lastMetrics: undefined,
     mentionResults: [], // [{path, kind}] or skill matches, whichever is active
@@ -113,6 +115,12 @@
           <span class="verify-row-label" title="Optional shell command Forge automatically re-runs after every final answer in this mode — a non-zero exit is fed back and the run keeps going instead of stopping.">&#127919; Definition of done:</span>
           <input id="verify-input" type="text" placeholder="optional command, e.g. npm test — leave blank to skip" />
         </div>
+        <div id="orch-row" class="forge-orch-row" style="display:none;">
+          <label class="orch-toggle" title="When on, the model acts as an orchestrator: it breaks the task into a plan (plan_tasks), delegates each piece to a sub-agent one at a time (spawn_subagent), and reports/re-plans between each one — instead of doing everything itself inline. The task ledger below tracks progress either way, so an interrupted session can resume without redoing finished work.">
+            <input type="checkbox" id="orch-toggle-input" /> &#129504; Orchestration mode
+          </label>
+          <span id="orch-progress" class="orch-progress"></span>
+        </div>
         <div id="chips" class="forge-chips"></div>
         <div id="mention-dropdown" class="forge-mention-dropdown" style="display:none;"></div>
         <div id="status-line" class="forge-status-line" style="display:none;"></div>
@@ -156,6 +164,9 @@
     searchResults: document.getElementById('search-results'),
     verifyRow: document.getElementById('verify-row'),
     verifyInput: /** @type {HTMLInputElement} */ (document.getElementById('verify-input')),
+    orchRow: document.getElementById('orch-row'),
+    orchToggleInput: /** @type {HTMLInputElement} */ (document.getElementById('orch-toggle-input')),
+    orchProgress: document.getElementById('orch-progress'),
     allChatsBtn: document.getElementById('btn-all-chats'),
     allChatsPanel: document.getElementById('all-chats-panel'),
     allChatsList: document.getElementById('all-chats-list'),
@@ -654,6 +665,7 @@
         renderModeStrip();
         renderAutoBanner();
         renderVerifyRow();
+        renderOrchRow();
         vscodeApi.postMessage({ type: 'setMode', mode: m.id });
         showToast('info', `Switched to ${m.label} mode.`);
       });
@@ -705,6 +717,45 @@
     clearTimeout(verifyCommitTimer);
     verifyCommitTimer = setTimeout(commitVerifyCommand, 800);
   });
+
+  // ---------- orchestration mode toggle + task-ledger progress readout (item 4c) ----------
+  // Shown in the same modes as the verify row (Agent/Auto/Outcome — Ask is
+  // read-only and Plan has no tools at all, so orchestration has nothing to
+  // orchestrate in either) — mirrors modeSupportsVerifyCommand()'s reasoning.
+  function renderOrchRow() {
+    const show = VERIFY_CAPABLE_MODES.includes(state.activeMode);
+    el.orchRow.style.display = show ? 'flex' : 'none';
+    if (show) el.orchToggleInput.checked = !!state.orchestrationEnabled;
+    renderTaskLedgerProgress();
+  }
+  el.orchToggleInput.addEventListener('change', () => {
+    state.orchestrationEnabled = el.orchToggleInput.checked;
+    vscodeApi.postMessage({ type: 'setOrchestrationMode', enabled: state.orchestrationEnabled });
+    showToast('info', state.orchestrationEnabled ? 'Orchestration mode on — the model will plan, delegate to sub-agents one at a time, and track progress in the task ledger.' : 'Orchestration mode off.');
+  });
+
+  /**
+   * Mandatory checkpoint-progress framework (item 4a/4b): a compact "3/5
+   * done" readout next to the toggle, always visible (not just when
+   * orchestration mode is on) since plan_tasks/spawn_subagent can populate
+   * the ledger in any mode — see agent/taskLedger.ts's doc comment on why
+   * this is "mandatory," not opt-in. Hovering shows the full task list with
+   * status/summary so progress is legible without opening dev tools or the
+   * raw .forge/chat/<id>.tasks.md file.
+   */
+  function renderTaskLedgerProgress() {
+    const tasks = state.taskLedger || [];
+    if (tasks.length === 0) {
+      el.orchProgress.textContent = '';
+      el.orchProgress.title = '';
+      return;
+    }
+    const done = tasks.filter((t) => t.status === 'done').length;
+    const failed = tasks.filter((t) => t.status === 'failed').length;
+    const mark = { pending: '○', in_progress: '◐', done: '✓', failed: '✗' };
+    el.orchProgress.textContent = `Tasks: ${done}/${tasks.length}${failed ? ` (${failed} failed)` : ''}`;
+    el.orchProgress.title = tasks.map((t) => `${mark[t.status] || '?'} ${t.description}${t.summary ? ` — ${t.summary}` : ''}`).join('\n');
+  }
 
   // ---------- tab strip (multitask) ----------
   function renderTabStrip() {
@@ -1208,12 +1259,15 @@
     state.verifyCommand = session.verifyCommand || '';
     state.numCtxOverride = session.numCtxOverride;
     state.sessionModel = session.model || '';
+    state.orchestrationEnabled = !!session.orchestrationEnabled;
+    state.taskLedger = session.taskLedger || [];
     state.statusText = '';
     state.statusActivity = undefined;
     renderStatusLine();
     renderModeStrip();
     renderAutoBanner();
     renderVerifyRow();
+    renderOrchRow();
     renderTabStrip();
     renderBusy();
     renderModelBtn();
@@ -1351,6 +1405,12 @@
       case 'pendingEdits': {
         state.pendingEdits = msg.edits;
         renderPendingEdits();
+        break;
+      }
+      case 'taskLedgerUpdate': {
+        if (msg.sessionId !== state.activeSessionId) break;
+        state.taskLedger = msg.tasks || [];
+        renderTaskLedgerProgress();
         break;
       }
       case 'busy': {

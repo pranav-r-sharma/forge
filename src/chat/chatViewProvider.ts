@@ -463,6 +463,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         this.activeSession()?.setVerifyCommand(msg.command);
         return;
       }
+      case 'setOrchestrationMode': {
+        this.activeSession()?.setOrchestrationEnabled(msg.enabled);
+        return;
+      }
       case 'renameSession': {
         // Item "CHAT RENAME": rename whichever session this is, whether it's
         // currently loaded into memory (use its own rename() so
@@ -725,7 +729,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       sessions: [...known.values()],
       activeSession: active
         ? active.toSummaryState()
-        : { id: 'none', title: 'New chat', mode: 'agent', model: '', busy: false, history: [], checkpoints: [] },
+        : { id: 'none', title: 'New chat', mode: 'agent', model: '', busy: false, history: [], checkpoints: [], taskLedger: [], orchestrationEnabled: false },
       hwStatus: await this.buildHwStatus(),
     };
     this.post({ type: 'init', state });

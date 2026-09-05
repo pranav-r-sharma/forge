@@ -5,6 +5,7 @@ import { runCommandTool } from './commandTool';
 import { checkBackgroundCommandTool } from './backgroundCommandTool';
 import { rememberTool, searchChatHistoryTool } from './memoryTools';
 import { spawnSubAgentTool } from './subAgentTool';
+import { planTasksTool, updateTaskTool } from './taskLedgerTools';
 import { webFetchTool, webSearchTool } from './webTools';
 
 export const TOOL_SPECS: ToolSpec[] = [
@@ -79,6 +80,20 @@ export const TOOL_SPECS: ToolSpec[] = [
       'Delegate a self-contained sub-task to a nested, fully autonomous sub-agent (its own bounded tool-call loop, no approvals) and get back a summary of what it did/found. Use this to parallelize-in-spirit a task that splits cleanly into independent pieces (e.g. "investigate why build fails" + "investigate why tests fail" as two separate sub-agents), or to delegate a well-scoped chunk of work without cluttering your own tool-call history with its step-by-step trace. Give it a specific, self-contained task description — it does not see this conversation, only what you put in "task"/"context". Nesting is capped (a sub-agent cannot itself spawn more than one further level of sub-agents).',
     exampleArgs: { task: 'Find and fix the TypeScript error in src/utils/date.ts', context: 'The error is "Property \'toISO\' does not exist". Likely a typo for toISOString.' },
     run: spawnSubAgentTool,
+  },
+  {
+    name: 'plan_tasks',
+    describe:
+      'Mandatory checkpoint-progress framework (item "checkpoint progress so an interrupted agent picks up where it left off, not redundant work"): record one or more short task descriptions as pending entries in this chat\'s task ledger, optionally as children of an existing task id (for breaking one task into sub-steps). Use this near the start of any multi-step or multi-part piece of work — especially before spawning sub-agents (though each spawn_subagent call also auto-records its own ledger entry regardless) — so the ledger reflects your actual plan and a resumed session can see what\'s already done vs. still pending instead of re-deriving it from scratch.',
+    exampleArgs: { tasks: ['Investigate why the build is failing', 'Investigate why the tests are failing', 'Fix whatever those two turn up'] },
+    run: planTasksTool,
+  },
+  {
+    name: 'update_task',
+    describe:
+      'Marks a task ledger entry (created by plan_tasks, or the id spawn_subagent\'s result mentions) as "in_progress", "done", or "failed", with an optional short outcome summary. Call this yourself for any ledger task you work on directly (spawn_subagent already updates its own entry automatically) — a task left "pending"/"in_progress" forever is exactly the redundant-work-after-interruption problem this framework exists to prevent.',
+    exampleArgs: { id: 'task_abc123_1', status: 'done', summary: 'Build was failing due to a stale lockfile; regenerated it and the build passes now.' },
+    run: updateTaskTool,
   },
   {
     name: 'web_search',

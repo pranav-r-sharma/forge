@@ -4,6 +4,7 @@ import { ChatMessage } from '../ollama/types';
 import { UiTranscriptEntry } from '../webview/protocol';
 import { CheckpointRecord } from '../agent/checkpoints';
 import { CompactionCache } from '../agent/contextManager';
+import { TaskLedgerEntry } from '../agent/taskLedger';
 import { logger } from '../util/logger';
 
 export type ForgeMode = 'agent' | 'ask' | 'plan' | 'auto' | 'outcome';
@@ -27,12 +28,16 @@ export interface StoredSession {
   titleManuallySet?: boolean;
   /** Per-chat context-window override (item "tweak context limits per chat") — undefined means "use forge.numCtx". See ChatSession.setNumCtxOverride(). */
   numCtxOverride?: number;
+  /** Mandatory checkpoint-progress framework (item 4a/4b) — see agent/taskLedger.ts. Always present once at least one task has ever been recorded (via plan_tasks or an auto-instrumented spawn_subagent call, in ANY mode); undefined/empty for a chat that's never used either. */
+  taskLedger?: TaskLedgerEntry[];
+  /** Orchestration mode toggle (item 4c) — see ChatSession.orchestrationEnabled. Per-chat, off by default; changes the system prompt's instructions on HOW to use the (always-available) task-ledger/spawn_subagent tools, not their availability. */
+  orchestrationEnabled?: boolean;
 }
 
 /** One line of the append-only `.forge/chat/<id>.log.jsonl` crash-recovery log — see item "Logging of important decisions/actions". */
 export interface LogEntry {
   ts: string;
-  kind: 'user' | 'tool_call' | 'tool_result' | 'final' | 'error' | 'checkpoint' | 'mode_change' | 'verify' | 'memory_review';
+  kind: 'user' | 'tool_call' | 'tool_result' | 'final' | 'error' | 'checkpoint' | 'mode_change' | 'verify' | 'memory_review' | 'task';
   detail: string;
 }
 
@@ -531,6 +536,46 @@ export class ChatStore {
     return `## Project log (from .forge/project-log.md — a running, cross-chat record of what's already happened in this project; use it as context, and don't repeat work it says is already done)\n${kept.join('\n')}${omitted > 0 ? `\n(${omitted} earlier entries omitted — see .forge/project-log.md)` : ''}`;
   }
 
+  /**
+   * Item 4b: "create a mandatory log of each individual task." Appends one
+   * human-readable Markdown entry to `.forge/chat/<id>.tasks.md` every time
+   * a task-ledger entry changes status (see agent/taskLedger.ts,
+   * ChatSession's taskLedger wiring). This is the "document of their
+   * outcome" ask 4c specifically calls for when a sub-agent finishes a
+   * delegated task, generalized to every ledger task regardless of whether
+   * it came from a sub-agent or the main agent's own update_task call.
+   *
+   * Deliberately separate from BOTH the per-session JSONL crash-recovery
+   * log (appendLog(), which also gets a terse 'task' entry for the same
+   * event — that one's for machine reconstruction after data loss) and the
+   * workspace-wide `.forge/project-log.md` (appendProjectLog(), a
+   * cross-chat one-liner digest) — this file is per-chat, per-task, and
+   * meant to be actually read: a running record of what each individual
+   * piece of delegated/tracked work actually accomplished, in enough detail
+   * to answer "did we already do this" without reopening the whole chat
+   * transcript. Best-effort/append-only, same reasoning as the other two:
+   * a logging failure must never break the turn that just completed.
+   */
+  async appendTaskReport(sessionId: string, entry: { id: string; description: string; status: string; summary?: string; parentTaskId?: string }): Promise<void> {
+    try {
+      const dir = vscode.Uri.joinPath(this.chatDir);
+      await vscode.workspace.fs.createDirectory(dir);
+      const path = vscode.Uri.joinPath(dir, `${sessionId}.tasks.md`).fsPath;
+      const stamp = new Date().toISOString();
+      const heading = `## [${stamp}] ${entry.status.toUpperCase()} — ${entry.description}`;
+      const meta = `id: \`${entry.id}\`${entry.parentTaskId ? ` · parent: \`${entry.parentTaskId}\`` : ''}`;
+      const body = entry.summary ? `\n\n${entry.summary}` : '';
+      const section = `${heading}\n${meta}${body}\n\n`;
+      await fs.promises.appendFile(path, section, 'utf8');
+    } catch (err) {
+      logger.warn('Failed to append task report', String(err));
+    }
+  }
+
+  taskReportPath(sessionId: string): string {
+    return vscode.Uri.joinPath(this.chatDir, `${sessionId}.tasks.md`).fsPath;
+  }
+
   async delete(id: string): Promise<void> {
     return this.enqueue(async () => {
       try {
@@ -545,6 +590,11 @@ export class ChatStore {
       }
       try {
         await vscode.workspace.fs.delete(vscode.Uri.joinPath(this.chatDir, `${id}.log.jsonl`));
+      } catch {
+        /* already gone / never existed */
+      }
+      try {
+        await vscode.workspace.fs.delete(vscode.Uri.joinPath(this.chatDir, `${id}.tasks.md`));
       } catch {
         /* already gone / never existed */
       }

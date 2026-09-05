@@ -39,6 +39,18 @@ export function buildSystemPrompt(
     mcpTools?: { name: string; describe: string; exampleArgs: Record<string, any> }[];
     /** See agent/structuredOutput.ts — swaps the fenced-```forge_action``` text contract for a JSON-envelope one when forge.structuredOutput.enabled is on. Never applies in Plan mode (no tools, always plain text either way). */
     structuredOutput?: boolean;
+    /**
+     * Item 4c: per-chat orchestration-mode toggle (ChatSession.orchestrationEnabled).
+     * Never applies in Ask/Plan (no write/delegate tools there anyway).
+     * Doesn't change WHICH tools are available — plan_tasks/update_task/
+     * spawn_subagent are already available in every autonomous mode
+     * regardless of this flag (see modes.ts's ALL_TOOLS and
+     * agent/taskLedger.ts's doc comment on why the ledger is "mandatory," not
+     * opt-in) — it only changes the system prompt's INSTRUCTIONS on how to
+     * approach the turn: decompose first, delegate sequentially, track
+     * progress explicitly, rather than doing everything inline itself.
+     */
+    orchestrationEnabled?: boolean;
   }
 ): string {
   const allowed = new Set(toolsAllowedInMode(mode));
@@ -92,6 +104,24 @@ Rules for actions:
   if (extra?.rulesText) sections.push(extra.rulesText);
   if (extra?.planContext) sections.push(`## Approved plan for this task\n${extra.planContext}\n\nExecute this plan now, step by step, using tools as needed. Deviate from it only if you discover it's wrong, and say so.`);
 
+  // Item 4c: "an orchestration mode toggle... when on, the main agent
+  // becomes the master orchestrator and it spawns sub-agents (sequentially
+  // not parallelly) to perform tasks based on a bigger plan, the sub-agents
+  // only do the limited task, create a document of their outcome and report
+  // back to the main agent, which then determines what to do next." Note
+  // "sequentially not parallelly" needs no special enforcement here beyond
+  // telling the model to do it that way — agentLoop.ts's ReAct loop already
+  // only ever makes ONE tool call per model round-trip, so two spawn_subagent
+  // calls physically cannot happen "in parallel" within a single turn
+  // regardless of what the model intends; this instruction is about the
+  // model's PLANNING discipline (finish reacting to one sub-agent's report
+  // before deciding on/dispatching the next), not a concurrency mechanism.
+  if (extra?.orchestrationEnabled && (mode === 'agent' || mode === 'auto' || mode === 'outcome')) {
+    sections.push(
+      `## Orchestration mode is ON for this chat\nYou are the MASTER ORCHESTRATOR for this task, not the one doing the hands-on work yourself. Follow this loop:\n1. Break the user's request into a concrete list of self-contained tasks and record them immediately with plan_tasks. If a task ledger already has entries (see the task ledger below, if present) from a previous turn or an interrupted earlier attempt, build on it — do not re-plan from scratch or re-run anything already marked done.\n2. For each pending/in_progress task, delegate it to spawn_subagent ONE AT A TIME — dispatch a task, wait for its report (spawn_subagent already returns a summary and auto-updates that task's ledger entry for you), read that report, and only THEN decide what to do next. Never describe or plan multiple sub-agent dispatches as if they'll run together — you get one result before you choose the next action, every time.\n3. After each sub-agent reports back, decide: is the overall goal further along, does the plan need to change (call plan_tasks again to add newly-discovered tasks), does a task need to be retried with different instructions (a failed task is real evidence, not something to silently re-attempt identically), or is everything actually done?\n4. Reserve doing something yourself (instead of delegating it) for genuinely small, single-step work not worth a whole sub-agent — but if you do, call update_task yourself for whatever ledger entry it corresponds to, since spawn_subagent won't do that for you in that case.\n5. Only give your final answer once every task in the ledger is "done" or you've concluded (and clearly explained) that a remaining one truly can't be completed.`
+    );
+  }
+
   sections.push(
     `## Style\n- Be concise in your final answers. Prefer short explanations plus the concrete change over long essays.\n- When you finish a multi-step task, summarize what changed and what the user should check (e.g. "review the 2 proposed edits in the panel, then run the tests").\n- Match the project's existing code style, imports, and conventions — infer them from the files you read rather than imposing your own.\n- Never fabricate file contents, line numbers, or command output — only report what tools actually returned.`
   );
@@ -110,7 +140,11 @@ Rules for actions:
  * Returns '' when there's nothing to prepend, so callers can safely
  * concatenate unconditionally.
  */
-export function buildTurnContextPrefix(extra?: { memoryText?: string; projectLogText?: string; milestonesText?: string }): string {
-  const blocks = [extra?.memoryText, extra?.projectLogText, extra?.milestonesText].filter((b): b is string => !!b);
+export function buildTurnContextPrefix(extra?: { memoryText?: string; projectLogText?: string; milestonesText?: string; taskLedgerText?: string }): string {
+  // taskLedgerText last, right before the user's own message — it's the
+  // most actionable "what's already done, don't redo it" signal for
+  // whatever this specific turn is about to do, so it belongs closest to
+  // the actual request rather than buried under memory/project-log context.
+  const blocks = [extra?.memoryText, extra?.projectLogText, extra?.milestonesText, extra?.taskLedgerText].filter((b): b is string => !!b);
   return blocks.length ? blocks.join('\n\n') + '\n\n' : '';
 }
