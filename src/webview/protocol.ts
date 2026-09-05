@@ -11,12 +11,13 @@ export type UiTranscriptEntry =
   | { kind: 'user'; id: string; text: string; files?: string[]; checkpointId?: string }
   | { kind: 'assistant'; id: string; text: string; streaming?: boolean; unverifiedClaims?: string[] }
   | { kind: 'tool'; id: string; callId: string; tool: string; args: Record<string, any>; status: 'running' | 'done'; ok?: boolean; summary?: string }
-  | { kind: 'approval'; id: string; callId: string; detail: string; status: 'pending' | 'approved' | 'denied' }
+  /** `reviewKind` distinguishes what's being approved — 'command' (the original, default) or, new for cost-aware task planning, 'plan_review' (see ApprovalBroker.requestPlanApproval/agent/taskCost.ts). Optional so old, already-persisted sessions from before 'plan_review' existed still deserialize as the 'command' rendering. */
+  | { kind: 'approval'; id: string; callId: string; detail: string; status: 'pending' | 'approved' | 'denied'; reviewKind?: 'command' | 'plan_review' }
   | { kind: 'plan'; id: string; text: string; executed?: boolean }
   | { kind: 'error'; id: string; text: string }
   | { kind: 'system'; id: string; text: string }
-  /** Item "Outcome mode introduces cheap tricks bypass" — see agent/gamingDetection.ts. Advisory, not an error: the turn still completed, this is a "double-check this" flag, not a failure. */
-  | { kind: 'warning'; id: string; text: string; details: { path: string; reason: string }[] }
+  /** Generic advisory banner. `details` (per-file findings) is specific to the Outcome-mode gaming-detection scenario (agent/gamingDetection.ts) that first used this — optional so a simpler advisory (e.g. cost-aware task planning's AgentEvent 'tool_warning', agent/taskCost.ts) can use the same kind without fabricating an empty array. Advisory either way, never an error: the turn still completed, this is a "double-check this" flag, not a failure. */
+  | { kind: 'warning'; id: string; text: string; details?: { path: string; reason: string }[] }
   | { kind: 'verify'; id: string; command: string; status: 'running' | 'done'; ok?: boolean; summary?: string }
   | { kind: 'subagent'; id: string; task: string; status: 'running' | 'done'; ok?: boolean; summary?: string; depth: number };
 
@@ -80,6 +81,10 @@ export interface SettingsSnapshot {
   planFirstEnabled: boolean;
   selfCritiqueEnabled: boolean;
   bestOfNEnabled: boolean;
+  /** Cost-aware task planning (item "cost-aware task planning" — see agent/taskCost.ts). */
+  costAwarePlanningEnabled: boolean;
+  reviewExpensivePlansEnabled: boolean;
+  expensivePlanReviewThreshold: number;
   /** Snapshot of every configured MCP server's connection state — see mcp/mcpManager.ts. */
   mcpStatus: { server: string; connected: boolean; toolCount: number }[];
   webSearchEnabled: boolean;

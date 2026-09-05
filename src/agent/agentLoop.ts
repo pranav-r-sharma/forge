@@ -313,6 +313,7 @@ export async function runAgentTurn(
     proposeEdit: async (edit) => deps.pendingEdits.propose(edit, requireApprovalForWrites),
     readEffective: (uri) => deps.pendingEdits.readEffective(uri),
     requestCommandApproval: (command, callId) => deps.approvalBroker.requestCommandApproval(command, callId),
+    requestPlanApproval: (detail, callId) => deps.approvalBroker.requestPlanApproval(detail, callId),
     codebaseSearch: deps.codebaseSearch,
     rememberFact: deps.rememberFact,
     chatMemorySearch: deps.chatMemorySearch,
@@ -399,6 +400,10 @@ export async function runAgentTurn(
       requireApprovalForWrites,
       requireApprovalForCommands: autoMode ? false : cfg.requireApprovalForCommands,
       maxContextFileKB: cfg.maxContextFileKB,
+      costAwarePlanningEnabled: cfg.costAwarePlanningEnabled,
+      reviewExpensivePlansEnabled: cfg.reviewExpensivePlansEnabled,
+      expensivePlanReviewThreshold: cfg.expensivePlanReviewThreshold,
+      isAutonomousMode: autoMode,
     },
   };
 
@@ -620,6 +625,15 @@ export async function runAgentTurn(
     } catch (err: any) {
       logger.error(`tool ${call.tool} threw`, err);
       result = { ok: false, content: `Tool "${call.tool}" crashed: ${err?.message || err}` };
+    }
+
+    // Generic, non-blocking advisory from any tool (see ToolResult.warning's
+    // doc comment) — surfaced as its own visible transcript entry, not just
+    // left inside the tool's own result content. Checked unconditionally,
+    // regardless of which tool ran or whether it succeeded, so it stays a
+    // reusable extension point rather than something wired to one tool.
+    if (result.warning) {
+      emit({ type: 'tool_warning', text: result.warning });
     }
 
     if (resolvedSpec.name === 'write_file' && result.ok) {

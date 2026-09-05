@@ -84,8 +84,14 @@ export const TOOL_SPECS: ToolSpec[] = [
   {
     name: 'plan_tasks',
     describe:
-      'Mandatory checkpoint-progress framework (item "checkpoint progress so an interrupted agent picks up where it left off, not redundant work"): record one or more short task descriptions as pending entries in this chat\'s task ledger, optionally as children of an existing task id (for breaking one task into sub-steps). Use this near the start of any multi-step or multi-part piece of work — especially before spawning sub-agents (though each spawn_subagent call also auto-records its own ledger entry regardless) — so the ledger reflects your actual plan and a resumed session can see what\'s already done vs. still pending instead of re-deriving it from scratch.',
-    exampleArgs: { tasks: ['Investigate why the build is failing', 'Investigate why the tests are failing', 'Fix whatever those two turn up'] },
+      'Mandatory checkpoint-progress framework (item "checkpoint progress so an interrupted agent picks up where it left off, not redundant work"): record one or more tasks as pending entries in this chat\'s task ledger, optionally as children of an existing task id (for breaking one task into sub-steps). Use this near the start of any multi-step or multi-part piece of work — especially before spawning sub-agents (though each spawn_subagent call also auto-records its own ledger entry regardless) — so the ledger reflects your actual plan and a resumed session can see what\'s already done vs. still pending instead of re-deriving it from scratch. Each entry in "tasks" can be a bare description string, or (recommended, cost-aware planning) an object {"description", "costTier", "costNote"}: set "costTier" to "cheap" (a single file read or small localized edit), "moderate" (a few files or a moderately sized change), or "expensive" (a large refactor, many files, a migration — anything likely to take a long chain of tool calls) based on what you actually know about the task and codebase; "costNote" is an optional one-line reason. If you omit costTier, Forge estimates one from the description text as a fallback, but your own judgment is almost always better. A plan whose total estimated cost is high gets flagged to the user automatically — you don\'t need to ask about this yourself, just estimate honestly.',
+    exampleArgs: {
+      tasks: [
+        { description: 'Investigate why the build is failing', costTier: 'moderate' },
+        { description: 'Investigate why the tests are failing', costTier: 'moderate' },
+        { description: 'Refactor the shared config loader once the root cause is clear', costTier: 'expensive', costNote: 'touches every module that imports it' },
+      ],
+    },
     run: planTasksTool,
   },
   {

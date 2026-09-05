@@ -38,7 +38,18 @@ function baseDeps(workspaceRoot: vscode.Uri, events: AgentEvent[], fakeOllama: a
   const ledger = taskLedgerImpl || (() => {
     const l = new TaskLedger();
     return {
-      addTasks: (descs: string[], parentTaskId?: string) => descs.map((d) => l.add(d, parentTaskId).id),
+      // Mirrors ChatSession's real addTasks closure (src/chat/chatSession.ts)
+      // now that cost-aware task planning (0.13.0) widened the entry type to
+      // `string | {description, costTier?, costNote?}` — see test_v13_costplanning.ts
+      // for dedicated cost-tier coverage; this file only needs to not crash
+      // on the richer shape plan_tasks now sends by default.
+      addTasks: (tasks: any[], parentTaskId?: string) =>
+        tasks.map((t) => {
+          const description = typeof t === 'string' ? t : t.description;
+          const costTier = typeof t === 'string' ? undefined : t.costTier;
+          const costNote = typeof t === 'string' ? undefined : t.costNote;
+          return l.add(description, parentTaskId, costTier, costNote).id;
+        }),
       updateTask: (id: string, status: any, summary?: string) => !!l.setStatus(id, status, summary),
       list: () => l.list(),
       __ledger: l,
@@ -75,8 +86,8 @@ function testTaskLedgerCore() {
   const rendered = renderTaskLedgerForPrompt(ledger.list())!;
   ok(!!rendered, 'a non-empty ledger renders a prompt block');
   ok(/mandatory checkpoint record/i.test(rendered), 'the rendered block explains it is the mandatory checkpoint record');
-  ok(/\[~\] Investigate the build failure/.test(rendered), 'the in_progress parent task shows the [~] mark');
-  ok(/  \[x\] Check the lockfile — Lockfile was stale; regenerated\./.test(rendered), 'the done child task is indented one level (hierarchy) and shows its summary');
+  ok(/\[~\] \(\w+\) Investigate the build failure/.test(rendered), 'the in_progress parent task shows the [~] mark (plus its cost-tier tag — see test_v13_costplanning.ts)');
+  ok(/  \[x\] \(\w+\) Check the lockfile — Lockfile was stale; regenerated\./.test(rendered), 'the done child task is indented one level (hierarchy) and shows its summary');
 
   const fromRoundTrip = TaskLedger.fromJSON(JSON.parse(JSON.stringify(ledger.toJSON())));
   ok(fromRoundTrip.list().length === 2, 'TaskLedger round-trips through JSON.stringify/parse (JSON.stringify -> fromJSON) with all entries intact');
@@ -116,7 +127,13 @@ async function testPlanAndUpdateTaskTools() {
   };
   const l = new TaskLedger();
   const taskLedgerImpl = {
-    addTasks: (descs: string[], parentTaskId?: string) => descs.map((d) => l.add(d, parentTaskId).id),
+    addTasks: (tasks: any[], parentTaskId?: string) =>
+      tasks.map((t) => {
+        const description = typeof t === 'string' ? t : t.description;
+        const costTier = typeof t === 'string' ? undefined : t.costTier;
+        const costNote = typeof t === 'string' ? undefined : t.costNote;
+        return l.add(description, parentTaskId, costTier, costNote).id;
+      }),
     updateTask: (id: string, status: any, summary?: string) => !!l.setStatus(id, status, summary),
     list: () => l.list(),
   };
@@ -174,7 +191,13 @@ async function testSpawnSubAgentAutoInstrumentation() {
   };
   const l = new TaskLedger();
   const taskLedgerImpl = {
-    addTasks: (descs: string[], parentTaskId?: string) => descs.map((d) => l.add(d, parentTaskId).id),
+    addTasks: (tasks: any[], parentTaskId?: string) =>
+      tasks.map((t) => {
+        const description = typeof t === 'string' ? t : t.description;
+        const costTier = typeof t === 'string' ? undefined : t.costTier;
+        const costNote = typeof t === 'string' ? undefined : t.costNote;
+        return l.add(description, parentTaskId, costTier, costNote).id;
+      }),
     updateTask: (id: string, status: any, summary?: string) => !!l.setStatus(id, status, summary),
     list: () => l.list(),
   };

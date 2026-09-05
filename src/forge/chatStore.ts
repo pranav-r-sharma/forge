@@ -37,7 +37,7 @@ export interface StoredSession {
 /** One line of the append-only `.forge/chat/<id>.log.jsonl` crash-recovery log — see item "Logging of important decisions/actions". */
 export interface LogEntry {
   ts: string;
-  kind: 'user' | 'tool_call' | 'tool_result' | 'final' | 'error' | 'checkpoint' | 'mode_change' | 'verify' | 'memory_review' | 'task';
+  kind: 'user' | 'tool_call' | 'tool_result' | 'final' | 'error' | 'checkpoint' | 'mode_change' | 'verify' | 'memory_review' | 'task' | 'notice';
   detail: string;
 }
 

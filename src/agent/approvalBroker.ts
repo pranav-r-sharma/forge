@@ -35,6 +35,23 @@ export class ApprovalBroker {
     });
   }
 
+  /**
+   * Cost-aware task planning's blocking review gate (see
+   * agent/types.ts's ToolExecContext.requestPlanApproval doc comment) — no
+   * auto-approve bypass here, unlike requestCommandApproval: the caller
+   * (tools/taskLedgerTools.ts's planTasksTool) already decided this is worth
+   * asking about before ever calling this, so it always waits for a real
+   * answer. Shares the same `waiters` map/resolve()/cancelAll() plumbing as
+   * command approval — a "plan review" is just a different `kind` of the
+   * same underlying "block the loop until the webview answers" mechanism.
+   */
+  requestPlanApproval(detail: string, callId: string): Promise<boolean> {
+    return new Promise((resolve) => {
+      this.waiters.set(callId, resolve);
+      this.emit({ type: 'approval_request', kind: 'plan_review', callId, detail });
+    });
+  }
+
   resolve(callId: string, approved: boolean) {
     const fn = this.waiters.get(callId);
     if (fn) {

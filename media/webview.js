@@ -503,6 +503,10 @@
       ${settingRow('Require approval for commands', '', `<input id="set-requireApprovalForCommands" type="checkbox" ${s.requireApprovalForCommands ? 'checked' : ''} />`)}
       ${settingRow('Show brief status messages', 'e.g. "Reading foo.ts…" while the agent works.', `<input id="set-showStatusMessages" type="checkbox" ${s.showStatusMessages ? 'checked' : ''} />`)}
       ${settingRow('Loop detection (Auto/Outcome mode)', 'Stops the agent if it looks like it\'s repeating the same action in a loop. check_background_command is always exempt regardless of this setting. Turn off if it\'s incorrectly triggering on legitimately repetitive work.', `<input id="set-loopDetectionEnabled" type="checkbox" ${s.loopDetectionEnabled ? 'checked' : ''} />`)}
+      <div class="settings-section-title">Task ledger &amp; cost-aware planning</div>
+      ${settingRow('Cost-aware task planning', 'Estimate each planned task\'s rough cost (cheap/moderate/expensive — the model\'s own estimate when it gives one, a free keyword heuristic otherwise) so an expensive plan can be flagged before it starts. Costs no extra model calls.', `<input id="set-costAwarePlanningEnabled" type="checkbox" ${s.costAwarePlanningEnabled ? 'checked' : ''} />`)}
+      ${settingRow('Review expensive plans before starting', 'Pause for your approval when a plan\'s estimated cost crosses the threshold below. Agent mode only — Auto/Outcome never pause for approval by design, and post a non-blocking warning in the transcript instead.', `<input id="set-reviewExpensivePlansEnabled" type="checkbox" ${s.reviewExpensivePlansEnabled ? 'checked' : ''} />`)}
+      ${settingRow('Expensive-plan threshold', 'Weighted cost score (cheap=1, moderate=3, expensive=8 per task, summed) at or above which a plan is flagged. 8 ≈ one expensive task, or several moderate ones. Lower to get flagged more readily.', `<input id="set-expensivePlanReviewThreshold" type="number" min="1" step="1" value="${s.expensivePlanReviewThreshold}" />`)}
       <div class="settings-section-title">Advanced / experimental (each costs extra model calls — try, keep only what helps your model)</div>
       ${settingRow('Structured tool-call output', 'Uses Ollama\'s schema-constrained decoding for the tool-call contract instead of the fenced text block — can eliminate malformed-tool-call bugs if your model/Ollama version honor it well. Falls back automatically for any response that doesn\'t respect the schema.', `<input id="set-structuredOutputEnabled" type="checkbox" ${s.structuredOutputEnabled ? 'checked' : ''} />`)}
       ${settingRow('Plan before acting', 'One extra no-tool "think first" model call at the start of each Agent/Auto/Outcome turn, grounded with relevant codebase snippets.', `<input id="set-planFirstEnabled" type="checkbox" ${s.planFirstEnabled ? 'checked' : ''} />`)}
@@ -571,6 +575,16 @@
     // require deriving one from the other and getting it wrong silently.
     document.getElementById('set-loopDetectionEnabled').addEventListener('change', (e) => {
       vscodeApi.postMessage({ type: 'updateSetting', key: 'loopDetection.enabled', value: e.target.checked });
+    });
+    document.getElementById('set-costAwarePlanningEnabled').addEventListener('change', (e) => {
+      vscodeApi.postMessage({ type: 'updateSetting', key: 'taskLedger.costAwarePlanning', value: e.target.checked });
+    });
+    document.getElementById('set-reviewExpensivePlansEnabled').addEventListener('change', (e) => {
+      vscodeApi.postMessage({ type: 'updateSetting', key: 'taskLedger.reviewExpensivePlans', value: e.target.checked });
+    });
+    document.getElementById('set-expensivePlanReviewThreshold').addEventListener('change', (e) => {
+      const num = parseFloat(e.target.value);
+      if (Number.isFinite(num)) vscodeApi.postMessage({ type: 'updateSetting', key: 'taskLedger.expensivePlanReviewThreshold', value: num });
     });
     document.getElementById('set-structuredOutputEnabled').addEventListener('change', (e) => {
       vscodeApi.postMessage({ type: 'updateSetting', key: 'structuredOutput.enabled', value: e.target.checked });
@@ -754,7 +768,10 @@
     const failed = tasks.filter((t) => t.status === 'failed').length;
     const mark = { pending: '○', in_progress: '◐', done: '✓', failed: '✗' };
     el.orchProgress.textContent = `Tasks: ${done}/${tasks.length}${failed ? ` (${failed} failed)` : ''}`;
-    el.orchProgress.title = tasks.map((t) => `${mark[t.status] || '?'} ${t.description}${t.summary ? ` — ${t.summary}` : ''}`).join('\n');
+    // Cost-aware task planning: show each task's estimated tier in the same
+    // hover readout, right alongside its status — see agent/taskCost.ts.
+    // Absent on tasks from a session saved before this field existed.
+    el.orchProgress.title = tasks.map((t) => `${mark[t.status] || '?'} ${t.costTier ? `(${t.costTier}) ` : ''}${t.description}${t.summary ? ` — ${t.summary}` : ''}`).join('\n');
   }
 
   // ---------- tab strip (multitask) ----------
@@ -1099,10 +1116,19 @@
 
     if (entry.kind === 'approval') {
       wrap.className = 'approval-card ' + entry.status;
+      // Cost-aware task planning reuses this same card for a second kind of
+      // approval ('plan_review' — see agent/taskCost.ts) alongside the
+      // original command approval; `reviewKind` picks the label (a
+      // plan_review's `detail` is already the full multi-line plan text, so
+      // the same <code> block — pre-wrap, see webview.css — renders it fine
+      // as-is). Missing reviewKind (an old, already-persisted session) falls
+      // back to the original "Run command?" label.
+      const isPlanReview = entry.reviewKind === 'plan_review';
+      const label = isPlanReview ? 'Review this plan before it starts?' : 'Run command?';
       wrap.innerHTML = `
-        <div class="approval-detail"><span class="approval-label">Run command?</span><code>${escapeHtml(entry.detail)}</code></div>
+        <div class="approval-detail"><span class="approval-label">${label}</span><code>${escapeHtml(entry.detail)}</code></div>
         <div class="approval-actions">
-          ${entry.status === 'pending' ? `<button data-act="approve" class="approve-btn">Approve</button><button data-act="deny" class="deny-btn">Deny</button>` : `<span class="approval-status">${entry.status === 'approved' ? 'Approved' : 'Denied'}</span>`}
+          ${entry.status === 'pending' ? `<button data-act="approve" class="approve-btn">${isPlanReview ? 'Start' : 'Approve'}</button><button data-act="deny" class="deny-btn">${isPlanReview ? 'Revise plan' : 'Deny'}</button>` : `<span class="approval-status">${entry.status === 'approved' ? 'Approved' : 'Denied'}</span>`}
         </div>
       `;
       if (entry.status === 'pending') {

@@ -1,4 +1,5 @@
 import { genId } from '../util/ids';
+import { CostTier, estimateCostHeuristic, summarizePlanCost, renderPlanCostLine } from './taskCost';
 
 export type TaskStatus = 'pending' | 'in_progress' | 'done' | 'failed';
 
@@ -10,6 +11,22 @@ export interface TaskLedgerEntry {
   summary?: string;
   /** Set when this task was created as part of decomposing a bigger parent task (see plan_tasks/spawn_subagent auto-instrumentation) — lets renderTaskLedgerForPrompt() show real hierarchy instead of one flat list. */
   parentTaskId?: string;
+  /**
+   * Cost-aware task planning: a rough size estimate for this one task —
+   * 'cheap' (a single file read or small localized edit), 'moderate' (a few
+   * files or a moderately sized change), or 'expensive' (a large refactor,
+   * many files, a migration — anything likely to take a long chain of tool
+   * calls). Always populated once the entry exists (see add() below) —
+   * either the model's own estimate (plan_tasks accepts one per task) or a
+   * mechanical keyword-heuristic fallback (agent/taskCost.ts) when it
+   * doesn't provide one, the same "mandatory regardless of model
+   * discipline" treatment the rest of this ledger already gets. Optional on
+   * the TYPE only so old, already-persisted sessions from before this field
+   * existed still deserialize cleanly via fromJSON().
+   */
+  costTier?: CostTier;
+  /** Optional one-line reason for the cost estimate above (model-provided only — the heuristic fallback never sets this, it has no explanation to give). */
+  costNote?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -67,13 +84,20 @@ export class TaskLedger {
     return this.entries.find((e) => e.id === id);
   }
 
-  add(description: string, parentTaskId?: string): TaskLedgerEntry {
+  add(description: string, parentTaskId?: string, costTier?: CostTier, costNote?: string): TaskLedgerEntry {
     const now = new Date().toISOString();
+    const trimmedDescription = description.trim() || '(untitled task)';
     const entry: TaskLedgerEntry = {
       id: genId('task'),
-      description: description.trim() || '(untitled task)',
+      description: trimmedDescription,
       status: 'pending',
       parentTaskId: parentTaskId && this.get(parentTaskId) ? parentTaskId : undefined,
+      // Cost-aware task planning — see the field's own doc comment above and
+      // agent/taskCost.ts: prefer an explicit estimate (from plan_tasks'
+      // args), fall back to the mechanical heuristic so this is never left
+      // unset.
+      costTier: costTier || estimateCostHeuristic(trimmedDescription),
+      costNote: costNote?.trim() || undefined,
       createdAt: now,
       updatedAt: now,
     };
@@ -145,7 +169,12 @@ export function renderTaskLedgerForPrompt(entries: TaskLedgerEntry[]): string | 
   const lines = kept.map((e) => {
     const indent = '  '.repeat(depthOf(e, byId));
     const summarySuffix = e.summary ? ` — ${truncate(e.summary, 140)}` : '';
-    return `${indent}${STATUS_MARK[e.status]} ${truncate(e.description, 160)}${summarySuffix}`;
+    // Cost-aware task planning: every entry has a tier by the time it's in
+    // the ledger (see add() above) — old, pre-0.13.0 persisted sessions are
+    // the one case it can still be missing, hence the fallback label rather
+    // than assuming it's always present.
+    const costTag = e.costTier ? `(${e.costTier}) ` : '';
+    return `${indent}${STATUS_MARK[e.status]} ${costTag}${truncate(e.description, 160)}${summarySuffix}`;
   });
   let text = lines.join('\n');
   if (text.length > MAX_PROMPT_CHARS) {
@@ -160,9 +189,15 @@ export function renderTaskLedgerForPrompt(entries: TaskLedgerEntry[]): string | 
     text = trimmedLines.join('\n');
   }
   const unfinished = entries.filter((e) => e.status === 'pending' || e.status === 'in_progress').length;
+  // Cost-aware task planning: an at-a-glance aggregate so the model (and
+  // orchestration mode's dispatch decisions in particular) can see the
+  // overall shape of the remaining work, not just each task's own tier in
+  // isolation — see agent/taskCost.ts's summarizePlanCost()/renderPlanCostLine().
+  const stillUnfinished = entries.filter((e) => e.status === 'pending' || e.status === 'in_progress');
+  const costLine = stillUnfinished.length > 0 ? `\nRemaining task cost: ${renderPlanCostLine(summarizePlanCost(stillUnfinished))}.` : '';
   return (
     `## Task ledger (mechanically tracked — the mandatory checkpoint record of this session's task breakdown and progress). ` +
-    `If you are a fresh/resuming agent picking this session back up after an interruption, READ THIS FIRST: anything marked [x] is already done — check its summary before redoing it. [~] means it was in progress when work stopped and may need to be resumed or verified rather than restarted from scratch. [!] failed and needs a different approach, not a retry of the exact same thing.\n${text}` +
+    `If you are a fresh/resuming agent picking this session back up after an interruption, READ THIS FIRST: anything marked [x] is already done — check its summary before redoing it. [~] means it was in progress when work stopped and may need to be resumed or verified rather than restarted from scratch. [!] failed and needs a different approach, not a retry of the exact same thing. Each task's (tier) is a rough cost estimate (cheap/moderate/expensive) — where there's no dependency reason to do otherwise, prefer working through cheap tasks first so an interruption preserves the most progress.\n${text}${costLine}` +
     (omitted > 0 ? `\n(${omitted} earlier task(s) omitted — see the full ledger in session state)` : '') +
     (unfinished > 0 ? `\n(${unfinished} task(s) still pending/in-progress)` : '')
   );

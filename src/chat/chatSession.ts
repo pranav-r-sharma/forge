@@ -219,7 +219,7 @@ export class ChatSession {
     this.services.chatStore.save(this.toStored()).catch((err) => logger.warn('session persist failed', String(err)));
   }
 
-  private log(kind: 'user' | 'tool_call' | 'tool_result' | 'final' | 'error' | 'checkpoint' | 'mode_change' | 'verify' | 'memory_review' | 'task', detail: string) {
+  private log(kind: 'user' | 'tool_call' | 'tool_result' | 'final' | 'error' | 'checkpoint' | 'mode_change' | 'verify' | 'memory_review' | 'task' | 'notice', detail: string) {
     this.services.chatStore.appendLog(this.id, { ts: nowIso(), kind, detail }).catch(() => {});
   }
 
@@ -560,9 +560,16 @@ export class ChatSession {
           webFetch: cfg.webSearchEnabled ? (url, offset, length) => this.services.webFetchService.fetch(url, offset, length) : undefined,
           mcpTools: this.services.mcpManager.listToolSpecs(),
           taskLedger: {
-            addTasks: (descriptions, parentTaskId) => {
-              const ids = descriptions.map((d) => {
-                const entry = this.taskLedger.add(d, parentTaskId);
+            addTasks: (tasks, parentTaskId) => {
+              // Cost-aware task planning: each entry is either a bare string
+              // (spawn_subagent's auto-instrumentation, always
+              // heuristic-costed by TaskLedger.add() itself) or a richer
+              // {description, costTier?, costNote?} object from plan_tasks.
+              const ids = tasks.map((t) => {
+                const description = typeof t === 'string' ? t : t.description;
+                const costTier = typeof t === 'string' ? undefined : t.costTier;
+                const costNote = typeof t === 'string' ? undefined : t.costNote;
+                const entry = this.taskLedger.add(description, parentTaskId, costTier, costNote);
                 this.onTaskLedgerChanged(entry);
                 return entry.id;
               });
@@ -789,9 +796,26 @@ export class ChatSession {
       }
       case 'approval_request': {
         this.flush();
-        const entry: UiTranscriptEntry = { kind: 'approval', id: genId('ap'), callId: event.callId, detail: event.detail, status: 'pending' };
+        // Cost-aware task planning reuses this exact same broker/UI
+        // mechanism for a second, distinct kind of approval ('plan_review')
+        // — see ApprovalBroker.requestPlanApproval and taskCost.ts. `kind`
+        // just changes how the webview labels/renders the card; resolution
+        // (resolveApproval below) is identical either way.
+        const entry: UiTranscriptEntry = { kind: 'approval', id: genId('ap'), callId: event.callId, detail: event.detail, status: 'pending', reviewKind: event.kind };
         this.pushEntry(entry);
         this.post({ type: 'entry', sessionId: this.id, entry });
+        return;
+      }
+      case 'tool_warning': {
+        // Generic, non-blocking advisory from any tool (see
+        // ToolResult.warning's doc comment) — reuses the same 'warning'
+        // transcript kind gamingDetection.ts's verify-bypass notice already
+        // uses, just without the structured per-file `details` that scenario
+        // has (optional on the type — see webview/protocol.ts).
+        const entry: UiTranscriptEntry = { kind: 'warning', id: genId('warn'), text: event.text };
+        this.pushEntry(entry);
+        this.post({ type: 'entry', sessionId: this.id, entry });
+        this.log('notice', event.text.slice(0, 300));
         return;
       }
       case 'pending_edit':

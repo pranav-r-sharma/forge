@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { ChatMessage, OllamaCallMetrics } from '../ollama/types';
 import { WebFetchResult, WebSearchResult } from '../websearch/types';
+import { CostTier } from './taskCost';
 
 /** Names of every tool the agent may invoke. Kept as a union so callers get exhaustiveness checks. */
 export type ToolName =
@@ -31,6 +32,20 @@ export interface ToolResult {
   ok: boolean;
   /** Text fed back to the model as the tool's observation. */
   content: string;
+  /**
+   * Optional, generic non-blocking advisory a tool can attach alongside a
+   * successful (or failed) result — surfaced as its own visible, distinctly
+   * styled transcript entry (see AgentEvent's 'tool_warning' and
+   * agentLoop.ts's handling right after a tool call resolves), not just
+   * buried in `content`'s text. First user: cost-aware task planning's
+   * "this plan looks expensive, heads up" notice for autonomous modes that
+   * don't pause for approval (agent/taskCost.ts's renderPlanCostWarning) —
+   * kept generic rather than a bespoke event type so any future tool with a
+   * similar "didn't block, but you should know" need can reuse it, the same
+   * precedent gamingDetection.ts's verify-bypass warning already set for a
+   * different, more specific scenario.
+   */
+  warning?: string;
 }
 
 export interface PendingEdit {
@@ -52,6 +67,18 @@ export interface ToolExecContext {
   readEffective: (uri: vscode.Uri) => Promise<string | undefined>;
   /** Blocks until the user approves/denies a proposed shell command (or auto-approves per config). */
   requestCommandApproval: (command: string, callId: string) => Promise<boolean>;
+  /**
+   * Cost-aware task planning: blocks until the user approves/denies starting
+   * a plan whose aggregate estimated cost crossed forge.taskLedger.expensivePlanReviewThreshold
+   * (see agent/taskCost.ts and tools/taskLedgerTools.ts's planTasksTool).
+   * Unlike requestCommandApproval, there is no auto-approve-pattern bypass
+   * here — the CALLER (planTasksTool) already decides whether this is even
+   * worth asking (mode, the reviewExpensivePlans setting, the threshold)
+   * before ever calling this; once called, it always waits for a real
+   * answer. `detail` is the full multi-line plan-with-cost-tiers text shown
+   * in the approval card.
+   */
+  requestPlanApproval: (detail: string, callId: string) => Promise<boolean>;
   /** Semantic (embedding) or keyword-fallback search over the indexed workspace. */
   codebaseSearch: (query: string, k: number) => Promise<{ path: string; snippet: string; score: number }[]>;
   /** Item "memory": saves a durable fact to .forge/memory.md (de-duped), injected into every future system prompt. */
@@ -79,12 +106,19 @@ export interface ToolExecContext {
    * tool wrappers only ever see this narrow interface.
    */
   taskLedger: {
-    /** Creates one or more new pending tasks (optionally children of an existing one) and returns their ids. */
-    addTasks: (descriptions: string[], parentTaskId?: string) => string[];
+    /**
+     * Creates one or more new pending tasks (optionally children of an
+     * existing one) and returns their ids. Each entry is either a bare
+     * description string (spawn_subagent's auto-instrumentation call site —
+     * always heuristic-costed, see TaskLedger.add()) or, for plan_tasks'
+     * richer cost-aware call, an object carrying the model's own cost
+     * estimate.
+     */
+    addTasks: (tasks: (string | { description: string; costTier?: CostTier; costNote?: string })[], parentTaskId?: string) => string[];
     /** Updates one task's status (and optionally its outcome summary). Returns false if `id` doesn't exist. */
     updateTask: (id: string, status: 'in_progress' | 'done' | 'failed', summary?: string) => boolean;
     /** Current ledger snapshot, for the update_task tool to report back a legible confirmation and for plan_tasks to avoid creating obvious duplicates. */
-    list: () => { id: string; description: string; status: string; summary?: string; parentTaskId?: string }[];
+    list: () => { id: string; description: string; status: string; summary?: string; parentTaskId?: string; costTier?: CostTier; costNote?: string }[];
   };
   /**
    * Web search (item "a terrific web search tool"). Undefined when
@@ -112,6 +146,14 @@ export interface ToolExecContext {
     requireApprovalForWrites: boolean;
     requireApprovalForCommands: boolean;
     maxContextFileKB: number;
+    /** Cost-aware task planning (forge.taskLedger.costAwarePlanning, default true) — see tools/taskLedgerTools.ts's planTasksTool and agent/taskCost.ts. When false, plan_tasks behaves exactly as it did before this feature: no cost tiers requested/stored, no review gate. */
+    costAwarePlanningEnabled: boolean;
+    /** forge.taskLedger.reviewExpensivePlans (default true) — whether an expensive plan pauses for approval at all (in a non-autonomous mode; see isAutonomousMode below). When false, an expensive plan still gets the non-blocking ToolResult.warning notice, just never blocks. */
+    reviewExpensivePlansEnabled: boolean;
+    /** forge.taskLedger.expensivePlanReviewThreshold (default 8) — the weighted plan-cost score (see agent/taskCost.ts's COST_WEIGHTS) at or above which a plan is considered worth flagging/reviewing. */
+    expensivePlanReviewThreshold: number;
+    /** Mirrors agentLoop.ts's own `autoMode` (isAutonomousMode(options.mode)) — Auto/Outcome never pause for approval by design (see modes.ts), so an expensive plan there can only ever get the non-blocking warning, never the blocking review card. */
+    isAutonomousMode: boolean;
   };
 }
 
@@ -141,7 +183,7 @@ export type AgentEvent =
   | { type: 'tool_result'; callId: string; ok: boolean; summary: string }
   | { type: 'pending_edit'; edit: PendingEditSerialized }
   | { type: 'edit_resolved'; id: string; accepted: boolean }
-  | { type: 'approval_request'; kind: 'command'; callId: string; detail: string }
+  | { type: 'approval_request'; kind: 'command' | 'plan_review'; callId: string; detail: string }
   | { type: 'final'; text: string; unverifiedClaims?: string[] }
   | { type: 'error'; message: string }
   | { type: 'metrics'; metrics: OllamaCallMetrics }
@@ -150,6 +192,8 @@ export type AgentEvent =
   | { type: 'verify_result'; command: string; ok: boolean; summary: string }
   /** Item "Outcome mode introduces cheap tricks bypass" — see gamingDetection.ts. Emitted right after a verify_result whose check passed, only when that pass followed at least one failure and the heuristic scan flagged something in the writes made in response to it. Advisory only — never blocks the turn from completing. */
   | { type: 'verify_gaming_warning'; findings: { path: string; reason: string }[] }
+  /** Generic, non-blocking advisory from any tool's result (see ToolResult.warning's doc comment) — rendered as its own visible transcript entry distinct from the tool call it came from. First user: cost-aware task planning's "this plan is expensive, heads up" notice in autonomous modes (agent/taskCost.ts's renderPlanCostWarning). */
+  | { type: 'tool_warning'; text: string }
   | { type: 'status'; text: string; activity?: AgentActivity }
   | { type: 'subagent_start'; task: string; depth: number }
   | { type: 'subagent_result'; task: string; ok: boolean; summary: string; depth: number }

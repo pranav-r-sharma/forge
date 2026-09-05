@@ -2,7 +2,7 @@
   "name": "forge-local-agent",
   "displayName": "Forge — Local AI Coding Agent",
   "description": "A Cursor-style agentic coding assistant that runs entirely on local Ollama models. Agent/Ask/Plan modes, multitask chat tabs, .forge/rules + .forge/skills + .forge/hooks, repo-stored chat history, multi-file agent edits, inline Cmd+K editing, Tab autocomplete, and an opt-in production-grade web search/fetch tool — no cloud, no API keys, no telemetry, except web search itself if you turn it on.",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "publisher": "local-forge",
   "private": true,
   "engines": {
@@ -280,6 +280,21 @@
           "type": "number",
           "default": 3,
           "description": "How many candidates to sample when forge.bestOfN.enabled triggers (capped at 5)."
+        },
+        "forge.taskLedger.costAwarePlanning": {
+          "type": "boolean",
+          "default": true,
+          "description": "Estimate each plan_tasks entry's rough cost tier (cheap/moderate/expensive — model-provided when given, a free keyword heuristic otherwise) so the ledger shows an aggregate plan-cost figure and an expensive plan can be flagged before it starts. On by default — unlike the opt-in accuracy levers above, this costs no extra model calls. Turn off to restore plan_tasks' pre-0.13.0 behavior exactly (no cost tiers, no review gate)."
+        },
+        "forge.taskLedger.reviewExpensivePlans": {
+          "type": "boolean",
+          "default": true,
+          "description": "When a plan's estimated cost is at or above forge.taskLedger.expensivePlanReviewThreshold, pause for your approval before the agent starts on it (Agent mode only — Auto/Outcome never pause for approval by design, and get a non-blocking warning in the transcript instead). Requires forge.taskLedger.costAwarePlanning to also be on."
+        },
+        "forge.taskLedger.expensivePlanReviewThreshold": {
+          "type": "number",
+          "default": 8,
+          "description": "Weighted plan-cost score (cheap=1, moderate=3, expensive=8 per task, summed) at or above which a plan is flagged for review/warning. 8 is roughly \"one expensive task\" or \"a handful of moderate ones.\" Lower it to get flagged more readily, raise it to only flag genuinely large plans."
         },
         "forge.mcp.servers": {
           "type": "array",

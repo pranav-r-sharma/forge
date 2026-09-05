@@ -57,6 +57,25 @@ export interface ForgeConfig {
   bestOfNEnabled: boolean;
   bestOfNSamples: number;
 
+  /**
+   * Cost-aware task planning (extends the 0.12.0 mandatory task ledger — see
+   * agent/taskCost.ts): estimates each plan_tasks entry's rough cost tier
+   * (model-provided, heuristic fallback otherwise) so the ledger can show an
+   * aggregate "how big is this plan" figure and, when it crosses
+   * expensivePlanReviewThreshold, either pause for approval (non-autonomous
+   * modes, reviewExpensivePlansEnabled on) or post a visible non-blocking
+   * warning (Auto/Outcome, or reviewExpensivePlansEnabled off). On by
+   * default — unlike the opt-in accuracy levers above, this costs no extra
+   * model calls (the tier is either something the model already includes in
+   * its plan_tasks call, or a free regex heuristic), so there's little
+   * reason to default it off.
+   */
+  costAwarePlanningEnabled: boolean;
+  /** Whether an expensive plan actually pauses for approval (in a mode that isn't fully autonomous) rather than just posting the non-blocking warning. On by default, same reasoning as forge.requireApprovalForWrites/Commands defaulting on. */
+  reviewExpensivePlansEnabled: boolean;
+  /** Weighted plan-cost score (see agent/taskCost.ts's COST_WEIGHTS: cheap=1, moderate=3, expensive=8) at or above which a plan is flagged. Default 8 — roughly "one expensive task" or "several moderate ones." */
+  expensivePlanReviewThreshold: number;
+
   /** Configured MCP servers Forge connects to at startup — each one either spawned locally over stdio or reached over the network via the MCP Streamable HTTP transport, see mcp/mcpManager.ts. Empty by default (no MCP integration unless you add one). */
   mcpServers: McpServerConfig[];
 
@@ -120,6 +139,9 @@ export function getConfig(): ForgeConfig {
     selfCritiqueMinLines: cfg.get<number>('selfCritique.minLines') ?? 40,
     bestOfNEnabled: cfg.get<boolean>('bestOfN.enabled') ?? false,
     bestOfNSamples: cfg.get<number>('bestOfN.samples') ?? 3,
+    costAwarePlanningEnabled: cfg.get<boolean>('taskLedger.costAwarePlanning') ?? true,
+    reviewExpensivePlansEnabled: cfg.get<boolean>('taskLedger.reviewExpensivePlans') ?? true,
+    expensivePlanReviewThreshold: cfg.get<number>('taskLedger.expensivePlanReviewThreshold') ?? 8,
     mcpServers: cfg.get<McpServerConfig[]>('mcp.servers') || [],
     webSearchEnabled: cfg.get<boolean>('webSearch.enabled') ?? false,
     webSearchProvider: cfg.get<string>('webSearch.provider') || 'auto',
@@ -165,6 +187,9 @@ export const SETTINGS_PANEL_KEYS = [
   'selfCritique.minLines',
   'bestOfN.enabled',
   'bestOfN.samples',
+  'taskLedger.costAwarePlanning',
+  'taskLedger.reviewExpensivePlans',
+  'taskLedger.expensivePlanReviewThreshold',
   'webSearch.enabled',
   'webSearch.provider',
   'webSearch.maxResults',
