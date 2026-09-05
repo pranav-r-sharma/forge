@@ -175,6 +175,12 @@ export async function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.commands.registerCommand('forge.newChat', () => chatViewProvider.newChat()),
     vscode.commands.registerCommand('forge.focusChat', () => chatViewProvider.focus()),
+    // Item 3: "a Claude Code-like extension UI which opens separate from the
+    // file explorer/extension pane" — see ChatViewProvider.openPanel()'s doc
+    // comment for why a WebviewPanel (not the sidebar WebviewView) is the
+    // right primitive, and how it shares live session state with the
+    // sidebar view rather than being a second, separate chat.
+    vscode.commands.registerCommand('forge.openChatPanel', () => chatViewProvider.openPanel()),
     vscode.commands.registerCommand('forge.inlineEdit', async () => {
       const editor = vscode.window.activeTextEditor;
       if (!editor) return;

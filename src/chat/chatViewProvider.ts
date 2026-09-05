@@ -34,6 +34,23 @@ import { OllamaCallMetrics } from '../ollama/types';
  */
 export class ChatViewProvider implements vscode.WebviewViewProvider {
   private view: vscode.WebviewView | undefined;
+  /**
+   * Item 3: "a Claude Code-like extension UI which opens separate from the
+   * file explorer/extension pane." VS Code's sidebar view (`this.view`
+   * above) always lives in the Activity Bar's side panel alongside the file
+   * explorer — there's no API to make a WebviewView itself pop out
+   * elsewhere. A `vscode.WebviewPanel` (opened via openPanel(), see below)
+   * is the actual "separate window" primitive: it opens as its own tab in
+   * the main editor area (`ViewColumn.Beside` by default), fully detached
+   * from the sidebar, closeable/moveable/splittable like any editor tab —
+   * which is exactly how Claude Code's own terminal-based UI feels distinct
+   * from a sidebar panel. Both this and `this.view` render the SAME
+   * `getHtml()`/webview.js bundle and share every bit of session state
+   * (this.sessions, this.activeSessionId, all of `services`) — post()/
+   * notify() broadcast to whichever of the two are currently open, so
+   * they're two live views onto one shared chat, not two separate chats.
+   */
+  private panel: vscode.WebviewPanel | undefined;
   private sessions = new Map<string, ChatSession>();
   private activeSessionId: string | undefined;
   private entryIndex: WorkspaceEntryIndex;
@@ -117,7 +134,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       localResourceRoots: [vscode.Uri.joinPath(this.context.extensionUri, 'media')],
     };
     webviewView.webview.html = this.getHtml(webviewView.webview);
-    webviewView.webview.onDidReceiveMessage((msg: WebviewToExtensionMessage) => this.handleMessage(msg));
+    webviewView.webview.onDidReceiveMessage((msg: WebviewToExtensionMessage) => this.handleMessage(msg, webviewView.webview));
     webviewView.onDidDispose(() => {
       if (this.view === webviewView) this.view = undefined;
     });
@@ -125,6 +142,49 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
   focus() {
     this.view?.show?.(true);
+  }
+
+  /**
+   * Item 3: opens (or, if already open, reveals/refocuses) the detached
+   * "Forge" panel — see the `panel` field's doc comment above for why this
+   * is the actual "separate from the sidebar" primitive. Registered as the
+   * **Forge: Open Chat in New Panel** command (see commands.ts/package.json)
+   * and, for discoverability, a title-bar icon on the sidebar view itself —
+   * the same "pop out into its own tab" affordance most editors offer for a
+   * side panel.
+   */
+  openPanel() {
+    if (this.panel) {
+      this.panel.reveal(this.panel.viewColumn ?? vscode.ViewColumn.Beside);
+      return;
+    }
+    const panel = vscode.window.createWebviewPanel(
+      'forge.chatPanel',
+      'Forge',
+      { viewColumn: vscode.ViewColumn.Beside, preserveFocus: false },
+      {
+        enableScripts: true,
+        // Keeps the panel's DOM (composer draft, scroll position, streaming
+        // state) alive when it's not the focused editor tab — same reasoning
+        // as the sidebar view's identical option in extension.ts, and doubly
+        // important here since a detached panel is much more likely to be
+        // backgrounded behind other editor tabs than the always-visible
+        // sidebar is.
+        retainContextWhenHidden: true,
+        localResourceRoots: [vscode.Uri.joinPath(this.context.extensionUri, 'media')],
+      }
+    );
+    try {
+      panel.iconPath = vscode.Uri.joinPath(this.context.extensionUri, 'media', 'activitybar-icon.svg');
+    } catch {
+      /* cosmetic only — a missing icon must never prevent the panel from opening */
+    }
+    panel.webview.html = this.getHtml(panel.webview);
+    panel.webview.onDidReceiveMessage((msg: WebviewToExtensionMessage) => this.handleMessage(msg, panel.webview));
+    panel.onDidDispose(() => {
+      if (this.panel === panel) this.panel = undefined;
+    });
+    this.panel = panel;
   }
 
   async addFileToContext(uri: vscode.Uri) {
@@ -175,8 +235,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     }
   }
 
+  /** Broadcasts to every currently-open webview host — the sidebar view and/or the detached panel (item 3), whichever exist. A message meant for only ONE specific host (the 'init' response to that host's own 'ready') goes straight to that webview's postMessage instead — see sendInit()'s `target` param. */
   private post(message: ExtensionToWebviewMessage) {
     this.view?.webview.postMessage(message);
+    this.panel?.webview.postMessage(message);
   }
 
   private async pushSessionsList() {
@@ -256,10 +318,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     return this.activeSessionId ? this.sessions.get(this.activeSessionId) : undefined;
   }
 
-  private async handleMessage(msg: WebviewToExtensionMessage) {
+  private async handleMessage(msg: WebviewToExtensionMessage, sourceWebview?: vscode.Webview) {
     switch (msg.type) {
       case 'ready':
-        await this.sendInit();
+        // Item 3 (detached panel): target only the webview that just loaded
+        // — see sendInit()'s doc comment for why a broadcast here would be
+        // wrong once two webview hosts can be open at once.
+        await this.sendInit(sourceWebview);
         return;
       case 'send':
         await this.activeSession()?.send(msg.text, msg.files || []);
@@ -670,7 +735,17 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     };
   }
 
-  private async sendInit() {
+  /**
+   * Builds and sends the full `init` payload. `target`, when given, sends
+   * ONLY to that one webview (used for a newly-opened detached panel's own
+   * 'ready' handshake — see openPanel()/handleMessage()'s 'ready' case) so
+   * opening a second window onto the same session doesn't also re-push
+   * `init` into the sidebar view and reset whatever it was mid-render doing.
+   * Without a target, broadcasts to every currently-open webview host (the
+   * sidebar view and/or the detached panel, whichever exist) via post() —
+   * used for the original single-webview activation path.
+   */
+  private async sendInit(target?: vscode.Webview) {
     const cfg = getConfig();
     const health = await this.ollama.health();
     let models: { name: string; paramSize?: string }[] = [];
@@ -732,7 +807,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         : { id: 'none', title: 'New chat', mode: 'agent', model: '', busy: false, history: [], checkpoints: [], taskLedger: [], orchestrationEnabled: false },
       hwStatus: await this.buildHwStatus(),
     };
-    this.post({ type: 'init', state });
+    if (target) target.postMessage({ type: 'init', state });
+    else this.post({ type: 'init', state });
   }
 
   private getHtml(webview: vscode.Webview): string {

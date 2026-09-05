@@ -47,6 +47,19 @@ declare module 'vscode' {
   export type WebviewViewProvider = any;
   export type WebviewViewResolveContext = any;
   export type WebviewOptions = any;
+  // Item 3 (detached panel, 0.12.0): the shim only needs enough shape for
+  // ChatViewProvider.openPanel() to type-check against — the real
+  // @types/vscode declares far more (title-changing, active/visible state
+  // events, etc.) that this project doesn't use.
+  export type WebviewPanel = {
+    webview: Webview;
+    viewColumn: ViewColumn | undefined;
+    iconPath: any;
+    reveal(viewColumn?: ViewColumn, preserveFocus?: boolean): void;
+    onDidDispose: Event<void>;
+    dispose(): void;
+    [key: string]: any;
+  };
   export type OutputChannel = any;
   export type StatusBarItem = any;
   export type WorkspaceEdit = any;
@@ -111,6 +124,7 @@ declare module 'vscode' {
     createTextEditorDecorationType(opts: any): any;
     withProgress<T>(options: any, task: (progress: any, token: CancellationToken) => Thenable<T>): Thenable<T>;
     registerWebviewViewProvider(...args: any[]): Disposable;
+    createWebviewPanel(viewType: string, title: string, showOptions: any, options?: any): WebviewPanel;
     createTerminal(...args: any[]): Terminal;
     terminals: Terminal[];
     [key: string]: any;

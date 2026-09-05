@@ -62,7 +62,8 @@
       { "command": "forge.setWebSearchApiKey", "title": "Forge: Set Web Search API Key" },
       { "command": "forge.openTerminal", "title": "Forge: Open Terminal" },
       { "command": "forge.exportAllChats", "title": "Forge: Export All Chats" },
-      { "command": "forge.reloadMcpServers", "title": "Forge: Reload MCP Servers" }
+      { "command": "forge.reloadMcpServers", "title": "Forge: Reload MCP Servers" },
+      { "command": "forge.openChatPanel", "title": "Forge: Open Chat in New Panel (detached from sidebar)", "icon": "$(link-external)" }
     ],
     "menus": {
       "editor/context": [
@@ -74,7 +75,8 @@
       ],
       "view/title": [
         { "command": "forge.newChat", "when": "view == forge.chatView", "group": "navigation" },
-        { "command": "forge.indexWorkspace", "when": "view == forge.chatView", "group": "navigation" }
+        { "command": "forge.indexWorkspace", "when": "view == forge.chatView", "group": "navigation" },
+        { "command": "forge.openChatPanel", "when": "view == forge.chatView", "group": "navigation" }
       ]
     },
     "keybindings": [
