@@ -325,19 +325,32 @@ function testDetectIndentMismatch() {
   ok(!detectIndentMismatch(tabFile, 'return 2;'), 'a replacement with no indentation of its own (can\'t tell) is not flagged as a mismatch');
 }
 
-async function testWriteFileToolSurfacesIndentAdvisory() {
+// NOTE (0.12.0): this test used to be testWriteFileToolSurfacesIndentAdvisory
+// and asserted 0.10.0's advisory-only behavior — a tabs/spaces mismatch here
+// was merely flagged with a "Heads up" note while the mismatched indentation
+// still landed on disk as-is. 0.12.0 replaces that with a real fix
+// (reindentReplacement() in fileTools.ts): a confidently-interpretable
+// mismatch like this one (a single, internally-consistent line) is now
+// actually remapped onto the file's tab-indented scheme before writing, and
+// the tool result notes that it did so instead of just warning. Updated in
+// place to match rather than left asserting the stale behavior — see
+// test_v12_indent.ts for the new reindentation behavior's dedicated coverage.
+async function testWriteFileToolAutoFixesIndentMismatch() {
   const existing = '\tfunction foo() {\n\t\treturn 1;\n\t}\n';
+  let written: any;
   const ctx: any = {
     workspaceRoot: vscode.Uri.file(process.cwd()),
     readEffective: async () => existing,
-    proposeEdit: async (edit: any) => ({ id: 'e1', applied: true }),
+    proposeEdit: async (edit: any) => { written = edit; return { id: 'e1', applied: true }; },
   };
   const result = await writeFileTool(
     { path: 'foo.ts', search: '\t\treturn 1;', replace: '        return 2;' },
     ctx
   );
-  ok(result.ok === true, 'the edit still succeeds — the advisory is informational, never blocking');
-  ok(/Heads up/.test(result.content), `the tool result carries the whitespace-mismatch advisory (got ${JSON.stringify(result.content)})`);
+  ok(result.ok === true, 'the edit still succeeds');
+  ok(!!written && written.newText === '\tfunction foo() {\n\t\treturn 2;\n\t}\n', `the space-indented "replace" was actually remapped onto the file's tab indentation before writing, not left mismatched on disk (got ${JSON.stringify(written?.newText)})`);
+  ok(!/Heads up/.test(result.content), 'the old advisory-only "Heads up" wording no longer appears once the mismatch was actually fixed');
+  ok(/Note:.*automatically remapped/.test(result.content), `the tool result instead notes that the indentation was automatically fixed (got ${JSON.stringify(result.content)})`);
 }
 
 async function testWriteFileToolNoAdvisoryWhenIndentMatches() {
@@ -472,7 +485,7 @@ async function main() {
 
   testDominantIndentChar();
   testDetectIndentMismatch();
-  await testWriteFileToolSurfacesIndentAdvisory();
+  await testWriteFileToolAutoFixesIndentMismatch();
   await testWriteFileToolNoAdvisoryWhenIndentMatches();
 
   testSystemPromptIncludesProjectLogWhenProvided();

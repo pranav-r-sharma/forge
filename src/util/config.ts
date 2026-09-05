@@ -57,7 +57,7 @@ export interface ForgeConfig {
   bestOfNEnabled: boolean;
   bestOfNSamples: number;
 
-  /** Configured MCP servers Forge spawns and connects to at startup — see mcp/mcpManager.ts. Empty by default (no MCP integration unless you add one). */
+  /** Configured MCP servers Forge connects to at startup — each one either spawned locally over stdio or reached over the network via the MCP Streamable HTTP transport, see mcp/mcpManager.ts. Empty by default (no MCP integration unless you add one). */
   mcpServers: McpServerConfig[];
 
   // ---------- web search (item "a terrific web search tool") ----------

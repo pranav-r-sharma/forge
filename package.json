@@ -282,16 +282,18 @@
         "forge.mcp.servers": {
           "type": "array",
           "default": [],
-          "description": "MCP servers Forge spawns and connects to at startup, exposing their tools to the agent natively (namespaced as mcp_<server>_<tool>, approval-gated like run_command). Each entry: {\"name\": \"my-server\", \"command\": \"npx\", \"args\": [\"-y\", \"@some/mcp-server\"], \"env\": {\"API_KEY\": \"...\"}}. Changing this requires \"Forge: Reload MCP Servers\" to take effect. Note env values here live in plain settings.json, not VS Code's SecretStorage — see README's Known limitations before putting a real secret in a shared/synced settings file.",
+          "description": "MCP servers Forge connects to at startup, exposing their tools to the agent natively (namespaced as mcp_<server>_<tool>, approval-gated like run_command). Each entry is EITHER a stdio server Forge spawns as a child process, OR a network-reachable server Forge connects to over the MCP \"Streamable HTTP\" transport — set exactly one of \"command\" or \"url\", never both. stdio example: {\"name\": \"my-server\", \"command\": \"npx\", \"args\": [\"-y\", \"@some/mcp-server\"], \"env\": {\"API_KEY\": \"...\"}}. HTTP example: {\"name\": \"my-http-server\", \"url\": \"https://mcp.example.com/mcp\", \"headers\": {\"Authorization\": \"Bearer ...\"}} — the server must speak the MCP Streamable HTTP transport (JSON-RPC 2.0 POSTed to that single endpoint, responding with either application/json or text/event-stream; an Mcp-Session-Id response header, if sent, is echoed back on subsequent requests). Changing this requires \"Forge: Reload MCP Servers\" to take effect. Note env/headers values here live in plain settings.json, not VS Code's SecretStorage — see README's Known limitations before putting a real secret in a shared/synced settings file.",
           "items": {
             "type": "object",
-            "required": ["name", "command"],
+            "required": ["name"],
             "properties": {
               "name": { "type": "string", "description": "Short identifier used to namespace this server's tools." },
-              "command": { "type": "string", "description": "Executable to spawn (e.g. \"npx\", \"node\", \"python\", or an absolute path)." },
-              "args": { "type": "array", "items": { "type": "string" } },
-              "cwd": { "type": "string" },
-              "env": { "type": "object" }
+              "command": { "type": "string", "description": "stdio transport: executable to spawn (e.g. \"npx\", \"node\", \"python\", or an absolute path). Set this OR \"url\", never both." },
+              "args": { "type": "array", "items": { "type": "string" }, "description": "stdio transport: arguments passed to \"command\"." },
+              "cwd": { "type": "string", "description": "stdio transport: working directory for the spawned process." },
+              "env": { "type": "object", "description": "stdio transport: extra environment variables merged into the spawned process's environment." },
+              "url": { "type": "string", "description": "HTTP transport: endpoint of an MCP server speaking the Streamable HTTP transport. Set this OR \"command\", never both." },
+              "headers": { "type": "object", "description": "HTTP transport: extra HTTP headers sent with every request to \"url\" (e.g. an Authorization bearer token)." }
             }
           }
         }

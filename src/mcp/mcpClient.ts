@@ -30,19 +30,36 @@ export interface McpCallResult {
 }
 
 /**
+ * The subset of McpClient/McpHttpClient's surface mcpManager.ts actually
+ * needs — lets doStart() treat a stdio-spawned server and an HTTP-connected
+ * one identically once construction has picked the right concrete class.
+ */
+export interface McpClientLike {
+  readonly name: string;
+  connect(): Promise<void>;
+  listTools(): Promise<McpToolInfo[]>;
+  callTool(toolName: string, args: Record<string, any>): Promise<McpCallResult>;
+  dispose(): void;
+}
+
+/**
  * A minimal, hand-written MCP client speaking JSON-RPC 2.0 over a spawned
  * process's stdio — no `@modelcontextprotocol/sdk` dependency, consistent
  * with Forge's zero-runtime-npm-dependency policy (see README/CHANGELOG;
  * this is the same reasoning that kept the Ollama client on bare `fetch`).
  * The wire format (newline-delimited JSON-RPC messages over stdin/stdout) is
  * simple enough that a from-scratch client is a few dozen lines, not a
- * dependency.
+ * dependency. For a network-reachable server instead of a local child
+ * process, see mcpHttpClient.ts's McpHttpClient, which speaks the MCP
+ * "Streamable HTTP" transport but otherwise mirrors this class's behavior
+ * (timeouts, error surfacing, disposal) closely enough that mcpManager.ts
+ * treats the two interchangeably via McpClientLike.
  *
  * One instance per configured server (see mcpManager.ts, which owns the
  * lifecycle of all of them). Not reused across "reload MCP servers" — a
  * reload disposes every client and constructs fresh ones.
  */
-export class McpClient {
+export class McpClient implements McpClientLike {
   private child: SpawnedProcess | undefined;
   private buffer = '';
   private nextId = 1;
@@ -50,7 +67,9 @@ export class McpClient {
   private closed = false;
   private closeReason: string | undefined;
 
-  constructor(private config: McpServerConfig) {}
+  constructor(private config: McpServerConfig) {
+    if (!config.command) throw new Error(`MCP server "${config.name}" is missing "command" (McpClient requires a stdio server config).`);
+  }
 
   get name(): string {
     return this.config.name;

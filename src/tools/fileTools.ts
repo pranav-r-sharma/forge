@@ -125,6 +125,7 @@ export async function writeFileTool(args: Record<string, any>, ctx: ToolExecCont
   let newText: string;
   let kind: 'create' | 'modify';
   let indentAdvisory: string | undefined;
+  let reindentAdvisory: string | undefined;
   let fuzzyMatchAdvisory: string | undefined;
 
   if (hasSearchReplace) {
@@ -133,6 +134,7 @@ export async function writeFileTool(args: Record<string, any>, ctx: ToolExecCont
     }
     const search: string = args.search;
     const occurrences = countOccurrences(existing, search);
+    let reindent: ReindentResult;
     if (occurrences === 0) {
       // Local models are weaker than frontier ones at reproducing a file's
       // exact whitespace/indentation byte-for-byte, and that's exactly the
@@ -145,7 +147,11 @@ export async function writeFileTool(args: Record<string, any>, ctx: ToolExecCont
       // for the (deliberate) scope limits of this fallback.
       const fuzzyMatches = findFuzzyLineMatches(existing, search);
       if (fuzzyMatches.length === 1) {
-        newText = applyFuzzyMatch(existing, fuzzyMatches[0], args.replace);
+        // Fuzzy matches are always whole lines (see findFuzzyLineMatches's
+        // doc comment), so the matched region always starts at that line's
+        // very first column — matchStartsAtLineStart is unconditionally true.
+        reindent = reindentReplacement(existing, fuzzyMatches[0].startLine, true, args.replace);
+        newText = applyFuzzyMatch(existing, fuzzyMatches[0], reindent.text);
         kind = 'modify';
         fuzzyMatchAdvisory =
           'Note: "search" did not match this file\'s content byte-for-byte, but matched once the whitespace/indentation on each line was normalized, so the edit was applied at that location anyway. Double-check the resulting indentation in the diff before treating this as done — copy it from the surrounding lines if it looks off.';
@@ -166,17 +172,37 @@ export async function writeFileTool(args: Record<string, any>, ctx: ToolExecCont
         content: `The "search" text matches ${occurrences} places in ${relPath}, which is ambiguous. Include more surrounding context so it uniquely identifies one location.`,
       };
     } else {
-      newText = existing.replace(search, () => args.replace);
+      const matchIndex = existing.indexOf(search);
+      const matchStartLineIndex = existing.slice(0, matchIndex).split('\n').length - 1;
+      const lineStartIndex = existing.lastIndexOf('\n', matchIndex - 1) + 1;
+      // Whether the match begins right at (or after only whitespace on) the
+      // start of its line — i.e. whether "this line's indentation" is even a
+      // meaningful concept to re-anchor the replacement onto. A "search" that
+      // matches mid-line (a sub-line fragment following real code on the same
+      // line) has no such anchor; see reindentReplacement()'s doc comment.
+      const matchStartsAtLineStart = /^[ \t]*$/.test(existing.slice(lineStartIndex, matchIndex));
+      reindent = reindentReplacement(existing, matchStartLineIndex, matchStartsAtLineStart, args.replace);
+      newText = existing.replace(search, () => reindent.text);
       kind = 'modify';
     }
     // Item "whitespace and indentation issues when doing targeted writes to
-    // existing files": advisory only — never blocks the edit or mutates
-    // newText, since a false positive (e.g. a one-line replacement with no
-    // indentation of its own) must never stop a legitimate edit. This just
-    // surfaces a heads-up in the tool result so the model (or a human
-    // reviewing the proposed diff) notices a likely tabs/spaces mismatch
-    // instead of it silently landing in the file.
-    indentAdvisory = detectIndentMismatch(existing, args.replace);
+    // existing files": reindentReplacement() above already does the real
+    // fix — it remaps "replace"'s leading whitespace onto the file's actual
+    // indent scheme, preserving the replace block's own relative nesting, and
+    // writes the corrected text to disk. detectIndentMismatch() is now only
+    // consulted as a residual advisory for the narrow case where
+    // reindentReplacement() declined to touch anything (mid-line match, a
+    // file with no indentation to sniff a scheme from, or "replace" text
+    // whose own indentation is too internally inconsistent to confidently
+    // reinterpret) — surfacing a heads-up instead of silently risking a
+    // corrupted edit. When reindentReplacement() DID confidently rewrite
+    // something, we note that instead so the diff isn't a silent surprise.
+    if (!reindent.reindented) {
+      indentAdvisory = detectIndentMismatch(existing, args.replace);
+    } else if (reindent.text !== args.replace) {
+      reindentAdvisory =
+        'Note: the indentation in "replace" didn\'t match this file\'s indent style, so it was automatically remapped (same relative nesting, this file\'s tabs/spaces and width) before writing — worth a glance at the diff to confirm it landed the way you intended.';
+    }
   } else if (typeof args.content === 'string') {
     newText = args.content;
     kind = existing === undefined ? 'create' : 'modify';
@@ -204,7 +230,7 @@ export async function writeFileTool(args: Record<string, any>, ctx: ToolExecCont
 
   const verb = kind === 'create' ? 'Created' : 'Updated';
   const verbPending = kind === 'create' ? 'creating' : 'updating';
-  const advisories = [fuzzyMatchAdvisory, indentAdvisory, balanceAdvisory].filter(Boolean);
+  const advisories = [fuzzyMatchAdvisory, reindentAdvisory, indentAdvisory, balanceAdvisory].filter(Boolean);
   const advisorySuffix = advisories.length ? `\n\n${advisories.join('\n\n')}` : '';
   return {
     ok: true,
@@ -330,11 +356,227 @@ export function dominantIndentChar(text: string): DominantIndent {
 }
 
 /**
+ * Estimates the number of spaces per indent level in a space-indented text,
+ * as the GCD of the distinct leading-space counts across its lines. Only
+ * lines whose leading whitespace is PURELY spaces (no tab mixed in right
+ * after the spaces) get to vote — a line with mixed leading whitespace can't
+ * cleanly attest to a pure-space width. Returns undefined when no width can
+ * be confidently estimated (no clean space-indented lines at all), which
+ * callers should treat the same as "can't tell" rather than guessing a
+ * default. Exported for direct unit testing.
+ */
+export function estimateSpaceIndentWidth(text: string): number | undefined {
+  const counts = new Set<number>();
+  for (const line of text.split('\n')) {
+    if (line.trim() === '') continue;
+    let i = 0;
+    while (i < line.length && line[i] === ' ') i++;
+    if (i === 0 || line[i] === '\t') continue; // unindented, or mixed leading whitespace — not a clean sample
+    counts.add(i);
+  }
+  if (counts.size === 0) return undefined;
+  let width = 0;
+  for (const c of counts) width = gcd(width, c);
+  return width > 0 ? width : undefined;
+}
+
+function gcd(a: number, b: number): number {
+  while (b) {
+    [a, b] = [b, a % b];
+  }
+  return a;
+}
+
+/** A resolved single indent unit: either one tab, or N spaces. */
+interface IndentUnit {
+  char: 'tab' | 'space';
+  width: number; // 1 for tabs; the estimated per-level space count for spaces
+}
+
+/** The literal string for one level of `unit`'s indentation. */
+function indentUnitString(unit: IndentUnit): string {
+  return unit.char === 'tab' ? '\t' : ' '.repeat(unit.width);
+}
+
+/**
+ * Combines dominantIndentChar() with estimateSpaceIndentWidth() into the
+ * single indent unit reindentReplacement() re-bases text onto. Returns
+ * undefined when `text` has no indented lines to sniff a scheme from at all,
+ * or (space-dominant case) no line cleanly attests to a width — both "can't
+ * tell" cases callers must treat as a reason to skip reindentation, not a
+ * reason to assume a default like 2 or 4.
+ */
+function resolveIndentUnit(text: string): IndentUnit | undefined {
+  const dominant = dominantIndentChar(text);
+  if (dominant === 'none') return undefined;
+  if (dominant === 'tab') return { char: 'tab', width: 1 };
+  const width = estimateSpaceIndentWidth(text);
+  return width === undefined ? undefined : { char: 'space', width };
+}
+
+/** Peels as many copies of `unit` as possible off the front of `leadingWs`, returning how many were peeled (the indent depth) and whatever's left over (ideally empty — a non-empty remainder means `leadingWs` isn't a clean whole number of `unit`s). */
+function peelIndentDepth(leadingWs: string, unit: string): { depth: number; remainder: string } {
+  let depth = 0;
+  let rest = leadingWs;
+  while (unit.length > 0 && rest.startsWith(unit)) {
+    depth++;
+    rest = rest.slice(unit.length);
+  }
+  return { depth, remainder: rest };
+}
+
+const LEADING_WS_RE = /^[ \t]*/;
+
+/**
+ * Cheap, backtick-only template-literal tracker: for each line of `text`,
+ * reports whether that line STARTS inside an open template literal (i.e. a
+ * `` ` `` opened on some earlier line hasn't been closed yet). Lines that
+ * open and close a template literal within themselves are not flagged — only
+ * a line whose OWN leading whitespace is actually part of the literal's
+ * string content, where touching it would change the file's behavior, not
+ * just its formatting.
+ *
+ * Deliberately narrow: doesn't understand escaped backticks inside a
+ * `${...}` interpolation, and doesn't special-case other multi-line string
+ * forms (Python triple-quotes, HEREDOCs, etc.) — a known, accepted
+ * limitation rather than a general lexer. Good enough to stop reindentation
+ * from corrupting the common case (a multi-line template literal in the
+ * "replace" text) without the cost of a real parser.
+ */
+function templateLiteralLineStartMask(text: string): boolean[] {
+  const lines = text.split('\n');
+  const mask: boolean[] = [];
+  let inTemplate = false;
+  for (const line of lines) {
+    mask.push(inTemplate);
+    for (let i = 0; i < line.length; i++) {
+      if (line[i] === '`' && line[i - 1] !== '\\') inTemplate = !inTemplate;
+    }
+  }
+  return mask;
+}
+
+/** Result of attempting to reindent a "replace" block onto a file's indent scheme. */
+export interface ReindentResult {
+  /** The text to actually write — either remapped, or `replaceText` unchanged when reindenting wasn't confidently possible. */
+  text: string;
+  /** True when `text` was actually remapped onto the file's indent scheme. */
+  reindented: boolean;
+}
+
+/**
+ * Real fix for "whitespace and indentation issues when doing targeted writes
+ * to existing files" (0.10.0 shipped only an advisory warning for this —
+ * this is what actually corrects it): remaps `replaceText`'s leading
+ * whitespace onto the file's actual indent scheme (tab, or N spaces),
+ * anchored at the indentation of the matched region's first line, while
+ * PRESERVING the replace block's own relative nesting — a line that's two
+ * levels deeper than replaceText's own first line stays two levels deeper
+ * after remapping, just expressed in the file's indent unit.
+ *
+ * Algorithm:
+ *  1. Sniff the file's indent unit via resolveIndentUnit(originalFileText).
+ *     If the file has no indentation to sniff (or `matchStartsAtLineStart`
+ *     is false — the match begins mid-line, after real code, so "this
+ *     line's indentation" isn't a meaningful anchor at all), there's nothing
+ *     confident to re-base onto: return replaceText untouched.
+ *  2. Take the literal leading whitespace of the matched region's first line
+ *     in the ORIGINAL file as the anchor (`baseIndent`), and its depth in
+ *     the file's own indent unit (`baseDepth`).
+ *  3. Sniff replaceText's OWN indent unit the same way. Compute every
+ *     non-blank, non-template-literal line's depth in that unit, relative to
+ *     replaceText's own first (non-template-literal) line.
+ *  4. Confidence check: if any such line's leading whitespace isn't a clean
+ *     whole number of replaceText's own unit (a leftover remainder after
+ *     peeling), replaceText's indentation is too internally inconsistent to
+ *     safely reinterpret as one scheme — bail out and return it untouched
+ *     rather than guess and risk corrupting the file. This is the ONE case
+ *     where the old advisory-only warning still fires (see
+ *     detectIndentMismatch()'s doc comment).
+ *  5. Otherwise, re-emit every line as `baseIndent` (replaceText's own first
+ *     non-blank line, verbatim — this is what makes an already-correctly-
+ *     indented replace a no-op) or
+ *     `fileUnit.repeat(max(0, baseDepth + relativeDepth))` for every other
+ *     line. Blank lines stay blank; lines inside a detected template literal
+ *     are passed through byte-for-byte (see templateLiteralLineStartMask()).
+ *
+ * Exported for direct unit testing.
+ */
+export function reindentReplacement(
+  originalFileText: string,
+  matchStartLineIndex: number,
+  matchStartsAtLineStart: boolean,
+  replaceText: string
+): ReindentResult {
+  const fileUnit = matchStartsAtLineStart ? resolveIndentUnit(originalFileText) : undefined;
+  if (!fileUnit) {
+    return { text: replaceText, reindented: false };
+  }
+
+  const fileLines = originalFileText.split('\n');
+  const anchorLine = fileLines[matchStartLineIndex] ?? '';
+  const baseIndent = LEADING_WS_RE.exec(anchorLine)![0];
+  const fileUnitStr = indentUnitString(fileUnit);
+  const baseDepth = peelIndentDepth(baseIndent, fileUnitStr).depth;
+
+  const replaceLines = replaceText.split('\n');
+  const templateMask = templateLiteralLineStartMask(replaceText);
+  const replaceUnit = resolveIndentUnit(replaceText);
+  const replaceUnitStr = replaceUnit ? indentUnitString(replaceUnit) : undefined;
+
+  const firstRealLine = replaceLines.findIndex((line, i) => !templateMask[i] && line.trim() !== '');
+  const firstLineDepth =
+    replaceUnitStr && firstRealLine >= 0
+      ? peelIndentDepth(LEADING_WS_RE.exec(replaceLines[firstRealLine])![0], replaceUnitStr).depth
+      : 0;
+
+  // Confidence check: every non-blank, non-template-literal line must
+  // decompose into a whole number of replaceText's own indent unit (or, if
+  // replaceText has no sniffable unit at all, must simply have no leading
+  // whitespace of its own — a genuinely flat block, unambiguous).
+  for (let i = 0; i < replaceLines.length; i++) {
+    if (templateMask[i]) continue;
+    const line = replaceLines[i];
+    if (line.trim() === '') continue;
+    const ws = LEADING_WS_RE.exec(line)![0];
+    if (replaceUnitStr) {
+      if (peelIndentDepth(ws, replaceUnitStr).remainder !== '') {
+        return { text: replaceText, reindented: false };
+      }
+    } else if (ws !== '') {
+      return { text: replaceText, reindented: false };
+    }
+  }
+
+  const outLines = replaceLines.map((line, i) => {
+    if (templateMask[i]) return line;
+    if (line.trim() === '') return '';
+    const ws = LEADING_WS_RE.exec(line)![0];
+    const content = line.slice(ws.length);
+    if (i === firstRealLine) return baseIndent + content;
+    const depth = replaceUnitStr ? peelIndentDepth(ws, replaceUnitStr).depth : 0;
+    const relativeDepth = depth - firstLineDepth;
+    const depthUnits = Math.max(0, baseDepth + relativeDepth);
+    return fileUnitStr.repeat(depthUnits) + content;
+  });
+
+  return { text: outLines.join('\n'), reindented: true };
+}
+
+/**
  * Item "whitespace and indentation issues when doing targeted writes to
  * existing files": compares the existing file's dominant indent style
  * against the replacement text's, returning a human-readable advisory (or
  * undefined if there's nothing to flag — either they match, or one side has
- * no indented lines to judge from at all). Exported for direct unit testing.
+ * no indented lines to judge from at all).
+ *
+ * Used to be the whole fix (0.10.0): flag a likely mismatch and let the
+ * model/reviewer sort it out by hand. Since reindentReplacement() above now
+ * actually corrects the common case, writeFileTool() only reaches for this
+ * anymore as a residual advisory for the narrow case reindentReplacement()
+ * declined to touch (see its doc comment) — the fallback still deserves a
+ * heads-up even though nothing was auto-fixed. Exported for direct unit
+ * testing.
  */
 export function detectIndentMismatch(existing: string, replace: string): string | undefined {
   const fileIndent = dominantIndentChar(existing);

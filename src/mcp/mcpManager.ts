@@ -1,4 +1,5 @@
-import { McpClient } from './mcpClient';
+import { McpClient, McpClientLike } from './mcpClient';
+import { McpHttpClient } from './mcpHttpClient';
 import { DynamicToolSpec, McpServerConfig } from './mcpTypes';
 import { ToolExecContext, ToolResult } from '../agent/types';
 import { logger } from '../util/logger';
@@ -16,15 +17,20 @@ function sanitize(name: string): string {
 
 /**
  * Owns every configured MCP server ("I have had Claude build me some very
- * nice MCPs, and I want them to natively connect to this Agent"): spawns
- * each one (best-effort — one server failing to start never prevents the
+ * nice MCPs, and I want them to natively connect to this Agent"): connects
+ * to each one (best-effort — one server failing to start never prevents the
  * others, or the extension, from working), lists its tools, and exposes them
  * as `DynamicToolSpec`s the agent loop can call exactly like a built-in tool.
+ * A server is either spawned locally over stdio (`McpClient`) or reached
+ * over the network via the MCP "Streamable HTTP" transport (`McpHttpClient`)
+ * — see doStart()'s command/url validation — but downstream of construction
+ * every server is just an `McpClientLike`, so tool discovery, namespacing,
+ * approval-gating and dispatch below don't care which transport it is.
  *
  * Design choices worth calling out:
- * - **Zero new npm dependencies** (see mcpClient.ts) — a hand-written stdio
- *   JSON-RPC client instead of `@modelcontextprotocol/sdk`, consistent with
- *   every other Forge subsystem.
+ * - **Zero new npm dependencies** (see mcpClient.ts/mcpHttpClient.ts) —
+ *   hand-written stdio and HTTP JSON-RPC clients instead of
+ *   `@modelcontextprotocol/sdk`, consistent with every other Forge subsystem.
  * - **Namespaced tool names** (`mcp_<server>_<tool>`, sanitized) so two
  *   different MCP servers can't collide with each other or with a built-in
  *   tool name.
@@ -48,7 +54,7 @@ function sanitize(name: string): string {
  *   something this round pretends to solve.
  */
 export class McpManager {
-  private clients: McpClient[] = [];
+  private clients: McpClientLike[] = [];
   private toolSpecs: DynamicToolSpec[] = [];
   private startErrors: string[] = [];
   private starting: Promise<void> | undefined;
@@ -100,11 +106,18 @@ export class McpManager {
     this.startErrors = [];
     const configs = this.getServers();
     for (const cfg of configs) {
-      if (!cfg?.name || !cfg?.command) {
-        this.startErrors.push(`Skipped an MCP server entry missing "name" or "command".`);
+      if (!cfg?.name) {
+        this.startErrors.push(`Skipped an MCP server entry missing "name".`);
         continue;
       }
-      const client = new McpClient(cfg);
+      const hasCommand = typeof cfg.command === 'string' && cfg.command.length > 0;
+      const hasUrl = typeof cfg.url === 'string' && cfg.url.length > 0;
+      if (hasCommand === hasUrl) {
+        // Neither set, or both set — either way it's ambiguous which transport was meant, so skip rather than guess.
+        this.startErrors.push(`Skipped MCP server "${cfg.name}" — configure exactly one of "command" (stdio) or "url" (HTTP), not ${hasCommand ? 'both' : 'neither'}.`);
+        continue;
+      }
+      const client: McpClientLike = hasCommand ? new McpClient(cfg) : new McpHttpClient(cfg);
       try {
         await client.connect();
       } catch (err: any) {
@@ -124,7 +137,7 @@ export class McpManager {
   }
 }
 
-function buildToolSpec(toolName: string, serverName: string, remoteName: string, description: string | undefined, client: McpClient): DynamicToolSpec {
+function buildToolSpec(toolName: string, serverName: string, remoteName: string, description: string | undefined, client: McpClientLike): DynamicToolSpec {
   return {
     name: toolName,
     describe: `[MCP: ${serverName}] ${description || `Calls the "${remoteName}" tool on the connected "${serverName}" MCP server.`}`,
