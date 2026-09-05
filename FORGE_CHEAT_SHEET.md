@@ -1,6 +1,6 @@
 # Forge cheat sheet — every feature, what it does, how, and when to use it
 
-A single-file reference to everything Forge can do, from the first release through **0.12.0**. Organized by what you're trying to do, not by version — each entry says what it does, how it actually works (briefly), and when you'd reach for it. For "what changed and why," see `CHANGELOG.md`; for setup/prerequisites, see `README.md`; for Cursor-feature-by-feature parity, see `CURSOR_PARITY.md`.
+A single-file reference to everything Forge can do, from the first release through **0.13.0**. Organized by what you're trying to do, not by version — each entry says what it does, how it actually works (briefly), and when you'd reach for it. For "what changed and why," see `CHANGELOG.md`; for setup/prerequisites, see `README.md`; for Cursor-feature-by-feature parity, see `CURSOR_PARITY.md`.
 
 Version tags like *(0.9.0)* mark when something shipped, so you can tell what's new since you last looked at this.
 
@@ -135,9 +135,9 @@ Known gap: server config (including any API token in a server's `env`) lives in 
 
 ---
 
-## 11. Checkpoint-safe resumption & orchestration mode *(0.12.0)*
+## 11. Checkpoint-safe resumption & orchestration mode *(0.12.0; cost-aware planning 0.13.0)*
 
-Local hardware can get interrupted mid-task in a way a cloud-hosted agent doesn't have to worry about — a reload, a restart, a machine that needs a break, or a big Auto/Outcome run you want to pick up again later instead of redoing. These four pieces are the answer:
+Local hardware can get interrupted mid-task in a way a cloud-hosted agent doesn't have to worry about — a reload, a restart, a machine that needs a break, or a big Auto/Outcome run you want to pick up again later instead of redoing. These pieces are the answer:
 
 | Feature | What it does | How / when |
 |---|---|---|
@@ -147,8 +147,10 @@ Local hardware can get interrupted mid-task in a way a cloud-hosted agent doesn'
 | **Per-task log** (`.forge/chat/<id>.tasks.md`) | Each ledger entry's full outcome (not just the inline one-liner) is appended here as it's marked done/failed — a plain, human-readable "what happened" log separate from the JSON transcript and the crash-recovery `.log.jsonl`. | Skimming what a long autonomous run actually did without replaying the whole transcript. |
 | **Orchestration mode toggle** | A per-chat checkbox (Agent/Auto/Outcome only) that changes the system prompt to have the model act as an orchestrator: plan on the ledger, dispatch pieces to `spawn_subagent` one at a time (sequential — the agent loop only ever makes one tool call per round-trip anyway), read back each outcome, decide what's next. Same tools either way — this only changes the *instructions* for using them. | A task that's naturally several independent chunks (e.g. "add tests for these 4 modules") where you want the main transcript to stay a high-level plan-and-report loop instead of one long inline chain. |
 | **Detached chat panel** | **Forge: Open Chat in New Panel (detached from sidebar)** opens the same live session in a main-editor-area panel, separate from the Activity Bar sidebar — same `ChatSession`, updates in both places at once. | Wanting the chat next to a file instead of competing with the Explorer for sidebar space. Not specific to orchestration, but shipped in this round for the same "your setup, your layout" reasoning. |
+| **Cost-aware task planning** *(0.13.0)* | `plan_tasks` can now tag each task with a `costTier` (`cheap`/`moderate`/`expensive`) and an optional `costNote`; if the model doesn't set one, `src/agent/taskCost.ts` backfills a heuristic guess from the task's own wording. The ledger renders each task's tier inline (`(cheap) Read config.ts`) plus a "Remaining task cost" summary line, and the orchestration-mode prompt now explicitly tells the model to dispatch cheaper tasks first when there's no dependency reason not to — fail fast, and more of the plan survives an interruption. | Automatic tagging happens on every `plan_tasks` call in Agent/Auto/Outcome (toggle via `forge.taskLedger.costAwarePlanning`); cheap-first ordering is a prompt instruction the model follows, not a scheduler that reorders anything for it. |
+| **Expensive-plan review gate** *(0.13.0)* | When a plan's weighted cost score (`cheap`=1, `moderate`=3, `expensive`=8, summed) crosses `forge.taskLedger.expensivePlanReviewThreshold` (default 8), Forge pauses before committing the plan and shows an approval card listing every task with its tier, so you can approve or send the model back to revise — same approval-card UI as a shell-command confirmation, reusing `ApprovalBroker`. In Auto/Outcome mode (which by design never stops for approval) or with `forge.taskLedger.reviewExpensivePlans` off, you get a non-blocking warning in the transcript instead. | Agent mode + review setting on (both defaults) for a hard stop before a big plan starts; Auto/Outcome always gets the heads-up warning only. |
 
-Known limitation: restoring a checkpoint (section 2) doesn't rewind the task ledger to match — see README's Known limitations.
+Known limitations: restoring a checkpoint (section 2) doesn't rewind the task ledger to match; the cost estimate is a coarse heuristic/single global threshold, not real time estimation — see README's Known limitations for both.
 
 ---
 
@@ -211,6 +213,9 @@ Click ⚙ in the chat header for an in-chat panel covering the settings worth tw
 | `forge.selfCritique.minLines` | `40` | Threshold for self-critique |
 | `forge.bestOfN.enabled` | `false` | See "Accuracy levers" above |
 | `forge.bestOfN.samples` | `3` | Candidates sampled when best-of-N is on |
+| `forge.taskLedger.costAwarePlanning` | `true` | Tag `plan_tasks` entries with a cost tier (model-given or heuristic) and render them on the ledger |
+| `forge.taskLedger.reviewExpensivePlans` | `true` | Pause for approval (Agent mode) before starting a plan over the cost threshold |
+| `forge.taskLedger.expensivePlanReviewThreshold` | `8` | Weighted cost score (cheap=1/moderate=3/expensive=8, summed) that counts as "expensive" |
 | `forge.mcp.servers` | `[]` | MCP servers to connect to — stdio (`command`) or, new in 0.12.0, Streamable HTTP (`url`) shape per entry |
 | `forge.webSearch.enabled` | `false` | Turns on `web_search`/`web_fetch` |
 | `forge.webSearch.provider` | `auto` | `auto`/`tavily`/`brave`/`google`/`searxng`/`duckduckgo` |
@@ -260,7 +265,7 @@ Every `Forge: …` command in one place:
 
 ---
 
-## 16. If you only remember six things
+## 16. If you only remember seven things
 
 1. **Restore to here** (on any message) undoes that message's turn and every file it touched — this is what makes Auto/Outcome mode safe to actually use hands-off.
 2. **`.forge/memory.md`** + **`.forge/project-log.md`** are how Forge avoids re-explaining your project every new chat — worth glancing at occasionally (**Forge: Compact Memory** if either gets noisy).
@@ -268,5 +273,6 @@ Every `Forge: …` command in one place:
 4. **The four 0.11.0 accuracy levers are opt-in for a reason** — try one, judge it on your own hardware/model, don't assume all four together is strictly better (more model calls, more latency).
 5. **MCP servers (`forge.mcp.servers`) turn Forge from "has its own built-in tools" into "has whatever tools you connect"** — the same approval gate as shell commands applies, since a connected server is arbitrary third-party code; as of 0.12.0 that includes servers reachable over HTTP, not just ones Forge spawns itself.
 6. **The task ledger + immediate history persistence (0.12.0) exist for one reason: your hardware, unlike a cloud agent's, can get interrupted mid-turn** — a long Auto/Outcome run now resumes accurately instead of redoing finished work, and Orchestration mode is the same idea applied deliberately to a task you break into sub-agent-sized pieces up front.
+7. **Cost-aware planning (0.13.0) tags every planned task cheap/moderate/expensive and nudges cheap-first ordering, and a plan that's expensive enough will pause for your review before it starts (or just warn you, in Auto/Outcome)** — it's a heuristic estimate and a prompt instruction, not a guarantee or a scheduler, but on constrained hardware it's the difference between finding out a plan was too big after an hour versus before you commit to it.
 
 See `CHANGELOG.md` for exactly what shipped when and how it was verified, `ROADMAP.md` for what's cataloged but not built yet, and `CURSOR_PARITY.md` for the full Cursor feature-by-feature comparison.
