@@ -115,28 +115,47 @@ async function testFuzzyMatchPathPreservesRelativeDepth() {
   );
 }
 
-// ---------- (d) internally mixed/inconsistent replace indentation falls back safely ----------
+// ---------- (d) a replace block with no confident common indent width at all still falls back safely ----------
+//
+// 0.14.0 note: this scenario used to be a single tab-led line mixed among
+// space-led lines ('    if (b) {\n\treturn 2;\n    }'), which the OLD
+// exact-GCD width estimator treated as irrecoverably inconsistent and
+// declined WHOLESALE. Under 0.14.0's per-line, majority-vote-robust
+// reindentReplacement() (see estimateSpaceIndentWidthRobust()'s doc
+// comment), that exact scenario is now actually resolved correctly instead
+// of declined — the file's own tab unit ends up applied to all three lines,
+// including the formerly-"inconsistent" one, since a single stray line no
+// longer corrupts the whole block's width estimate. See
+// test_v14_indent_hardening.ts's testFormerlyMixedCaseNowPartiallyRecovers()
+// for that exact case's new, improved behavior. This test now demonstrates a
+// scenario that GENUINELY still declines end to end: the non-anchor lines'
+// indentation (5, 7, 11 spaces) shares no plausible common step at all (so
+// no width is ever confidently estimated), AND the anchor line already
+// happens to match the file's own indentation (so the one correction
+// reindentReplacement() always applies regardless of width — see its doc
+// comment on why the anchor line is exempt from the confidence check — is
+// itself a no-op here). See test_v14_indent_hardening.ts for a case where
+// the anchor line DOES need correcting even though the rest of the block is
+// unresolvable — that one comes back `reindented: true` with the other
+// lines listed in `partialLines`, not `false`.
 
 function testMixedIndentationInReplaceFallsBackWithoutCorrupting() {
   const existing = 'function g() {\n\treturn 1;\n}\n';
-  // Genuinely inconsistent: dominant char reads as "space" (2 space-led
-  // lines vs 1 tab-led line) but one of those "space" lines is actually
-  // tab-led — no single scheme accounts for all three lines cleanly.
-  const replace = '    if (b) {\n\treturn 2;\n    }';
+  const replace = '\ta\n     b\n       c\n           d';
   const result = reindentReplacement(existing, 1, true, replace);
-  ok(result.reindented === false, 'internally inconsistent replace indentation is NOT guessed at — reindenting is declined');
+  ok(result.reindented === false, 'a replace block with no plausible common indent width at all, whose anchor line already matches the file, is NOT guessed at — reindenting is declined');
   ok(result.text === replace, 'the declined replace text is returned byte-for-byte unchanged, not partially/incorrectly rewritten');
 }
 
 async function testWriteFileToolFallsBackAndStillSurfacesAdvisory() {
   const existing = 'function g() {\n\treturn 1;\n}\n';
-  const replace = '    if (b) {\n\treturn 2;\n    }';
+  const replace = '\ta\n     b\n       c\n           d';
   const sink: { written?: any } = {};
   const result = await writeFileTool({ path: 'foo.ts', search: '\treturn 1;', replace }, fakeCtx(existing, sink));
   ok(result.ok === true, 'the edit still succeeds — even the fallback case is advisory, never blocking');
   ok(
-    sink.written?.newText === 'function g() {\n    if (b) {\n\treturn 2;\n    }\n}\n',
-    `the file is written with "replace" exactly as given (not corrupted by a wrong guess), matching pre-0.12.0 behavior for this case (got ${JSON.stringify(sink.written?.newText)})`
+    sink.written?.newText === `function g() {\n${replace}\n}\n`,
+    `the file is written with "replace" exactly as given (not corrupted by a wrong guess) when no confident width exists at all (got ${JSON.stringify(sink.written?.newText)})`
   );
   ok(/Heads up/.test(result.content), 'the old advisory warning fires for this residual case, since reindentReplacement() declined to fix it and the file/replace dominant styles do disagree (tab file vs. space-dominant replace)');
   ok(!/automatically remapped/.test(result.content), 'the "automatically remapped" note does NOT appear, since nothing was actually reindented here');

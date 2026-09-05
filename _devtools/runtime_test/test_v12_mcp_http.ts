@@ -88,14 +88,14 @@ async function testMcpHttpClientDirect() {
     );
 
     const echoResult = await client.callTool('echo', { text: 'hello' });
-    ok(echoResult.ok === true && echoResult.text === 'echo: hello', `callTool("echo") round-trips through a real HTTP request/response (got ${JSON.stringify(echoResult)})`);
+    ok(echoResult.ok === true && echoResult.content === 'echo: hello', `callTool("echo") round-trips through a real HTTP request/response (got ${JSON.stringify(echoResult)})`);
 
     const failResult = await client.callTool('fail', {});
-    ok(failResult.ok === false && /always fails/.test(failResult.text), 'a tool-level error (isError:true from the server) surfaces as {ok:false}, not a thrown exception');
+    ok(failResult.ok === false && /always fails/.test(failResult.content), 'a tool-level error (isError:true from the server) surfaces as {ok:false}, not a thrown exception');
 
     // ---- the SSE (text/event-stream) response path, distinct from the plain-JSON path above ----
     const sseResult = await client.callTool('sse_echo', { text: 'via sse' });
-    ok(sseResult.ok === true && sseResult.text === 'sse echo: via sse', `callTool("sse_echo") correctly parses a text/event-stream response body's "data:" line (got ${JSON.stringify(sseResult)})`);
+    ok(sseResult.ok === true && sseResult.content === 'sse echo: via sse', `callTool("sse_echo") correctly parses a text/event-stream response body's "data:" line (got ${JSON.stringify(sseResult)})`);
 
     client.dispose();
     let threwAfterDispose = false;
@@ -189,12 +189,12 @@ async function testMcpManagerHttp() {
     const manager = new McpManager(() => [{ name: 'My HTTP Server!', url: server.url }]);
     await manager.start();
     const specs = manager.listToolSpecs();
-    ok(specs.some((s) => s.name === 'mcp_My_HTTP_Server_echo'), `an HTTP server's tools are namespaced exactly like a stdio server's (mcp_<sanitized-server>_<tool>) (got ${specs.map((s) => s.name).join(',')})`);
+    ok(specs.some((s) => s.name === 'mcp__My_HTTP_Server__echo'), `an HTTP server's tools are namespaced exactly like a stdio server's (mcp__<sanitized-server>__<tool> — 0.14.0's double-underscore convention) (got ${specs.map((s) => s.name).join(',')})`);
     const status = manager.status();
     ok(status.length === 1 && status[0].connected === true && status[0].toolCount === 3, `status() reports the HTTP server connected with its 3 tools (got ${JSON.stringify(status)})`);
 
     // ---- calling a tool through its DynamicToolSpec goes through the same approval gate as a stdio MCP tool ----
-    const echoSpec = specs.find((s) => s.name === 'mcp_My_HTTP_Server_echo')!;
+    const echoSpec = specs.find((s) => s.name === 'mcp__My_HTTP_Server__echo')!;
     const approvedCtx: any = { requestCommandApproval: async () => true };
     const approvedResult = await echoSpec.run({ text: 'via http manager' }, approvedCtx);
     ok(approvedResult.ok === true && approvedResult.content === 'echo: via http manager', 'an approved MCP-over-HTTP tool call executes and returns the remote server\'s result');
@@ -222,7 +222,7 @@ async function testMcpManagerTransportValidation() {
       { name: 'good-http', url: server.url },
     ]);
     await manager.start();
-    ok(manager.listToolSpecs().some((s) => s.name.startsWith('mcp_good_http_')), 'the well-formed HTTP server still starts even though two sibling entries were ambiguous');
+    ok(manager.listToolSpecs().some((s) => s.name.startsWith('mcp__good_http__')), 'the well-formed HTTP server still starts even though two sibling entries were ambiguous');
     const errors = manager.lastStartErrors();
     ok(errors.some((e) => /both-set/.test(e) && /both/.test(e)), `an entry setting both "command" and "url" is rejected with a clear "not both" error (got ${JSON.stringify(errors)})`);
     ok(errors.some((e) => /neither-set/.test(e) && /neither/.test(e)), `an entry setting neither "command" nor "url" is rejected with a clear "not neither" error (got ${JSON.stringify(errors)})`);
@@ -246,7 +246,7 @@ async function testAgentLoopIntegration() {
     const fakeOllama: any = {
       chat: async () => {
         call++;
-        if (call === 1) return '```forge_action\n{"tool": "mcp_fakehttp_echo", "args": {"text": "from the agent"}}\n```';
+        if (call === 1) return '```forge_action\n{"tool": "mcp__fakehttp__echo", "args": {"text": "from the agent"}}\n```';
         return 'All done — the MCP-over-HTTP tool echoed back successfully.';
       },
     };

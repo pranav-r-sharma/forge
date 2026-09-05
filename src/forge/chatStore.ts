@@ -4,7 +4,7 @@ import { ChatMessage } from '../ollama/types';
 import { UiTranscriptEntry } from '../webview/protocol';
 import { CheckpointRecord } from '../agent/checkpoints';
 import { CompactionCache } from '../agent/contextManager';
-import { TaskLedgerEntry } from '../agent/taskLedger';
+import { TaskLedgerEntry, renderTaskManifestMarkdown } from '../agent/taskLedger';
 import { logger } from '../util/logger';
 
 export type ForgeMode = 'agent' | 'ask' | 'plan' | 'auto' | 'outcome';
@@ -65,6 +65,16 @@ interface IndexFile {
 export class ChatStore {
   private chatDir: vscode.Uri;
   private indexUri: vscode.Uri;
+  /**
+   * 0.14.0 checkpoint/task-manifest unification: root of the per-task
+   * manifest files (`.forge/tasks/<sessionId>/<taskId>.json`), one small JSON
+   * file per TaskLedgerEntry — see writeTaskManifest()'s doc comment. Kept as
+   * its own top-level `.forge/` directory (not nested under chatDir) to
+   * mirror the plain layout the request described (".forge/tasks/<task-id>.json"),
+   * even though in practice each file also needs the owning sessionId to be
+   * useful on its own, hence the one extra path segment.
+   */
+  private tasksDir: vscode.Uri;
   private counter = 0;
 
   /**
@@ -104,6 +114,7 @@ export class ChatStore {
   constructor(private workspaceRoot: vscode.Uri) {
     this.chatDir = vscode.Uri.joinPath(workspaceRoot, '.forge', 'chat');
     this.indexUri = vscode.Uri.joinPath(this.chatDir, 'index.json');
+    this.tasksDir = vscode.Uri.joinPath(workspaceRoot, '.forge', 'tasks');
   }
 
   newId(): string {
@@ -537,43 +548,77 @@ export class ChatStore {
   }
 
   /**
-   * Item 4b: "create a mandatory log of each individual task." Appends one
-   * human-readable Markdown entry to `.forge/chat/<id>.tasks.md` every time
-   * a task-ledger entry changes status (see agent/taskLedger.ts,
-   * ChatSession's taskLedger wiring). This is the "document of their
-   * outcome" ask 4c specifically calls for when a sub-agent finishes a
-   * delegated task, generalized to every ledger task regardless of whether
-   * it came from a sub-agent or the main agent's own update_task call.
+   * Item 4b: "create a mandatory log of each individual task." Regenerates
+   * the whole `.forge/chat/<id>.tasks.md` file from the CURRENT full ledger
+   * state every time any task-ledger entry changes (see
+   * agent/taskLedger.ts's renderTaskManifestMarkdown() and ChatSession's
+   * taskLedger wiring / onTaskLedgerChanged()).
    *
-   * Deliberately separate from BOTH the per-session JSONL crash-recovery
-   * log (appendLog(), which also gets a terse 'task' entry for the same
-   * event — that one's for machine reconstruction after data loss) and the
-   * workspace-wide `.forge/project-log.md` (appendProjectLog(), a
-   * cross-chat one-liner digest) — this file is per-chat, per-task, and
-   * meant to be actually read: a running record of what each individual
-   * piece of delegated/tracked work actually accomplished, in enough detail
-   * to answer "did we already do this" without reopening the whole chat
-   * transcript. Best-effort/append-only, same reasoning as the other two:
-   * a logging failure must never break the turn that just completed.
+   * 0.14.0 change: this used to *append* one Markdown section per status
+   * change — an independent, ever-growing event log that could drift from
+   * what the in-memory ledger actually said (e.g. it never got shorter or
+   * corrected if a task was re-planned). It's now a full overwrite rendered
+   * from the exact same TaskLedgerEntry[] the rest of Forge already treats
+   * as the source of truth (the in-prompt digest, the JSON manifest files —
+   * see writeTaskManifest() below), so this file can never say something the
+   * ledger itself doesn't. The tradeoff — losing the old file's incidental
+   * history-of-changes — is intentional: writeTaskManifest()'s per-task JSON
+   * files each still carry their own createdAt/updatedAt, and the per-session
+   * `.forge/chat/<id>.log.jsonl` crash-recovery log (appendLog(), which also
+   * gets a terse 'task' entry for the same event) is the append-only history
+   * this file no longer needs to double as.
+   *
+   * Best-effort, same reasoning as the other logging methods here: a
+   * logging failure must never break the turn that just completed.
    */
-  async appendTaskReport(sessionId: string, entry: { id: string; description: string; status: string; summary?: string; parentTaskId?: string }): Promise<void> {
+  async writeTaskReport(sessionId: string, entries: TaskLedgerEntry[]): Promise<void> {
     try {
       const dir = vscode.Uri.joinPath(this.chatDir);
       await vscode.workspace.fs.createDirectory(dir);
       const path = vscode.Uri.joinPath(dir, `${sessionId}.tasks.md`).fsPath;
-      const stamp = new Date().toISOString();
-      const heading = `## [${stamp}] ${entry.status.toUpperCase()} — ${entry.description}`;
-      const meta = `id: \`${entry.id}\`${entry.parentTaskId ? ` · parent: \`${entry.parentTaskId}\`` : ''}`;
-      const body = entry.summary ? `\n\n${entry.summary}` : '';
-      const section = `${heading}\n${meta}${body}\n\n`;
-      await fs.promises.appendFile(path, section, 'utf8');
+      await fs.promises.writeFile(path, renderTaskManifestMarkdown(entries), 'utf8');
     } catch (err) {
-      logger.warn('Failed to append task report', String(err));
+      logger.warn('Failed to write task report', String(err));
     }
   }
 
   taskReportPath(sessionId: string): string {
     return vscode.Uri.joinPath(this.chatDir, `${sessionId}.tasks.md`).fsPath;
+  }
+
+  /**
+   * 0.14.0 checkpoint/task-manifest unification: writes one small JSON
+   * manifest file per task — `.forge/tasks/<sessionId>/<taskId>.json` — every
+   * time that task's ledger entry changes. This is the literal per-task
+   * "resumability manifest" file: task definition (description, tier),
+   * status, last known summary, parent/checkpoint linkage, and timestamps —
+   * everything an orchestrator would need to decide "is this task done, and
+   * if not, what did it last get to" without loading the whole session file.
+   *
+   * Known, explicitly-scoped-down limitation: the manifest does not carry
+   * "a pointer to its own mini-transcript," because Forge's sub-agents are
+   * (deliberately — see agentLoop.ts's spawnSubAgent closure and the design
+   * discussion in CHANGELOG.md) fresh-seeded rather than given a persisted
+   * transcript of their own to resume from. `sessionId` is the closest
+   * equivalent pointer this system has: the owning chat's own transcript is
+   * where that task's tool-call activity actually shows up.
+   *
+   * Best-effort/idempotent overwrite, same failure handling as every other
+   * logging method on this class.
+   */
+  async writeTaskManifest(sessionId: string, entry: TaskLedgerEntry): Promise<void> {
+    try {
+      const dir = vscode.Uri.joinPath(this.tasksDir, sessionId);
+      await vscode.workspace.fs.createDirectory(dir);
+      const path = vscode.Uri.joinPath(dir, `${entry.id}.json`).fsPath;
+      await fs.promises.writeFile(path, JSON.stringify({ sessionId, ...entry }, null, 2), 'utf8');
+    } catch (err) {
+      logger.warn('Failed to write task manifest', String(err));
+    }
+  }
+
+  taskManifestDir(sessionId: string): string {
+    return vscode.Uri.joinPath(this.tasksDir, sessionId).fsPath;
   }
 
   async delete(id: string): Promise<void> {
@@ -595,6 +640,11 @@ export class ChatStore {
       }
       try {
         await vscode.workspace.fs.delete(vscode.Uri.joinPath(this.chatDir, `${id}.tasks.md`));
+      } catch {
+        /* already gone / never existed */
+      }
+      try {
+        await vscode.workspace.fs.delete(vscode.Uri.joinPath(this.tasksDir, id), { recursive: true, useTrash: false });
       } catch {
         /* already gone / never existed */
       }

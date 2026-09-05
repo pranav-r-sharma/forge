@@ -27,6 +27,21 @@ export interface TaskLedgerEntry {
   costTier?: CostTier;
   /** Optional one-line reason for the cost estimate above (model-provided only — the heuristic fallback never sets this, it has no explanation to give). */
   costNote?: string;
+  /**
+   * 0.14.0 checkpoint/task-manifest unification: the id of the checkpoint
+   * (agent/checkpoints.ts) active in the turn that most recently touched
+   * this entry — set by ChatSession.onTaskLedgerChanged(), which stamps it
+   * from whatever checkpoint is current at the moment. This is deliberately
+   * the SCOPED-DOWN version of "task-to-checkpoint linkage": it tells you
+   * which turn's checkpoint to restoreCheckpoint() to if you want the
+   * workspace back to how it looked when this task was last worked on, but
+   * it is not a full nested per-task checkpoint system (no separate
+   * sub-agent-scoped file snapshots) — that's called out explicitly as
+   * future work in CHANGELOG.md rather than attempted here, since the
+   * existing per-turn checkpoint already covers the common "undo everything
+   * since I started this" case this field exists to point at.
+   */
+  checkpointId?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -174,7 +189,14 @@ export function renderTaskLedgerForPrompt(entries: TaskLedgerEntry[]): string | 
     // the one case it can still be missing, hence the fallback label rather
     // than assuming it's always present.
     const costTag = e.costTier ? `(${e.costTier}) ` : '';
-    return `${indent}${STATUS_MARK[e.status]} ${costTag}${truncate(e.description, 160)}${summarySuffix}`;
+    // 0.14.0 resumeTaskId: the id is only worth spending prompt tokens on for
+    // tasks a fresh/resuming agent could actually act on — a 'done' task has
+    // nothing to resume. Surfacing it here (rather than only in the JSON
+    // manifest) is what lets the model actually pass resumeTaskId to
+    // spawn_subagent instead of re-describing the same task as a brand new
+    // one — see systemPrompt.ts's orchestration-mode instructions.
+    const idSuffix = e.status !== 'done' ? ` [id: ${e.id}]` : '';
+    return `${indent}${STATUS_MARK[e.status]} ${costTag}${truncate(e.description, 160)}${idSuffix}${summarySuffix}`;
   });
   let text = lines.join('\n');
   if (text.length > MAX_PROMPT_CHARS) {
@@ -197,8 +219,61 @@ export function renderTaskLedgerForPrompt(entries: TaskLedgerEntry[]): string | 
   const costLine = stillUnfinished.length > 0 ? `\nRemaining task cost: ${renderPlanCostLine(summarizePlanCost(stillUnfinished))}.` : '';
   return (
     `## Task ledger (mechanically tracked — the mandatory checkpoint record of this session's task breakdown and progress). ` +
-    `If you are a fresh/resuming agent picking this session back up after an interruption, READ THIS FIRST: anything marked [x] is already done — check its summary before redoing it. [~] means it was in progress when work stopped and may need to be resumed or verified rather than restarted from scratch. [!] failed and needs a different approach, not a retry of the exact same thing. Each task's (tier) is a rough cost estimate (cheap/moderate/expensive) — where there's no dependency reason to do otherwise, prefer working through cheap tasks first so an interruption preserves the most progress.\n${text}${costLine}` +
+    `If you are a fresh/resuming agent picking this session back up after an interruption, READ THIS FIRST: anything marked [x] is already done — check its summary before redoing it. [~] means it was in progress when work stopped and may need to be resumed or verified rather than restarted from scratch. [!] failed and needs a different approach, not a retry of the exact same thing. Each task's (tier) is a rough cost estimate (cheap/moderate/expensive) — where there's no dependency reason to do otherwise, prefer working through cheap tasks first so an interruption preserves the most progress. The "[id: ...]" on any not-done task is that task's ledger id — when you decide to actually work an [~] or [!] task via spawn_subagent, pass that id as "resumeTaskId" instead of writing a fresh plan_tasks entry for it, so the sub-agent starts from its last known progress rather than from scratch.\n${text}${costLine}` +
     (omitted > 0 ? `\n(${omitted} earlier task(s) omitted — see the full ledger in session state)` : '') +
     (unfinished > 0 ? `\n(${unfinished} task(s) still pending/in-progress)` : '')
   );
+}
+
+/**
+ * 0.14.0 checkpoint/task-manifest unification: renders the FULL, untruncated
+ * current state of the ledger as a single human-readable Markdown document —
+ * the human-readable twin of the JSON manifest (see ChatStore.writeTaskManifest()),
+ * generated from the exact same TaskLedgerEntry[] rather than accumulated as
+ * a separate parallel write. This replaces the pre-0.14.0 design where
+ * ChatStore.appendTaskReport() hand-built one Markdown section per status
+ * change and appended it: that was a second, independently-drifting
+ * representation of task state (an event log, not a snapshot of current
+ * state) — asking "is task X actually done" meant reading the whole file
+ * looking for its last entry instead of just looking at the ledger. Calling
+ * this function and overwriting the file on every change (see
+ * ChatSession.onTaskLedgerChanged()) makes the .tasks.md file a pure,
+ * always-current render of the same manifest state the JSON files and the
+ * in-prompt digest (renderTaskLedgerForPrompt() above) both come from — one
+ * source of truth, three presentations (prompt digest, JSON manifest,
+ * Markdown report) instead of three sources of truth.
+ *
+ * Deliberately NOT capped/truncated the way renderTaskLedgerForPrompt() is —
+ * this is a file meant to be opened and read by a human, not spliced into a
+ * token-budgeted prompt, so every task gets its full description/summary and
+ * its timestamps.
+ */
+export function renderTaskManifestMarkdown(entries: TaskLedgerEntry[]): string {
+  if (entries.length === 0) {
+    return '# Task ledger\n\n(no tasks recorded yet)\n';
+  }
+  const byId = new Map(entries.map((e) => [e.id, e] as const));
+  const unfinished = entries.filter((e) => e.status === 'pending' || e.status === 'in_progress').length;
+  const done = entries.filter((e) => e.status === 'done').length;
+  const failed = entries.filter((e) => e.status === 'failed').length;
+  const header =
+    `# Task ledger\n\n` +
+    `_Mechanically generated from this chat's live task ledger — a full re-render on every change, not an append-only log. ` +
+    `${entries.length} task(s) total: ${done} done, ${failed} failed, ${unfinished} pending/in-progress. Last updated ${new Date().toISOString()}._\n\n`;
+  const sections = entries.map((e) => {
+    const indent = '  '.repeat(depthOf(e, byId));
+    const parentLine = e.parentTaskId ? `\n${indent}- parent: \`${e.parentTaskId}\`` : '';
+    const checkpointLine = e.checkpointId ? `\n${indent}- checkpoint: \`${e.checkpointId}\`` : '';
+    const costLine = e.costTier ? `\n${indent}- cost: ${e.costTier}${e.costNote ? ` (${e.costNote})` : ''}` : '';
+    const summaryLine = e.summary ? `\n\n${indent}${e.summary.replace(/\n/g, `\n${indent}`)}` : '';
+    return (
+      `${indent}## ${STATUS_MARK[e.status]} ${e.description}\n` +
+      `${indent}- id: \`${e.id}\`\n` +
+      `${indent}- status: ${e.status}` +
+      `${costLine}${parentLine}${checkpointLine}\n` +
+      `${indent}- created: ${e.createdAt} · updated: ${e.updatedAt}` +
+      `${summaryLine}\n`
+    );
+  });
+  return header + sections.join('\n');
 }

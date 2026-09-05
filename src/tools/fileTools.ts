@@ -200,8 +200,14 @@ export async function writeFileTool(args: Record<string, any>, ctx: ToolExecCont
     if (!reindent.reindented) {
       indentAdvisory = detectIndentMismatch(existing, args.replace);
     } else if (reindent.text !== args.replace) {
-      reindentAdvisory =
-        'Note: the indentation in "replace" didn\'t match this file\'s indent style, so it was automatically remapped (same relative nesting, this file\'s tabs/spaces and width) before writing — worth a glance at the diff to confirm it landed the way you intended.';
+      // 0.14.0: reindentReplacement() can now do a PARTIAL remap — most of a
+      // block corrected, a handful of individually-inconsistent lines left
+      // exactly as authored (see ReindentResult.partialLines's doc comment)
+      // — so the advisory says which case actually happened rather than
+      // always claiming the whole block was confidently fixed.
+      reindentAdvisory = reindent.partialLines?.length
+        ? `Note: most of "replace"'s indentation didn't match this file's indent style, so it was automatically remapped — EXCEPT line(s) ${reindent.partialLines.join(', ')} within "replace", whose own indentation was too inconsistent to confidently reinterpret and were left exactly as you wrote them. Double-check those specific line(s) in the diff before treating this edit as done.`
+        : 'Note: the indentation in "replace" didn\'t match this file\'s indent style, so it was automatically remapped (same relative nesting, this file\'s tabs/spaces and width) before writing — worth a glance at the diff to confirm it landed the way you intended.';
     }
   } else if (typeof args.content === 'string') {
     newText = args.content;
@@ -387,6 +393,68 @@ function gcd(a: number, b: number): number {
   return a;
 }
 
+/**
+ * A more outlier-tolerant width estimate than estimateSpaceIndentWidth()'s
+ * exact GCD, used specifically for the "replace" text's OWN indent unit
+ * inside reindentReplacement() below — not for the file's (real,
+ * already-formatted code, where the strict exact-GCD estimateSpaceIndentWidth()
+ * above stays the one source of truth; a freshly model-generated replacement
+ * block is where drift/noise actually shows up).
+ *
+ * Root cause this fixes (item "mixed indentation within a single diff...
+ * local models are prone to drifting indent level across a multi-line
+ * replacement block, especially past ~10-15 lines"): the exact-GCD estimator
+ * is a single wrong line away from silent corruption, not just a bail — a
+ * 16-line block at a clean 4-space step with one stray line at 11 spaces
+ * instead of 12 collapses the GCD of {4,8,12,11,...} down to 1, which then
+ * makes EVERY line "cleanly decompose" (since everything is a multiple of a
+ * 1-space unit) and skips the confidence check entirely, silently re-basing
+ * the whole block onto a corrupted width instead of catching the problem.
+ *
+ * Fix: instead of one GCD over every observed count (order- and
+ * frequency-blind), take a majority vote — for each of a small set of
+ * candidate widths (2, 3, 4, 8, and the smallest observed count itself, to
+ * still catch an unusual width like 3 — deliberately NOT including 1, which
+ * would trivially "explain" every line and always win by raw count without
+ * indicating anything), count how many indented lines that width evenly
+ * divides, and pick the width that confidently explains the most lines
+ * (ties broken toward a larger, more conventional width). A single outlier
+ * line no longer corrupts the result for the other 15; it just doesn't get
+ * to vote for the winning width, and reindentReplacement()'s confidence
+ * check (now per-line, not whole-block) is what decides what happens to
+ * that one line specifically. Requires a strong majority
+ * (CONFIDENCE_THRESHOLD) before trusting a width at all — anything weaker is
+ * treated the same as "can't tell," the same as the plain
+ * estimateSpaceIndentWidth() already returns for a genuinely ambiguous
+ * block (e.g. two indented lines at 2 and 5 spaces, sharing no plausible
+ * common step). Exported for direct unit testing.
+ */
+export function estimateSpaceIndentWidthRobust(text: string): number | undefined {
+  const counts: number[] = [];
+  for (const line of text.split('\n')) {
+    if (line.trim() === '') continue;
+    let i = 0;
+    while (i < line.length && line[i] === ' ') i++;
+    if (i === 0 || line[i] === '\t') continue; // unindented, or mixed leading whitespace — doesn't get a vote, same exclusion as estimateSpaceIndentWidth()
+    counts.push(i);
+  }
+  if (counts.length === 0) return undefined;
+  const distinctNonzero = [...new Set(counts)];
+  const candidates = new Set<number>([2, 3, 4, 8, Math.min(...distinctNonzero)]);
+  let best: { width: number; confident: number } | undefined;
+  for (const w of candidates) {
+    if (w <= 1) continue; // width 1 is never a real signal — see doc comment
+    const confident = counts.filter((c) => c % w === 0).length;
+    if (!best || confident > best.confident || (confident === best.confident && w > best.width)) {
+      best = { width: w, confident };
+    }
+  }
+  if (!best) return undefined;
+  const CONFIDENCE_THRESHOLD = 0.6;
+  if (best.confident / counts.length < CONFIDENCE_THRESHOLD) return undefined;
+  return best.width;
+}
+
 /** A resolved single indent unit: either one tab, or N spaces. */
 interface IndentUnit {
   char: 'tab' | 'space';
@@ -411,6 +479,15 @@ function resolveIndentUnit(text: string): IndentUnit | undefined {
   if (dominant === 'none') return undefined;
   if (dominant === 'tab') return { char: 'tab', width: 1 };
   const width = estimateSpaceIndentWidth(text);
+  return width === undefined ? undefined : { char: 'space', width };
+}
+
+/** Same as resolveIndentUnit(), but using estimateSpaceIndentWidthRobust() for the space-width vote — see that function's doc comment for why the "replace" text specifically (as opposed to the file's own, already-formatted content) needs outlier tolerance. Used only inside reindentReplacement() below for replaceText's own unit; the file's unit still goes through the strict, exact resolveIndentUnit(). */
+function resolveIndentUnitForReplacement(text: string): IndentUnit | undefined {
+  const dominant = dominantIndentChar(text);
+  if (dominant === 'none') return undefined;
+  if (dominant === 'tab') return { char: 'tab', width: 1 };
+  const width = estimateSpaceIndentWidthRobust(text);
   return width === undefined ? undefined : { char: 'space', width };
 }
 
@@ -462,6 +539,20 @@ export interface ReindentResult {
   text: string;
   /** True when `text` was actually remapped onto the file's indent scheme. */
   reindented: boolean;
+  /**
+   * 1-indexed line numbers (within `replaceText`, not the whole file) that
+   * were passed through byte-for-byte rather than remapped, because that
+   * one line's leading whitespace didn't cleanly decompose into the
+   * replacement block's own (robustly estimated) indent unit — see
+   * estimateSpaceIndentWidthRobust()'s doc comment. 0.14.0 behavior change:
+   * before this, a SINGLE such line bailed the ENTIRE block back to
+   * untouched (`reindented: false`); now the rest of the block still gets
+   * reindented and only the genuinely inconsistent line(s) are left as the
+   * model wrote them — a partial fix is strictly better than no fix when
+   * most of a long block is fine. Undefined/empty when every line reindented
+   * cleanly (the common case).
+   */
+  partialLines?: number[];
 }
 
 /**
@@ -486,19 +577,34 @@ export interface ReindentResult {
  *  3. Sniff replaceText's OWN indent unit the same way. Compute every
  *     non-blank, non-template-literal line's depth in that unit, relative to
  *     replaceText's own first (non-template-literal) line.
- *  4. Confidence check: if any such line's leading whitespace isn't a clean
- *     whole number of replaceText's own unit (a leftover remainder after
- *     peeling), replaceText's indentation is too internally inconsistent to
- *     safely reinterpret as one scheme — bail out and return it untouched
- *     rather than guess and risk corrupting the file. This is the ONE case
- *     where the old advisory-only warning still fires (see
- *     detectIndentMismatch()'s doc comment).
- *  5. Otherwise, re-emit every line as `baseIndent` (replaceText's own first
- *     non-blank line, verbatim — this is what makes an already-correctly-
- *     indented replace a no-op) or
- *     `fileUnit.repeat(max(0, baseDepth + relativeDepth))` for every other
- *     line. Blank lines stay blank; lines inside a detected template literal
- *     are passed through byte-for-byte (see templateLiteralLineStartMask()).
+ *  4. Per-line confidence check (0.14.0 — see ReindentResult.partialLines's
+ *     doc comment for the behavior change from 0.12.0): any line whose
+ *     leading whitespace isn't a clean whole number of replaceText's own
+ *     unit (a leftover remainder after peeling — including the case where no
+ *     unit could be confidently estimated at all) is passed through
+ *     byte-for-byte instead of remapped, and its 1-indexed line number is
+ *     recorded in the result's `partialLines`. This used to bail the WHOLE
+ *     block back to untouched the moment ONE line looked inconsistent; now
+ *     the other, confidently-decomposable lines still get corrected, and
+ *     only the genuinely ambiguous ones are left as-authored — a partial fix
+ *     beats no fix when most of a long block is fine. The anchor line
+ *     (`firstRealLine`) is exempt from this check entirely, since step 5
+ *     replaces it outright regardless of its own internal consistency.
+ *  5. Re-emit every line as `baseIndent` (replaceText's own first non-blank
+ *     line, verbatim — this is what makes an already-correctly-indented
+ *     replace a no-op) or `fileUnit.repeat(max(0, baseDepth +
+ *     relativeDepth))` for every other confidently-decomposable line. Blank
+ *     lines stay blank; lines inside a detected template literal, and any
+ *     line flagged unresolved by step 4, are passed through byte-for-byte
+ *     (see templateLiteralLineStartMask()).
+ *
+ * replaceText's own indent unit (step 3) is estimated via
+ * resolveIndentUnitForReplacement() — a majority-vote, outlier-tolerant
+ * width estimate, DELIBERATELY more forgiving than the file's own strict,
+ * exact-GCD resolveIndentUnit() (step 1) — see
+ * estimateSpaceIndentWidthRobust()'s doc comment for why a freshly
+ * model-generated replacement block, not the file's own already-formatted
+ * content, is where indentation drift/noise actually shows up.
  *
  * Exported for direct unit testing.
  */
@@ -521,7 +627,7 @@ export function reindentReplacement(
 
   const replaceLines = replaceText.split('\n');
   const templateMask = templateLiteralLineStartMask(replaceText);
-  const replaceUnit = resolveIndentUnit(replaceText);
+  const replaceUnit = resolveIndentUnitForReplacement(replaceText);
   const replaceUnitStr = replaceUnit ? indentUnitString(replaceUnit) : undefined;
 
   const firstRealLine = replaceLines.findIndex((line, i) => !templateMask[i] && line.trim() !== '');
@@ -530,26 +636,23 @@ export function reindentReplacement(
       ? peelIndentDepth(LEADING_WS_RE.exec(replaceLines[firstRealLine])![0], replaceUnitStr).depth
       : 0;
 
-  // Confidence check: every non-blank, non-template-literal line must
-  // decompose into a whole number of replaceText's own indent unit (or, if
-  // replaceText has no sniffable unit at all, must simply have no leading
-  // whitespace of its own — a genuinely flat block, unambiguous).
+  // Per-line confidence check — see this function's doc comment (step 4) for
+  // the 0.14.0 "partial, not all-or-nothing" behavior.
+  const unresolved = new Set<number>();
   for (let i = 0; i < replaceLines.length; i++) {
-    if (templateMask[i]) continue;
+    if (templateMask[i] || i === firstRealLine) continue;
     const line = replaceLines[i];
     if (line.trim() === '') continue;
     const ws = LEADING_WS_RE.exec(line)![0];
     if (replaceUnitStr) {
-      if (peelIndentDepth(ws, replaceUnitStr).remainder !== '') {
-        return { text: replaceText, reindented: false };
-      }
+      if (peelIndentDepth(ws, replaceUnitStr).remainder !== '') unresolved.add(i);
     } else if (ws !== '') {
-      return { text: replaceText, reindented: false };
+      unresolved.add(i);
     }
   }
 
   const outLines = replaceLines.map((line, i) => {
-    if (templateMask[i]) return line;
+    if (templateMask[i] || unresolved.has(i)) return line;
     if (line.trim() === '') return '';
     const ws = LEADING_WS_RE.exec(line)![0];
     const content = line.slice(ws.length);
@@ -560,7 +663,21 @@ export function reindentReplacement(
     return fileUnitStr.repeat(depthUnits) + content;
   });
 
-  return { text: outLines.join('\n'), reindented: true };
+  const text = outLines.join('\n');
+  if (text === replaceText) {
+    // Nothing actually changed — either replaceText already matched the
+    // file's scheme (the ordinary no-op case), or every indented line was
+    // unresolved and passed through verbatim (the old "declines to guess"
+    // case, now expressed as "nothing to remap" rather than a special early
+    // return, since a genuinely partial success falls out of the same code
+    // path below).
+    return { text, reindented: false };
+  }
+  return {
+    text,
+    reindented: true,
+    partialLines: unresolved.size > 0 ? [...unresolved].map((i) => i + 1).sort((a, b) => a - b) : undefined,
+  };
 }
 
 /**

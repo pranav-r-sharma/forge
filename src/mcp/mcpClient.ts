@@ -1,5 +1,6 @@
 import { spawn } from 'child_process';
 import { McpServerConfig } from './mcpTypes';
+import { ToolResultAttachment } from '../agent/types';
 import { logger } from '../util/logger';
 
 // Not imported as a named type, same reason as commandTool.ts's
@@ -26,7 +27,56 @@ export interface McpToolInfo {
 
 export interface McpCallResult {
   ok: boolean;
-  text: string;
+  /** Joined text of every `text` content block — this, and only this, is what mcpManager.ts feeds the model as the tool's observation. */
+  content: string;
+  /** Non-text blocks (`image`, `resource`, and anything else a server returns) — see agent/types.ts's ToolResultAttachment. Undefined/empty when the server returned text-only content, the common case. */
+  attachments?: ToolResultAttachment[];
+}
+
+/**
+ * MCP standardization (0.14.0): splits a raw `CallToolResult.content` array
+ * (per the MCP spec, a list of `{type: 'text'|'image'|'resource'|..., ...}`
+ * blocks) into "text fed to the model" and "everything else, shown to the
+ * user as an attachment instead." Previously every non-text block collapsed
+ * into a useless `[image content]`/`[resource content]` placeholder string
+ * and its actual payload (base64 image data, an embedded resource's URI/
+ * text/mimeType) was silently discarded — this is the fix: the adapter layer
+ * between MCP's native content-block shape and Forge's own ToolResult now
+ * keeps that payload, just routed to a different place (the UI, not the
+ * model transcript) instead of into the model's context window, which would
+ * be an expensive and usually unreadable way to hand a local model a base64
+ * image blob anyway. Shared between mcpClient.ts (stdio) and
+ * mcpHttpClient.ts (Streamable HTTP) since both parse the identical
+ * CallToolResult shape once the transport-specific framing is stripped away.
+ */
+export function splitMcpContentBlocks(rawContent: any): { text: string; attachments: ToolResultAttachment[] } {
+  const blocks = Array.isArray(rawContent) ? rawContent : [];
+  const textParts: string[] = [];
+  const attachments: ToolResultAttachment[] = [];
+  for (const block of blocks) {
+    if (!block || typeof block !== 'object') continue;
+    if (block.type === 'text' && typeof block.text === 'string') {
+      textParts.push(block.text);
+      continue;
+    }
+    // Everything else — image, audio, resource, resource_link, or a
+    // server-invented type this spec revision doesn't know about — becomes
+    // an attachment rather than a swallowed placeholder string. Embedded
+    // resource blocks nest their payload under `resource` per spec (`{type:
+    // 'resource', resource: {uri, text?, mimeType?, blob?}}`); a top-level
+    // `resource_link` block instead carries `uri`/`mimeType` directly. Both
+    // shapes are normalized into the same flat ToolResultAttachment here so
+    // the UI doesn't need to know which spec variant it came from.
+    const nestedResource = block.type === 'resource' && block.resource && typeof block.resource === 'object' ? block.resource : undefined;
+    attachments.push({
+      type: typeof block.type === 'string' ? block.type : 'unknown',
+      mimeType: typeof block.mimeType === 'string' ? block.mimeType : typeof nestedResource?.mimeType === 'string' ? nestedResource.mimeType : undefined,
+      dataBase64: typeof block.data === 'string' ? block.data : typeof nestedResource?.blob === 'string' ? nestedResource.blob : undefined,
+      uri: typeof block.uri === 'string' ? block.uri : typeof nestedResource?.uri === 'string' ? nestedResource.uri : undefined,
+      text: typeof nestedResource?.text === 'string' ? nestedResource.text : undefined,
+    });
+  }
+  return { text: textParts.join('\n'), attachments };
 }
 
 /**
@@ -159,16 +209,12 @@ export class McpClient implements McpClientLike {
     }
   }
 
-  /** Calls one of the server's tools. Never throws for a normal tool-level failure (isError from the server) — that's surfaced as `{ok:false, text}` for the agent to react to, same as any other ToolResult. Only a transport-level failure (process gone, timeout) throws. */
+  /** Calls one of the server's tools. Never throws for a normal tool-level failure (isError from the server) — that's surfaced as `{ok:false, content}` for the agent to react to, same as any other ToolResult. Only a transport-level failure (process gone, timeout) throws. */
   async callTool(toolName: string, args: Record<string, any>): Promise<McpCallResult> {
     const result = await this.request('tools/call', { name: toolName, arguments: args }, REQUEST_TIMEOUT_MS);
-    const content = Array.isArray(result?.content) ? result.content : [];
-    const text = content
-      .map((block: any) => (block && typeof block.text === 'string' ? block.text : block && block.type ? `[${block.type} content]` : ''))
-      .filter(Boolean)
-      .join('\n')
-      || (result?.isError ? 'Tool reported an error with no further detail.' : '(no content returned)');
-    return { ok: !result?.isError, text };
+    const { text, attachments } = splitMcpContentBlocks(result?.content);
+    const content = text || (result?.isError ? 'Tool reported an error with no further detail.' : attachments.length > 0 ? '(no text content — see attachment(s))' : '(no content returned)');
+    return { ok: !result?.isError, content, attachments: attachments.length > 0 ? attachments : undefined };
   }
 
   dispose() {

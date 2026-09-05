@@ -9,7 +9,7 @@ import { AgentEvent } from '../agent/types';
 import { ForgeMode, isAutonomousMode, modeSupportsVerifyCommand } from '../agent/modes';
 import { CheckpointStore } from '../agent/checkpoints';
 import { CompactionCache } from '../agent/contextManager';
-import { TaskLedger, TaskLedgerEntry, renderTaskLedgerForPrompt } from '../agent/taskLedger';
+import { TaskLedger, TaskLedgerEntry, renderTaskLedgerForPrompt, renderTaskManifestMarkdown } from '../agent/taskLedger';
 import { WorkspaceIndex } from '../indexing/workspaceIndex';
 import { ChatMemoryIndex, extractSearchableText } from '../indexing/chatMemoryIndex';
 import { RulesEngine } from '../forge/rules';
@@ -97,6 +97,18 @@ export class ChatSession {
   private turnsSinceMemoryReview = 0;
   /** Tracks the in-progress 'subagent' transcript entry per nesting depth, so a matching subagent_result event (same depth) can find and update it — see handleAgentEvent's 'subagent_start'/'subagent_result' cases. */
   private subAgentEntryByDepth = new Map<number, string>();
+  /**
+   * 0.14.0 checkpoint/task-manifest unification: the checkpoint id for the
+   * turn currently in flight (set right after checkpoints.begin() in send(),
+   * cleared implicitly by the next turn's begin() rather than explicitly —
+   * there's no harm in a finished turn's id lingering here since nothing
+   * reads it between turns). Stamped onto any task-ledger entry that changes
+   * during this turn (see onTaskLedgerChanged()) so the ledger records which
+   * turn's checkpoint to roll back to if you want the workspace state from
+   * when that task was last touched — the scoped-down version of full
+   * per-task checkpointing (see TaskLedgerEntry.checkpointId's doc comment).
+   */
+  private currentCheckpointId: string | undefined;
 
   constructor(
     private services: ChatSessionServices,
@@ -194,18 +206,32 @@ export class ChatSession {
   }
 
   /**
-   * Item 4a/4b: applies a task-ledger mutation, mechanically logs it (both
-   * the JSONL crash-recovery log and the human-readable per-task Markdown
-   * report — see ChatStore.appendTaskReport()'s doc comment), and persists
-   * the session immediately — exactly the same "apply then persist without
-   * waiting for the turn to finish" treatment as pushEntry()/uiHistory and
+   * Item 4a/4b: applies a task-ledger mutation, mechanically logs it (the
+   * JSONL crash-recovery log, the per-task JSON manifest, and the
+   * human-readable Markdown report — see ChatStore.writeTaskManifest()'s and
+   * writeTaskReport()'s doc comments), and persists the session immediately
+   * — exactly the same "apply then persist without waiting for the turn to
+   * finish" treatment as pushEntry()/uiHistory and
    * the 'history_snapshot' handler/modelHistory, so an interruption loses
    * neither the raw transcript, the model-facing history, NOR the
    * structured task state.
    */
   private onTaskLedgerChanged(entry: TaskLedgerEntry) {
+    // 0.14.0: link this entry to whichever turn/checkpoint just touched it —
+    // see TaskLedgerEntry.checkpointId's and currentCheckpointId's doc
+    // comments. `entry` is the live object stored inside `this.taskLedger`
+    // (TaskLedger.get()/add() both return the real reference, not a copy),
+    // so mutating it here is exactly as durable as setStatus()'s own field
+    // writes.
+    if (this.currentCheckpointId) entry.checkpointId = this.currentCheckpointId;
     this.log('task', `[${entry.status}] ${entry.description}${entry.summary ? ` — ${entry.summary}` : ''}`);
-    this.services.chatStore.appendTaskReport(this.id, entry).catch((err) => logger.warn('task report append failed', String(err)));
+    // Per-task JSON manifest (the literal ".forge/tasks/<task-id>.json"
+    // resumability file) and the human-readable Markdown twin, both derived
+    // from the current ledger state — see ChatStore.writeTaskManifest()/
+    // writeTaskReport()'s doc comments for why this replaced the old
+    // append-only report.
+    this.services.chatStore.writeTaskManifest(this.id, entry).catch((err) => logger.warn('task manifest write failed', String(err)));
+    this.services.chatStore.writeTaskReport(this.id, this.taskLedger.list()).catch((err) => logger.warn('task report write failed', String(err)));
     this.persist();
     this.post({ type: 'taskLedgerUpdate', sessionId: this.id, tasks: this.taskLedger.list() });
   }
@@ -477,6 +503,7 @@ export class ChatSession {
       uiHistoryIndex: turnStartUiIndex,
       modelHistoryLength: this.modelHistory.length,
     });
+    this.currentCheckpointId = checkpointId;
 
     const userEntry: UiTranscriptEntry = { kind: 'user', id: genId('u'), text, files, checkpointId };
     this.pushEntry(userEntry);
@@ -742,6 +769,7 @@ export class ChatSession {
           entry.status = 'done';
           entry.ok = event.ok;
           entry.summary = event.summary;
+          entry.attachments = event.attachments;
           this.pushEntry(entry, true);
           this.post({ type: 'entryUpdate', sessionId: this.id, entry });
         }

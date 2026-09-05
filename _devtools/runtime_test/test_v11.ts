@@ -609,10 +609,10 @@ async function testMcpIntegration() {
     ok(tools.length === 2 && tools.some((t) => t.name === 'echo') && tools.some((t) => t.name === 'fail'), `listTools() returns both tools from the real spawned server (got ${tools.map((t) => t.name).join(',')})`);
 
     const echoResult = await client.callTool('echo', { text: 'hello' });
-    ok(echoResult.ok === true && echoResult.text === 'echo: hello', `callTool("echo") round-trips through the real child process (got ${JSON.stringify(echoResult)})`);
+    ok(echoResult.ok === true && echoResult.content === 'echo: hello', `callTool("echo") round-trips through the real child process (got ${JSON.stringify(echoResult)})`);
 
     const failResult = await client.callTool('fail', {});
-    ok(failResult.ok === false && /always fails/.test(failResult.text), 'a tool-level error (isError:true from the server) surfaces as {ok:false}, not a thrown exception');
+    ok(failResult.ok === false && /always fails/.test(failResult.content), 'a tool-level error (isError:true from the server) surfaces as {ok:false}, not a thrown exception');
 
     client.dispose();
     let threwAfterDispose = false;
@@ -654,12 +654,12 @@ async function testMcpIntegration() {
     const manager = new McpManager(() => [{ name: 'My Server!', command: process.execPath, args: [FAKE_MCP_SERVER] }]);
     await manager.start();
     const specs = manager.listToolSpecs();
-    ok(specs.some((s) => s.name === 'mcp_My_Server_echo'), `tool names are namespaced as mcp_<sanitized-server>_<tool> (got ${specs.map((s) => s.name).join(',')})`);
+    ok(specs.some((s) => s.name === 'mcp__My_Server__echo'), `tool names are namespaced as mcp__<sanitized-server>__<tool> — double underscore, 0.14.0's Claude-Code-matching convention (got ${specs.map((s) => s.name).join(',')})`);
     const status = manager.status();
     ok(status.length === 1 && status[0].connected === true && status[0].toolCount === 2, `status() reports the server connected with its 2 tools (got ${JSON.stringify(status)})`);
 
     // ---- calling a tool through its DynamicToolSpec goes through the approval gate ----
-    const echoSpec = specs.find((s) => s.name === 'mcp_My_Server_echo')!;
+    const echoSpec = specs.find((s) => s.name === 'mcp__My_Server__echo')!;
     const approvedCtx: any = { requestCommandApproval: async () => true };
     const approvedResult = await echoSpec.run({ text: 'via manager' }, approvedCtx);
     ok(approvedResult.ok === true && approvedResult.content === 'echo: via manager', 'an approved MCP tool call executes and returns the remote server\'s result');
@@ -680,7 +680,7 @@ async function testMcpIntegration() {
       { name: 'good', command: process.execPath, args: [FAKE_MCP_SERVER] },
     ]);
     await manager.start();
-    ok(manager.listToolSpecs().some((s) => s.name.startsWith('mcp_good_')), 'the well-formed server still starts and contributes tools even though a sibling entry was malformed');
+    ok(manager.listToolSpecs().some((s) => s.name.startsWith('mcp__good__')), 'the well-formed server still starts and contributes tools even though a sibling entry was malformed');
     ok(manager.lastStartErrors().length >= 1, 'the malformed entry is recorded in lastStartErrors() rather than silently dropped or crashing the whole manager');
     manager.disposeAll();
   }
@@ -695,7 +695,7 @@ async function testMcpIntegration() {
     const fakeOllama: any = {
       chat: async () => {
         call++;
-        if (call === 1) return '```forge_action\n{"tool": "mcp_fake_echo", "args": {"text": "from the agent"}}\n```';
+        if (call === 1) return '```forge_action\n{"tool": "mcp__fake__echo", "args": {"text": "from the agent"}}\n```';
         return 'All done — the MCP tool echoed back successfully.';
       },
     };
@@ -731,7 +731,7 @@ async function testMcpIntegration() {
     const fakeOllama: any = {
       chat: async () => {
         call++;
-        if (call === 1) return '```forge_action\n{"tool": "mcp_fake_echo", "args": {"text": "x"}}\n```';
+        if (call === 1) return '```forge_action\n{"tool": "mcp__fake__echo", "args": {"text": "x"}}\n```';
         return 'Cannot do that in Ask mode.';
       },
     };

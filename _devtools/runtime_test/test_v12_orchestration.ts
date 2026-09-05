@@ -251,7 +251,8 @@ function testChatSessionPersistenceRoundTrip() {
         saved.push(s);
       },
       appendLog: async () => {},
-      appendTaskReport: async () => {},
+      writeTaskManifest: async () => {},
+      writeTaskReport: async () => {},
     },
     pendingEdits: { onBeforeWrite: () => ({ dispose: () => {} }) },
   };

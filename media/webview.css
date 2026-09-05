@@ -400,6 +400,47 @@ body {
   max-height: 120px;
   overflow-y: auto;
 }
+/* MCP standardization (0.14.0): non-text content blocks (images, embedded
+   resources) an MCP tool returned — see agent/types.ts's ToolResultAttachment
+   and webview.js's renderToolAttachmentsHtml(). */
+.tool-attachments {
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.tool-attachment-image img {
+  max-width: 100%;
+  max-height: 240px;
+  border-radius: 4px;
+  border: 1px solid var(--vscode-widget-border, var(--vscode-panel-border));
+  display: block;
+}
+.tool-attachment-generic {
+  font-size: 11px;
+  opacity: 0.85;
+  border: 1px solid var(--vscode-widget-border, var(--vscode-panel-border));
+  border-radius: 4px;
+  padding: 4px 6px;
+}
+.tool-attachment-badge {
+  text-transform: uppercase;
+  font-size: 10px;
+  font-weight: 600;
+  opacity: 0.7;
+  margin-right: 4px;
+}
+.tool-attachment-label {
+  font-family: var(--vscode-editor-font-family, monospace);
+  word-break: break-all;
+}
+.tool-attachment-preview {
+  margin-top: 3px;
+  white-space: pre-wrap;
+  font-family: var(--vscode-editor-font-family, monospace);
+  max-height: 100px;
+  overflow-y: auto;
+}
 .spinner {
   display: inline-block;
   width: 10px;

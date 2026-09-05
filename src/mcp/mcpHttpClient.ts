@@ -1,5 +1,5 @@
 import { McpServerConfig } from './mcpTypes';
-import { McpClientLike, McpToolInfo, McpCallResult } from './mcpClient';
+import { McpClientLike, McpToolInfo, McpCallResult, splitMcpContentBlocks } from './mcpClient';
 import { logger } from '../util/logger';
 
 /**
@@ -88,16 +88,12 @@ export class McpHttpClient implements McpClientLike {
     }
   }
 
-  /** Calls one of the server's tools. Never throws for a normal tool-level failure (isError from the server) — that's surfaced as `{ok:false, text}` for the agent to react to, same as any other ToolResult. Only a transport-level failure (unreachable, timeout, malformed response) throws. */
+  /** Calls one of the server's tools. Never throws for a normal tool-level failure (isError from the server) — that's surfaced as `{ok:false, content}` for the agent to react to, same as any other ToolResult. Only a transport-level failure (unreachable, timeout, malformed response) throws. */
   async callTool(toolName: string, args: Record<string, any>): Promise<McpCallResult> {
     const result = await this.request('tools/call', { name: toolName, arguments: args }, REQUEST_TIMEOUT_MS);
-    const content = Array.isArray(result?.content) ? result.content : [];
-    const text = content
-      .map((block: any) => (block && typeof block.text === 'string' ? block.text : block && block.type ? `[${block.type} content]` : ''))
-      .filter(Boolean)
-      .join('\n')
-      || (result?.isError ? 'Tool reported an error with no further detail.' : '(no content returned)');
-    return { ok: !result?.isError, text };
+    const { text, attachments } = splitMcpContentBlocks(result?.content);
+    const content = text || (result?.isError ? 'Tool reported an error with no further detail.' : attachments.length > 0 ? '(no text content — see attachment(s))' : '(no content returned)');
+    return { ok: !result?.isError, content, attachments: attachments.length > 0 ? attachments : undefined };
   }
 
   dispose() {

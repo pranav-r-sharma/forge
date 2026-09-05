@@ -28,6 +28,27 @@ export interface ToolCall {
   raw: string;
 }
 
+/**
+ * MCP standardization (0.14.0): a non-text content block an MCP tool
+ * returned (an `image` or `resource` block per the MCP spec — see
+ * mcp/mcpClient.ts's callTool()), carried through as "data to show the user"
+ * rather than inlined into the model-facing observation text. Deliberately
+ * generic/tool-agnostic (not MCP-specific by name) so a future built-in tool
+ * that wants to hand back something similar (e.g. a generated image) doesn't
+ * need a parallel mechanism — same reasoning as ToolResult.warning below.
+ */
+export interface ToolResultAttachment {
+  /** The MCP content block's own `type` (`image`, `resource`, `audio`, or anything else a server invents — passed through verbatim, not validated against a closed set, since the spec allows servers to add block types). */
+  type: string;
+  mimeType?: string;
+  /** Base64-encoded bytes, for an `image`/`audio` block's `data` field. */
+  dataBase64?: string;
+  /** A `resource`/`resource_link` block's URI, if it has one. */
+  uri?: string;
+  /** Human-readable text describing/embedding the resource (an embedded-resource block's own `text`, or a short fallback description) — shown in the UI, never fed to the model as part of the tool's `content` (see mcp/mcpManager.ts's buildToolSpec()). */
+  text?: string;
+}
+
 export interface ToolResult {
   ok: boolean;
   /** Text fed back to the model as the tool's observation. */
@@ -46,6 +67,18 @@ export interface ToolResult {
    * different, more specific scenario.
    */
   warning?: string;
+  /**
+   * MCP standardization (0.14.0): non-text content blocks (images, embedded
+   * resources) an MCP tool returned alongside its text — shown to the user
+   * as attachments on the tool's transcript card (see webview/protocol.ts's
+   * 'tool' UiTranscriptEntry and media/webview.js's rendering), NOT inlined
+   * into `content`. This is the concrete "distinguish data to show the user
+   * from data to feed back into the loop" split: the model only ever sees a
+   * one-line count-and-type note (see mcp/mcpManager.ts's buildToolSpec()),
+   * never the raw base64/binary payload, which would be an expensive and
+   * usually useless thing to push through a local model's context window.
+   */
+  attachments?: ToolResultAttachment[];
 }
 
 export interface PendingEdit {
@@ -93,8 +126,21 @@ export interface ToolExecContext {
    * same AgentDeps/cancellation/model-resolution machinery runAgentTurn
    * itself uses — nesting is capped (see MAX_SUBAGENT_DEPTH in agentLoop.ts)
    * so a sub-agent can't spawn an unbounded tree of sub-agents.
+   *
+   * `resumeTaskId` (0.14.0 checkpoint/task-manifest unification): when set
+   * to an existing task-ledger entry's id (typically one the model saw
+   * marked "[~]"/"[!]" in the rendered ledger after an interruption — see
+   * renderTaskLedgerForPrompt()), the sub-agent resumes that entry in place
+   * (its status is flipped back to in_progress, no new ledger entry is
+   * created) and is seeded with that entry's last known summary ahead of
+   * `task`/`contextHint`. It's still a FRESH sub-agent context, not a
+   * replayed transcript — see agentLoop.ts's spawnSubAgent closure and
+   * CHANGELOG.md for why fresh-seeded-with-a-summary was chosen over full
+   * replay. An id that no longer exists in the ledger is treated the same as
+   * omitting resumeTaskId (a new entry is created instead) rather than
+   * failing the call.
    */
-  spawnSubAgent: (task: string, contextHint?: string) => Promise<{ ok: boolean; summary: string }>;
+  spawnSubAgent: (task: string, contextHint?: string, resumeTaskId?: string) => Promise<{ ok: boolean; summary: string }>;
   /**
    * Mandatory checkpoint-progress framework (item 4a/4b/4c — see
    * agent/taskLedger.ts's doc comment for the full rationale): backs the
@@ -117,8 +163,8 @@ export interface ToolExecContext {
     addTasks: (tasks: (string | { description: string; costTier?: CostTier; costNote?: string })[], parentTaskId?: string) => string[];
     /** Updates one task's status (and optionally its outcome summary). Returns false if `id` doesn't exist. */
     updateTask: (id: string, status: 'in_progress' | 'done' | 'failed', summary?: string) => boolean;
-    /** Current ledger snapshot, for the update_task tool to report back a legible confirmation and for plan_tasks to avoid creating obvious duplicates. */
-    list: () => { id: string; description: string; status: string; summary?: string; parentTaskId?: string; costTier?: CostTier; costNote?: string }[];
+    /** Current ledger snapshot, for the update_task tool to report back a legible confirmation and for plan_tasks to avoid creating obvious duplicates, and for spawn_subagent's resumeTaskId lookup (see ToolExecContext.spawnSubAgent's doc comment). */
+    list: () => { id: string; description: string; status: string; summary?: string; parentTaskId?: string; costTier?: CostTier; costNote?: string; checkpointId?: string }[];
   };
   /**
    * Web search (item "a terrific web search tool"). Undefined when
@@ -180,7 +226,7 @@ export type AgentEvent =
   | { type: 'token'; text: string }
   | { type: 'thought_start' }
   | { type: 'tool_call'; tool: string; args: Record<string, any>; callId: string }
-  | { type: 'tool_result'; callId: string; ok: boolean; summary: string }
+  | { type: 'tool_result'; callId: string; ok: boolean; summary: string; attachments?: ToolResultAttachment[] }
   | { type: 'pending_edit'; edit: PendingEditSerialized }
   | { type: 'edit_resolved'; id: string; accepted: boolean }
   | { type: 'approval_request'; kind: 'command' | 'plan_review'; callId: string; detail: string }

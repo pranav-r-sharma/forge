@@ -324,7 +324,7 @@ export async function runAgentTurn(
     checkBackgroundCommand: (id) => deps.backgroundProcesses.check(id),
     killBackgroundCommand: (id) => deps.backgroundProcesses.kill(id),
     listBackgroundCommands: () => deps.backgroundProcesses.list(),
-    spawnSubAgent: async (task, contextHint) => {
+    spawnSubAgent: async (task, contextHint, resumeTaskId) => {
       const configuredMaxDepth = Math.min(Math.max(1, cfg.maxSubAgentDepth), HARD_MAX_SUBAGENT_DEPTH);
       if (subAgentDepth >= configuredMaxDepth) {
         return {
@@ -347,9 +347,28 @@ export async function runAgentTurn(
       // present for real ChatSession-driven turns; some direct/test callers
       // of runAgentTurn don't wire it up, and that must never break
       // spawn_subagent itself.
-      const ledgerTaskId = deps.taskLedger?.addTasks([task])[0];
-      if (ledgerTaskId) deps.taskLedger!.updateTask(ledgerTaskId, 'in_progress');
-      const subUserMessage = contextHint ? `${task}\n\n[Context from parent agent]\n${contextHint}` : task;
+      //
+      // 0.14.0 resumeTaskId: if the caller named an EXISTING ledger entry to
+      // resume (typically one it saw marked "[~]"/"[!]" after an
+      // interruption — see renderTaskLedgerForPrompt()), reuse that entry
+      // in place instead of creating a new one, and fold its last known
+      // progress into the sub-agent's seeded context. A stale/unknown id is
+      // treated exactly like omitting resumeTaskId (falls through to
+      // creating a fresh entry) rather than failing the whole call — a
+      // model hallucinating or reusing a since-deleted id shouldn't block
+      // real work from happening.
+      const resumedEntry = resumeTaskId ? deps.taskLedger?.list().find((e) => e.id === resumeTaskId) : undefined;
+      let ledgerTaskId: string | undefined;
+      let resumeNote: string | undefined;
+      if (resumedEntry) {
+        ledgerTaskId = resumedEntry.id;
+        deps.taskLedger!.updateTask(ledgerTaskId, 'in_progress');
+        resumeNote = `[Resuming task ${resumedEntry.id}, previously "${resumedEntry.status}"]\n${resumedEntry.summary ? `Last known progress: ${resumedEntry.summary}` : 'No progress summary was recorded before this task was interrupted — treat the task description as the only ground truth and verify current state before assuming anything is already done.'}`;
+      } else {
+        ledgerTaskId = deps.taskLedger?.addTasks([task])[0];
+        if (ledgerTaskId) deps.taskLedger!.updateTask(ledgerTaskId, 'in_progress');
+      }
+      const subUserMessage = [resumeNote, task, contextHint ? `[Context from parent agent]\n${contextHint}` : undefined].filter(Boolean).join('\n\n');
       // Sub-agents only ever report their final answer back to the parent —
       // their own tool-call chatter is real (it still shows up via `emit`
       // as ordinary events, tagged nowhere as "sub" today, which is a known
@@ -680,6 +699,10 @@ export async function runAgentTurn(
       callId,
       ok: result.ok,
       summary: summarize(resultContentForModel),
+      // MCP standardization (0.14.0) — see ToolResultAttachment's doc
+      // comment: shown on the tool's transcript card, never folded into the
+      // summarized text above.
+      attachments: result.attachments,
     });
 
     pushMsg({ role: 'user', content: `[Tool "${call.tool}" result]\n${resultContentForModel}` });

@@ -1110,6 +1110,7 @@
           <span class="tool-args">${argSummary}</span>
         </div>
         ${entry.summary ? `<div class="tool-summary">${escapeHtml(entry.summary)}</div>` : ''}
+        ${renderToolAttachmentsHtml(entry.attachments)}
       `;
       return wrap;
     }
@@ -1201,6 +1202,31 @@
     if (typeof args.query === 'string') return `"${args.query}"`;
     const s = JSON.stringify(args);
     return s.length > 80 ? s.slice(0, 80) + '…' : s;
+  }
+
+  /**
+   * MCP standardization (0.14.0): renders a tool result's non-text content
+   * blocks (see agent/types.ts's ToolResultAttachment) — an `image` block
+   * with base64 `dataBase64`+`mimeType` becomes an actual inline `<img>`;
+   * anything else (a `resource`/`resource_link`, or an image missing its own
+   * base64 payload) becomes a small labeled chip naming its type/URI/text
+   * preview. This is the "data shown to the user, not fed back into the
+   * model" half of the MCP content-block split — the model only ever sees
+   * the one-line count-and-type note mcpManager.ts's buildToolSpec()
+   * appends to the tool's text content, never this. Returns '' when there's
+   * nothing to show, so callers can splice it in unconditionally.
+   */
+  function renderToolAttachmentsHtml(attachments) {
+    if (!attachments || !attachments.length) return '';
+    const items = attachments.map((a) => {
+      if (a.type === 'image' && a.dataBase64 && a.mimeType) {
+        return `<div class="tool-attachment tool-attachment-image"><img src="data:${escapeAttr(a.mimeType)};base64,${escapeAttr(a.dataBase64)}" alt="MCP tool image attachment" /></div>`;
+      }
+      const label = a.uri || a.mimeType || a.type || 'attachment';
+      const preview = a.text ? escapeHtml(a.text.length > 200 ? a.text.slice(0, 200) + '…' : a.text) : '';
+      return `<div class="tool-attachment tool-attachment-generic"><span class="tool-attachment-badge">${escapeHtml(a.type || 'resource')}</span> <span class="tool-attachment-label">${escapeHtml(label)}</span>${preview ? `<div class="tool-attachment-preview">${preview}</div>` : ''}</div>`;
+    });
+    return `<div class="tool-attachments">${items.join('')}</div>`;
   }
 
   /** Item #9: same as summarizeArgs, but when the tool call is about a file path, that path is a clickable file-ref span instead of plain text. */

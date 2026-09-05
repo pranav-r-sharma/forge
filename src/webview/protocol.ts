@@ -1,4 +1,4 @@
-import { AgentActivity, PendingEditSerialized } from '../agent/types';
+import { AgentActivity, PendingEditSerialized, ToolResultAttachment } from '../agent/types';
 import { ForgeMode } from '../agent/modes';
 import { TaskLedgerEntry } from '../agent/taskLedger';
 import { SessionSummary } from '../forge/chatStore';
@@ -10,7 +10,8 @@ import { FileSearchEntry } from '../util/fileSearch';
 export type UiTranscriptEntry =
   | { kind: 'user'; id: string; text: string; files?: string[]; checkpointId?: string }
   | { kind: 'assistant'; id: string; text: string; streaming?: boolean; unverifiedClaims?: string[] }
-  | { kind: 'tool'; id: string; callId: string; tool: string; args: Record<string, any>; status: 'running' | 'done'; ok?: boolean; summary?: string }
+  /** `attachments` — MCP standardization (0.14.0): non-text content blocks (images, embedded resources) an MCP tool's result carried, shown on the card instead of inlined into `summary` — see agent/types.ts's ToolResultAttachment. Absent for built-in tools and for MCP tools that only returned text. */
+  | { kind: 'tool'; id: string; callId: string; tool: string; args: Record<string, any>; status: 'running' | 'done'; ok?: boolean; summary?: string; attachments?: ToolResultAttachment[] }
   /** `reviewKind` distinguishes what's being approved — 'command' (the original, default) or, new for cost-aware task planning, 'plan_review' (see ApprovalBroker.requestPlanApproval/agent/taskCost.ts). Optional so old, already-persisted sessions from before 'plan_review' existed still deserialize as the 'command' rendering. */
   | { kind: 'approval'; id: string; callId: string; detail: string; status: 'pending' | 'approved' | 'denied'; reviewKind?: 'command' | 'plan_review' }
   | { kind: 'plan'; id: string; text: string; executed?: boolean }

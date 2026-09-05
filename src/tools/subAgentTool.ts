@@ -14,6 +14,10 @@ export async function spawnSubAgentTool(args: Record<string, any>, ctx: ToolExec
     return { ok: false, content: 'spawn_subagent requires a non-empty "task" string describing exactly what the sub-agent should accomplish.' };
   }
   const contextHint = typeof args.context === 'string' ? args.context : undefined;
-  const result = await ctx.spawnSubAgent(task, contextHint);
+  // 0.14.0 resumeTaskId: pick up an existing "[~]"/"[!]" ledger entry
+  // (see ToolExecContext.spawnSubAgent's doc comment) instead of always
+  // creating a brand new one.
+  const resumeTaskId = typeof args.resumeTaskId === 'string' && args.resumeTaskId.trim() ? args.resumeTaskId.trim() : undefined;
+  const result = await ctx.spawnSubAgent(task, contextHint, resumeTaskId);
   return { ok: result.ok, content: result.summary };
 }

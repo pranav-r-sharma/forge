@@ -12,7 +12,7 @@ import { ToolExecContext, ToolResult } from '../agent/types';
  * anything else, which is where this really gets enforced.
  */
 export interface McpServerConfig {
-  /** Short identifier used to namespace this server's tools (e.g. "github" -> tool names like "mcp_github_search_issues") and to label them in the UI/approval prompts. */
+  /** Short identifier used to namespace this server's tools (e.g. "github" -> tool names like "mcp__github__search_issues" — see mcpManager.ts's doc comment on the 0.14.0 double-underscore convention) and to label them in the UI/approval prompts. */
   name: string;
 
   // ---------- stdio transport — set `command`, leave `url` unset ----------
@@ -40,9 +40,15 @@ export interface McpServerConfig {
  * meaningful.
  */
 export interface DynamicToolSpec {
-  /** Namespaced, e.g. "mcp_<server>_<tool>" — see mcpManager.ts's sanitizeToolName(). */
+  /** Namespaced, e.g. "mcp__<server>__<tool>" — see mcpManager.ts's sanitize()/buildToolSpec(). Double-underscore separator matches the convention Claude Code itself uses for its own MCP-sourced tools, chosen specifically so a server or tool name that happens to contain a single underscore can't be misread as part of the separator. */
   name: string;
+  /** The configured server name this tool came from, stored directly rather than re-derived from `name` by string-prefix matching (status()/dispatch used to do that, which broke down the moment `sanitize()` could map two different inputs to the same namespaced prefix). */
+  serverName: string;
+  /** The tool's own name as the server itself calls it (pre-sanitization, pre-namespacing) — what's actually sent in `tools/call`'s `name` field. */
+  remoteName: string;
   describe: string;
   exampleArgs: Record<string, any>;
+  /** The server's own JSON Schema for this tool's input, verbatim from `tools/list` — MCP standardization (0.14.0): kept alongside the synthesized `exampleArgs`/describe-string rendering (see mcpManager.ts's buildToolSpec()) rather than only flattened into prose, so anything that wants the real schema (structured-output validation, a future stricter dispatcher) has it. Undefined for a server that didn't advertise one. */
+  inputSchema?: Record<string, any>;
   run: (args: Record<string, any>, ctx: ToolExecContext) => Promise<ToolResult>;
 }
