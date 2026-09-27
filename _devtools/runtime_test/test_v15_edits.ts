@@ -40,6 +40,51 @@ def count_words(text):
     return len(text.split())
 `;
 
+// ============================================================================
+// Regression: found live on 2026-09-27 (full-suite rerun, t04/t06). A search/replace whose "search" text omits a line's leading whitespace (the
+// model is not changing the indent, just the code) used to get that indent ADDED A SECOND TIME on top of what was already physically in the file —
+// e.g. "    return x" -> search "return x" -> replace "return y" produced "        return y" (8 spaces), an IndentationError in Python.
+// ============================================================================
+async function testDoesNotDoubleIndentWhenSearchOmitsLeadingWhitespace() {
+  const file = 'def revenue(orders):\n    """Sum."""\n    return round(sum(pricing.calc_tot(lines) for lines in orders), 2)\n';
+  const { state, ctx } = fileCtx(file);
+  const r = await writeFileTool({ path: 'r.py', search: 'return round(sum(pricing.calc_tot(lines) for lines in orders), 2)', replace: 'return round(sum(pricing.calculate_total(lines) for lines in orders), 2)' }, ctx);
+  ok(r.ok, 'the edit succeeds');
+  const editedLine = state.text.split('\n')[2];
+  ok(editedLine === '    return round(sum(pricing.calculate_total(lines) for lines in orders), 2)', `the file's own indentation is kept EXACTLY as it was — not doubled (got ${JSON.stringify(editedLine)})`);
+  ok(/^\s{5,}/.test(editedLine) === false, 'never more indentation than the file actually has');
+}
+
+async function testDoubleIndentAcrossIndentStyles() {
+  // tabs
+  const tabFile = 'function f() {\n\treturn 1;\n}\n';
+  const t1 = fileCtx(tabFile);
+  await writeFileTool({ path: 'f.ts', search: 'return 1;', replace: 'return 2;' }, t1.ctx);
+  ok(t1.state.text === 'function f() {\n\treturn 2;\n}\n', `tab-indented files: no extra tab added (got ${JSON.stringify(t1.state.text)})`);
+  // deep nesting (8 spaces)
+  const deep = 'if a:\n    if b:\n        x = 1\n';
+  const t2 = fileCtx(deep);
+  await writeFileTool({ path: 'd.py', search: 'x = 1', replace: 'x = 2' }, t2.ctx);
+  ok(t2.state.text === 'if a:\n    if b:\n        x = 2\n', `deep (8-space) nesting is preserved exactly, not made 12 (got ${JSON.stringify(t2.state.text)})`);
+  // multi-line replace where only the first line omits the leading indent
+  const multi = 'def f():\n    a = 1\n    b = 2\n';
+  const t3 = fileCtx(multi);
+  await writeFileTool({ path: 'm.py', search: 'a = 1\n    b = 2', replace: 'a = 10\n    b = 20' }, t3.ctx);
+  ok(t3.state.text === 'def f():\n    a = 10\n    b = 20\n', 'a multi-line search whose first line omits the indent but whose later lines include it is not doubled either');
+  // the "edits" (multi-edit) path uses the same function — must be fixed there too
+  const e = fileCtx('def f():\n    x = 1\n    y = 2\n');
+  const re = await writeFileTool({ path: 'e.py', edits: [{ search: 'x = 1', replace: 'x = 10' }, { search: 'y = 2', replace: 'y = 20' }] }, e.ctx);
+  ok(re.ok && e.state.text === 'def f():\n    x = 10\n    y = 20\n', 'the edits[] (multi-edit) path is fixed too, not just single search/replace');
+  // a search that DOES include its own leading whitespace still gets normal reindent treatment (the fix must not disable that)
+  const norm = fileCtx('def f():\n\tx = 1\n'); // file is tab-indented
+  await writeFileTool({ path: 'n.py', search: '    x = 1', replace: '    x = 2' }, norm.ctx); // model wrote spaces, matching the file's tab depth
+  ok(norm.state.text === 'def f():\n\tx = 2\n', `a search that already includes indentation is still remapped onto the file's real style (unrelated code path, must stay working) — got ${JSON.stringify(norm.state.text)}`);
+  // a match truly at column 0 (no indent at all) is unaffected
+  const col0 = fileCtx('x = 1\ny = 2\n');
+  await writeFileTool({ path: 'c.py', search: 'x = 1', replace: 'x = 100' }, col0.ctx);
+  ok(col0.state.text === 'x = 100\ny = 2\n', 'a column-0 match (no indentation at all) is unaffected');
+}
+
 function testDedentedDefinitionIsNotForcedIn() {
   const file = 'def f(x):\n    a = 1\n    b = 2\n    return a + b\n';
   const anchorLine = 1; // "    a = 1"
@@ -209,6 +254,8 @@ async function testReplaceAll() {
 }
 
 async function main() {
+  await testDoesNotDoubleIndentWhenSearchOmitsLeadingWhitespace();
+  await testDoubleIndentAcrossIndentStyles();
   testDedentedDefinitionIsNotForcedIn();
   testOrdinaryReindentStillWorks();
   testDuplicateDefinitionAdvisory();

@@ -154,7 +154,13 @@ function applySearchReplace(existing: string, search: string, replace: string, r
     // matches mid-line (a sub-line fragment following real code on the same
     // line) has no such anchor; see reindentReplacement()'s doc comment.
     const matchStartsAtLineStart = /^[ \t]*$/.test(existing.slice(lineStartIndex, matchIndex));
-    reindent = reindentReplacement(existing, matchStartLineIndex, matchStartsAtLineStart, replace);
+    // BUG this fixes (found live, 2026-09-27): matchStartsAtLineStart is true whenever only whitespace precedes the match, even when that
+    // whitespace is NOT part of "search" — a model very commonly writes search/replace WITHOUT the leading indentation (it is not asking to
+    // change the indent, just the code). That whitespace then stays untouched in the file, but reindentReplacement used to also PREPEND the
+    // anchor's own indent to replace's first line, so the result had the file's real indent AND the added indent — e.g. 4 real spaces + 4 added
+    // = 8, an IndentationError in Python. anchorIndentAlreadyPresent tells reindentReplacement the anchor's indent is physically still there.
+    const anchorIndentAlreadyPresent = matchStartsAtLineStart && matchIndex > lineStartIndex;
+    reindent = reindentReplacement(existing, matchStartLineIndex, matchStartsAtLineStart, replace, anchorIndentAlreadyPresent);
     newText = existing.replace(search, () => reindent.text);
   }
   // Item "whitespace and indentation issues when doing targeted writes to
@@ -765,7 +771,8 @@ export function reindentReplacement(
   originalFileText: string,
   matchStartLineIndex: number,
   matchStartsAtLineStart: boolean,
-  replaceText: string
+  replaceText: string,
+  anchorIndentAlreadyPresent = false
 ): ReindentResult {
   const fileUnit = matchStartsAtLineStart ? resolveIndentUnit(originalFileText) : undefined;
   if (!fileUnit) {
@@ -819,10 +826,13 @@ export function reindentReplacement(
     if (line.trim() === '') return '';
     const ws = LEADING_WS_RE.exec(line)![0];
     const content = line.slice(ws.length);
-    if (i === firstRealLine) return baseIndent + content;
+    if (i === firstRealLine) return (anchorIndentAlreadyPresent ? '' : baseIndent) + content;
     const depth = replaceUnitStr ? peelIndentDepth(ws, replaceUnitStr).depth : 0;
     const relativeDepth = depth - firstLineDepth;
-    const depthUnits = Math.max(0, baseDepth + relativeDepth);
+    // When the anchor's own indent is physically already in the file (not part of "search"/firstRealLine above), a later line's indentation in
+    // "replace" is what the model actually typed to match the file, not an offset meant to be re-based onto baseDepth — re-adding baseDepth here
+    // is the same double-count bug as firstRealLine's, just one line down (found live 2026-09-27 on a two-line search/replace).
+    const depthUnits = Math.max(0, (anchorIndentAlreadyPresent ? 0 : baseDepth) + relativeDepth);
     return fileUnitStr.repeat(depthUnits) + content;
   });
 

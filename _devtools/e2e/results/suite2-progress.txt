@@ -1,0 +1,19 @@
+=== t04-rename-symbol
+[new r1] pass=True wall=107.333 iters=22 evalTok=2309 cache=95% (109s incl. server)
+[new r2] pass=True wall=142.61 iters=30 evalTok=3005 cache=96.1% (144s incl. server)
+
+config      pass   wall_s  iters  evalTok  tool_fail  cache%   (medians)
+new         2/2    125.0   26.0   2657.0        3.5    95.5
+=== t05-large-file
+[new r1] pass=True wall=30.751 iters=7 evalTok=571 cache=84.8% (32s incl. server)
+[new r2] pass=True wall=30.274 iters=7 evalTok=571 cache=84.8% (32s incl. server)
+
+config      pass   wall_s  iters  evalTok  tool_fail  cache%   (medians)
+new         2/2     30.5    7.0    571.0        0.0    84.8
+=== t06-multi-file-feature
+[new r1] pass=False wall=264.086 iters=30 evalTok=5798 cache=95.7% (266s incl. server)
+[new r2] pass=True wall=152.993 iters=22 evalTok=3384 cache=94.6% (155s incl. server)
+
+config      pass   wall_s  iters  evalTok  tool_fail  cache%   (medians)
+new         1/2    208.5   26.0   4591.0        2.5    95.2
+=== SUITE DONE

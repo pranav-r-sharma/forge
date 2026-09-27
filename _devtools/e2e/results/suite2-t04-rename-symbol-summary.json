@@ -1,0 +1,105 @@
+{
+  "new": [
+    {
+      "task": "t04-rename-symbol",
+      "provider": "mlx",
+      "model": "a48173b246ac705be75c05bedf1a0666db522d53",
+      "thinking": "auto",
+      "ctx": 32768,
+      "appendOnly": true,
+      "maxIters": 30,
+      "timeoutS": 600,
+      "startedAt": "2026-09-27T04:50:24.523Z",
+      "hardware": "Apple M5, 32 GB",
+      "serverReadyS": 1.045,
+      "wallS": 107.333,
+      "checkExit": 0,
+      "checkOutput": "----------------------------------------------------------------------\nRan 4 tests in 0.000s\n\nOK",
+      "protectedTouched": [],
+      "filesChanged": [
+        "orders/cli.py",
+        "orders/invoice.py",
+        "orders/pricing.py",
+        "orders/report.py",
+        "tests/test_orders.py"
+      ],
+      "pass": true,
+      "finalText": "Done. `calc_tot` has been renamed to `calculate_total` everywhere and all tests pass.\n\n## What changed\n- **`orders/pricing.py`** \u2014 definition renamed: `def calc_tot(...)` \u2192 `def calculate_total(...)`.\n- **`orders/cli.py`** \u2014 import and call updated.\n- **`orders/invoice.py`** \u2014 import and call updated.\n- **`orders/report.py`** \u2014 call updated.\n- **`tests/test_orders.py`** \u2014 import and both test func",
+      "iterations": 22,
+      "tools": {
+        "search_code": 3,
+        "write_file": 10,
+        "run_command": 6,
+        "read_file": 2
+      },
+      "toolFailures": 3,
+      "redundantReads": 0,
+      "reads": 2,
+      "viewEvents": 0,
+      "modelS": 107.19,
+      "toolS": 0.13,
+      "tokensEvaluated": 7096,
+      "tokensCached": 135120,
+      "cacheHitPct": 95,
+      "evalTokens": 2309,
+      "promptCharsMax": 33055,
+      "hw": {
+        "minAvailableGB": 13.7,
+        "maxSwapGB": 0.75,
+        "gpuPeakPct": 100
+      },
+      "tracePath": "_devtools/e2e/results/suite2-t04-rename-symbol-new-r1.trace.jsonl"
+    },
+    {
+      "task": "t04-rename-symbol",
+      "provider": "mlx",
+      "model": "a48173b246ac705be75c05bedf1a0666db522d53",
+      "thinking": "auto",
+      "ctx": 32768,
+      "appendOnly": true,
+      "maxIters": 30,
+      "timeoutS": 600,
+      "startedAt": "2026-09-27T04:52:13.492Z",
+      "hardware": "Apple M5, 32 GB",
+      "serverReadyS": 1.07,
+      "agentError": "Stopped after 30 steps without a final answer. You can ask me to continue.",
+      "wallS": 142.61,
+      "checkExit": 0,
+      "checkOutput": "----------------------------------------------------------------------\nRan 4 tests in 0.000s\n\nOK",
+      "protectedTouched": [],
+      "filesChanged": [
+        "orders/cli.py",
+        "orders/invoice.py",
+        "orders/pricing.py",
+        "orders/report.py",
+        "tests/test_orders.py"
+      ],
+      "pass": true,
+      "finalText": "",
+      "iterations": 30,
+      "tools": {
+        "search_code": 2,
+        "write_file": 9,
+        "run_command": 14,
+        "read_file": 5
+      },
+      "toolFailures": 4,
+      "redundantReads": 0,
+      "reads": 5,
+      "viewEvents": 0,
+      "modelS": 142.34,
+      "toolS": 0.26,
+      "tokensEvaluated": 9029,
+      "tokensCached": 223398,
+      "cacheHitPct": 96.1,
+      "evalTokens": 3005,
+      "promptCharsMax": 41013,
+      "hw": {
+        "minAvailableGB": 11.9,
+        "maxSwapGB": 0.75,
+        "gpuPeakPct": 100
+      },
+      "tracePath": "_devtools/e2e/results/suite2-t04-rename-symbol-new-r2.trace.jsonl"
+    }
+  ]
+}
