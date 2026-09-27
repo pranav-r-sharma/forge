@@ -156,6 +156,7 @@ export async function activate(context: vscode.ExtensionContext) {
     workspaceRoot,
     workspaceName
   );
+  context.subscriptions.push({ dispose: () => chatViewProvider.dispose() });
   context.subscriptions.push(vscode.window.registerWebviewViewProvider('forge.chatView', chatViewProvider, {
     webviewOptions: { retainContextWhenHidden: true },
   }));

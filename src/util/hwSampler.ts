@@ -345,3 +345,17 @@ export class HwSampler {
     return this.snap;
   }
 }
+
+/** Maps a sampler snapshot to the exact shape the webview protocol (HwStatus.memory / HwStatus.gpus) expects. Pure; kept separate so the mapping is testable without the provider. */
+export function hwFieldsForUi(snap: HwSnapshot): {
+  memory?: { totalGB: number; usedGB: number; availableGB: number; cachedGB: number; freeGB: number; wiredGB: number; compressedGB: number; swapUsedGB?: number; pressure: MemoryPressure; source: 'darwin' | 'approximate'; sampledAtMs: number };
+  gpus?: { name?: string; cores?: number; utilizationPct: number; avgPct: number; peakPct: number; inUseGB?: number }[];
+} {
+  const m = snap.memory;
+  return {
+    memory: m
+      ? { totalGB: m.totalGB, usedGB: m.usedGB, availableGB: m.availableGB, cachedGB: m.cachedGB, freeGB: m.freeGB, wiredGB: m.wiredGB, compressedGB: m.compressedGB, swapUsedGB: m.swapUsedGB, pressure: m.pressure, source: m.source, sampledAtMs: m.tsMs }
+      : undefined,
+    gpus: snap.gpus.length ? snap.gpus.map((g) => ({ name: g.name, cores: g.cores, utilizationPct: g.utilizationPct, avgPct: g.avgPct, peakPct: g.peakPct, inUseGB: g.inUseGB })) : undefined,
+  };
+}

@@ -124,6 +124,27 @@ export interface HwStatus {
   ram?: { usedGB: number; totalGB: number };
   /** GPU utilization/VRAM, best-effort via `nvidia-smi` — absent entirely on machines without an NVIDIA GPU or without nvidia-smi on PATH (e.g. Apple Silicon, AMD), which is the common case for a local-Ollama setup and not an error. */
   gpu?: { name: string; usedVramGB: number; totalVramGB: number; utilizationPct: number }[];
+  /**
+   * Accurate memory readout (v0.15.0 §1.4, src/util/hwSampler.ts). On macOS: Activity-Monitor-style used/available (NOT os.freemem()), with the OS's own
+   * pressure state. `ram` above is kept (and filled from this) for older readers. Undefined → the UI shows "n/a", never a guess.
+   */
+  memory?: {
+    totalGB: number;
+    usedGB: number;
+    availableGB: number;
+    cachedGB: number;
+    freeGB: number;
+    wiredGB: number;
+    compressedGB: number;
+    swapUsedGB?: number;
+    pressure: 'normal' | 'warn' | 'critical' | 'unknown';
+    /** 'darwin' = exact; 'approximate' = non-macOS fallback. */
+    source: 'darwin' | 'approximate';
+    /** When this reading was taken, so the tooltip can show its age. */
+    sampledAtMs: number;
+  };
+  /** Apple-silicon/Intel-Mac GPU via ioreg (no sudo). `avgPct` is smoothed over a few seconds — display that, not the raw instant; `peakPct` is the max since the current turn began. `inUseGB` is unified memory (the same pool as RAM), not separate VRAM. */
+  gpus?: { name?: string; cores?: number; utilizationPct: number; avgPct: number; peakPct: number; inUseGB?: number }[];
   /** Rough, RAM-headroom-based suggestion for a larger forge.numCtx — see util/hwMetrics.ts's estimateSuggestedNumCtx(). Undefined if there isn't enough idle RAM to make a suggestion worthwhile. Deliberately NOT a precise/guaranteed-safe figure — see that function's doc comment. */
   suggestedNumCtx?: number;
 }

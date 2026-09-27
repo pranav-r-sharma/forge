@@ -20,6 +20,7 @@ import { genId } from '../util/ids';
 import { resolveWorkspacePath, toRelative } from '../util/paths';
 import { WorkspaceEntryIndex } from '../util/fileSearch';
 import { estimateSuggestedNumCtx, getGpuStatus, getRamStatus } from '../util/hwMetrics';
+import { HwSampler, hwFieldsForUi } from '../util/hwSampler';
 import { logger } from '../util/logger';
 import { ChatSession, ChatSessionServices } from './chatSession';
 import { ExtensionToWebviewMessage, HwStatus, InitState, SearchResultItem, SettingsSnapshot, UiTranscriptEntry, WebviewToExtensionMessage } from '../webview/protocol';
@@ -103,6 +104,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   private sessionsListSeq = 0;
   private allChatsListSeq = 0;
 
+  /** One shared sampler for every webview host (v0.15.0 §1.4) — pushes accurate memory/GPU readings instead of waiting for a click. */
+  private readonly hwSampler = new HwSampler();
+  private psCache: { at: number; value: Awaited<ReturnType<OllamaClient['ps']>> } | undefined;
+  private hwPushInFlight = false;
+
   constructor(
     private readonly context: vscode.ExtensionContext,
     private readonly ollama: OllamaClient,
@@ -125,6 +131,26 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     this.services = { ollama, pendingEdits, backgroundProcesses, workspaceIndex, chatMemoryIndex, rules, skills, hooks, memory, chatStore, webSearchService, webFetchService, mcpManager, workspaceRoot, workspaceName };
     this.entryIndex = new WorkspaceEntryIndex(workspaceRoot);
     this.pendingEdits.onDidChange((edits) => this.post({ type: 'pendingEdits', edits }));
+    this.hwSampler.start(2000, () => void this.pushHwStatus());
+  }
+
+  /** Stops the hardware sampler (called from extension deactivation via context.subscriptions). */
+  dispose() {
+    this.hwSampler.stop();
+  }
+
+  /** Pushes a fresh hardware readout to any open webview host; skipped entirely when none is open (no point building it), and never overlaps itself. */
+  private async pushHwStatus() {
+    if (!this.view && !this.panel) return;
+    if (this.hwPushInFlight) return;
+    this.hwPushInFlight = true;
+    try {
+      this.post({ type: 'hwStatus', status: await this.buildHwStatus() });
+    } catch (err) {
+      logger.warn('pushHwStatus failed', String(err));
+    } finally {
+      this.hwPushInFlight = false;
+    }
   }
 
   resolveWebviewView(webviewView: vscode.WebviewView) {
@@ -224,6 +250,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   /** Forwards session events to the webview only when that session is the one on screen, with one exception (`busy`) so background tabs can show a spinner. */
   private notify(sessionId: string, msg: ExtensionToWebviewMessage) {
     if (msg.type === 'metricsUpdate') this.lastMetricsBySession.set(sessionId, msg.metrics);
+    if (msg.type === 'busy') {
+      // A turn starting means "peak GPU this turn" should start from zero, and readings should refresh faster while work is happening.
+      if (msg.busy) this.hwSampler.resetPeak();
+      this.hwSampler.setIntervalMs(msg.busy ? 1000 : 3000);
+    }
     if (sessionId === this.activeSessionId) {
       this.post(msg);
       if (msg.type === 'busy') this.pushSessionsList();
@@ -717,13 +748,23 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
    * (last call's prompt+eval token count vs. its configured ceiling).
    */
   private async buildHwStatus(): Promise<HwStatus> {
-    const [loaded, gpu] = await Promise.all([this.ollama.ps().catch(() => []), getGpuStatus()]);
+    // ollama.ps() is an HTTP call — cache it briefly so the ~1-3 s hardware push doesn't hit Ollama every tick.
+    const now = Date.now();
+    if (!this.psCache || now - this.psCache.at > 4000) {
+      this.psCache = { at: now, value: await this.ollama.ps().catch(() => []) };
+    }
+    const loaded = this.psCache.value;
+    const snap = this.hwSampler.latest().sampledAtMs ? this.hwSampler.latest() : await this.hwSampler.sampleOnce();
     const cfg = getConfig();
     const active = this.activeSession();
     const lastMetrics = this.activeSessionId ? this.lastMetricsBySession.get(this.activeSessionId) : undefined;
     const maxTokens = active?.numCtxOverride || cfg.numCtx;
     const usedTokens = lastMetrics ? (lastMetrics.promptTokens || 0) + (lastMetrics.evalTokens || 0) : undefined;
-    const ram = getRamStatus();
+    const mem = snap.memory;
+    // `ram` stays populated for older readers: from the accurate sample when we have one, else the legacy os-module approximation.
+    const ram = mem ? { usedGB: mem.usedGB, totalGB: mem.totalGB } : getRamStatus();
+    // NVIDIA fallback only where the macOS/ioreg path produced nothing (Linux/Windows boxes).
+    const nvidia = snap.gpus.length ? [] : await getGpuStatus();
     return {
       loadedModels: loaded.map((m) => ({
         name: m.name,
@@ -732,7 +773,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         expiresAt: m.expires_at,
       })),
       ram,
-      gpu: gpu.length ? gpu : undefined,
+      ...hwFieldsForUi(snap),
+      gpu: nvidia.length ? nvidia : undefined,
       contextWindow: usedTokens !== undefined ? { usedTokens, maxTokens } : undefined,
       suggestedNumCtx: estimateSuggestedNumCtx(maxTokens, ram),
     };

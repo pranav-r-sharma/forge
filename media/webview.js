@@ -1350,16 +1350,48 @@
       const vram = loaded.reduce((n, x) => n + (x.vramGB || x.sizeGB || 0), 0);
       parts.push(`${loaded.length} model${loaded.length === 1 ? '' : 's'} loaded (${vram.toFixed(1)}GB)`);
     }
-    if (hw.ram) parts.push(`RAM ${hw.ram.usedGB}/${hw.ram.totalGB}GB`);
-    if (hw.gpu && hw.gpu.length) {
+    const mem = hw.memory;
+    if (mem) {
+      // Accurate (Activity-Monitor-style) memory: used, and what is actually available. A wrong number is worse than none, so a missing source shows n/a.
+      let t = `Mem ${mem.usedGB}/${mem.totalGB}GB used \u00b7 ${mem.availableGB}GB free`;
+      if (mem.pressure === 'warn') t += ' \u26a0 pressure';
+      else if (mem.pressure === 'critical') t += ' \u26d4 pressure!';
+      parts.push(t);
+      if (typeof mem.swapUsedGB === 'number' && mem.swapUsedGB >= 0.5) parts.push(`swap ${mem.swapUsedGB}GB`);
+    } else if (hw.ram) {
+      parts.push(`RAM ${hw.ram.usedGB}/${hw.ram.totalGB}GB (approx.)`);
+    } else {
+      parts.push('Mem n/a');
+    }
+    if (hw.gpus && hw.gpus.length) {
+      const g = hw.gpus[0];
+      parts.push(`GPU ${g.avgPct}%${typeof g.inUseGB === 'number' ? ` \u00b7 ${g.inUseGB}GB` : ''}`);
+    } else if (hw.gpu && hw.gpu.length) {
       const g = hw.gpu[0];
       parts.push(`GPU ${g.utilizationPct}% (${g.usedVramGB}/${g.totalVramGB}GB)`);
+    } else {
+      parts.push('GPU n/a');
     }
-    el.hwReadout.textContent = parts.join(' · ');
+    el.hwReadout.textContent = parts.join(' \u00b7 ');
     const titleLines = [];
-    if (loaded.length) titleLines.push(...loaded.map((x) => `${x.name}: ${x.sizeGB}GB${x.vramGB !== undefined ? ` (${x.vramGB}GB VRAM)` : ''}`));
-    if (hw.gpu && hw.gpu.length) titleLines.push(...hw.gpu.map((g) => `GPU: ${g.name}`));
-    el.hwReadout.title = titleLines.length ? titleLines.join('\n') : 'Click to check what Ollama currently has loaded';
+    if (loaded.length) titleLines.push(...loaded.map((x) => `${x.name}: ${x.sizeGB}GB${x.vramGB !== undefined ? ` (${x.vramGB}GB in GPU-visible memory)` : ''}`));
+    if (mem) {
+      const age = Math.max(0, Math.round((Date.now() - mem.sampledAtMs) / 1000));
+      titleLines.push(
+        `Memory (${mem.source === 'darwin' ? 'exact, from vm_stat/sysctl' : 'approximate'}, ${age}s ago):`,
+        `  used ${mem.usedGB}GB = apps + wired (${mem.wiredGB}GB) + compressed (${mem.compressedGB}GB) \u2014 same definition as Activity Monitor`,
+        `  free ${mem.availableGB}GB = total \u2212 used (includes ${mem.cachedGB}GB of reclaimable file cache; ${mem.freeGB}GB is completely unused)`,
+        `  pressure: ${mem.pressure} (macOS's own memory-pressure state)`
+      );
+    }
+    if (hw.gpus && hw.gpus.length) {
+      const g = hw.gpus[0];
+      titleLines.push(
+        `GPU${g.name ? ' ' + g.name : ''}${g.cores ? ' (' + g.cores + ' cores)' : ''}: ${g.avgPct}% (average over ~4s; now ${g.utilizationPct}%, peak this turn ${g.peakPct}%)`,
+        `  GPU memory in use ${typeof g.inUseGB === 'number' ? g.inUseGB + 'GB' : 'n/a'} \u2014 unified memory, the same pool as RAM (not separate VRAM)`
+      );
+    }
+    el.hwReadout.title = titleLines.length ? titleLines.join('\n') : 'Click to refresh hardware status';
   }
 
   // ---------- brief status line (item "brief messages…" / "progress

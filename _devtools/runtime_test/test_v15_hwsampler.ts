@@ -6,7 +6,7 @@
 // ============================================================================
 import * as fs from 'fs';
 import * as path from 'path';
-import { parseVmStat, parseSwapUsage, parsePressureLevel, computeMemory, readMemorySample, parseIoregAccelerator, readGpuSamples, readGpuWiredLimitMB, averageOverWindow, HwSampler, ExecFn } from '../../src/util/hwSampler';
+import { parseVmStat, parseSwapUsage, parsePressureLevel, computeMemory, readMemorySample, parseIoregAccelerator, readGpuSamples, readGpuWiredLimitMB, averageOverWindow, HwSampler, hwFieldsForUi, ExecFn } from '../../src/util/hwSampler';
 
 let passed = 0;
 let failed = 0;
@@ -184,6 +184,26 @@ async function testSampler() {
   ok(n >= 2 && n === stoppedAt, `start() delivers repeated samples and stop() halts them (got ${n}, still ${stoppedAt} after stop)`);
 }
 
+async function testUiMapping() {
+  const exec: ExecFn = async (cmd, args) => {
+    const key = `${cmd} ${args.join(' ')}`;
+    if (key === 'sysctl -n hw.memsize') return String(32 * GB);
+    if (cmd === 'vm_stat') return REAL_VM;
+    if (key === 'sysctl -n vm.swapusage') return 'total = 2048.00M  used = 900.00M  free = 1148.00M';
+    if (key === 'sysctl -n kern.memorystatus_vm_pressure_level') return '2';
+    if (cmd === 'ioreg') return REAL_IOREG.replace('"Device Utilization %"=3', '"Device Utilization %"=64');
+    return '0';
+  };
+  const snap = await new HwSampler({ exec, platform: 'darwin' }).sampleOnce();
+  const ui = hwFieldsForUi(snap);
+  ok(ui.memory?.pressure === 'warn' && ui.memory.source === 'darwin' && typeof ui.memory.sampledAtMs === 'number', 'UI memory carries pressure, source and a timestamp for the "age" tooltip');
+  ok(ui.memory && near(ui.memory.usedGB + ui.memory.availableGB, ui.memory.totalGB, 0.11), 'UI memory: used + available ≈ total');
+  ok(near(ui.memory?.swapUsedGB, 0.88, 0.02), 'swap is mapped');
+  ok(ui.gpus?.length === 1 && ui.gpus[0].avgPct === 64 && ui.gpus[0].peakPct === 64 && ui.gpus[0].name === 'Apple M5', 'UI gpus carries smoothed avg, peak and name');
+  const empty = hwFieldsForUi({ gpus: [] });
+  ok(empty.memory === undefined && empty.gpus === undefined, 'no data → both undefined so the UI renders "n/a"');
+}
+
 async function testLiveMac() {
   if (process.platform !== 'darwin') { ok(true, '(skipped live check: not macOS)'); return; }
   const s = await readMemorySample();
@@ -210,6 +230,7 @@ async function main() {
   await testGpuReadWithFakes();
   testSmoothing();
   await testSampler();
+  await testUiMapping();
   await testLiveMac();
   console.log(`\n${passed} passed, ${failed} failed.`);
   if (failed > 0) { console.log('Some v0.15.0 hwSampler tests FAILED.'); process.exit(1); }
