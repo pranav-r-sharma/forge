@@ -20,7 +20,7 @@ import { HookRunner } from '../forge/hooks';
 import { getConfig } from '../util/config';
 import { logger } from '../util/logger';
 import { resolveWorkspacePath } from '../util/paths';
-import { CompactionCache, hardCapOversizedMessages, maybeCompact, pruneStaleReadsView } from './contextManager';
+import { CompactionCache, PromptViewState, hardCapOversizedMessages, maybeCompact, pruneStaleReadsView, updateCharsPerToken, updatePromptView, DEFAULT_CHARS_PER_TOKEN } from './contextManager';
 import { LoopDetector, signatureForStep } from './loopDetector';
 import { findUnverifiedClaims } from './claimChecker';
 import { runVerifyCommand } from './verifyCheck';
@@ -435,7 +435,18 @@ export async function runAgentTurn(
   };
 
   /** Builds the trimmed view actually sent to Ollama — never mutates `messages`, the archival/persisted transcript. See contextManager.ts. */
+  let lastViewEvent: 'mask' | 'compact' | undefined;
+  let lastEstTokens: number | undefined;
   async function buildPromptView(): Promise<ChatMessage[]> {
+    lastViewEvent = undefined;
+    if (cfg.contextAppendOnly) {
+      // Append-only path (v0.15.0 §2.1): nothing already sent is rewritten except in a deliberate, batched event — see updatePromptView().
+      const r = await updatePromptView(messages, compactionCache, { model, numCtx, ollama: deps.ollama, signal: cancellationToAbortSignal(cancellation), highWaterPct: cfg.contextHighWaterPct, lowWaterPct: cfg.contextLowWaterPct });
+      compactionCache = r.state;
+      lastViewEvent = r.event?.kind;
+      lastEstTokens = r.estTokens;
+      return r.view;
+    }
     const pruned = pruneStaleReadsView(messages);
     const compacted = await maybeCompact(pruned, compactionCache, model, numCtx, deps.ollama, cancellationToAbortSignal(cancellation));
     compactionCache = compacted.cache;
@@ -447,7 +458,7 @@ export async function runAgentTurn(
   // ---- trace + read-coverage (v0.15.0 §1.1/§1.2): measurement only, guarded so it can never break a turn ----
   const turnId = Date.now().toString(36);
   const readCoverage = new ReadCoverage();
-  let iterState = { iter: 0, promptChars: 0, promptMsgs: 0, staleReadStubs: 0, compacted: false, modelMs: 0, metrics: undefined as OllamaCallMetrics | undefined };
+  let iterState = { iter: 0, promptChars: 0, promptMsgs: 0, staleReadStubs: 0, compacted: false, modelMs: 0, metrics: undefined as OllamaCallMetrics | undefined, viewEvent: undefined as 'mask' | 'compact' | undefined, estPromptTokens: undefined as number | undefined };
   const traceIter = (extra: Partial<TraceInput>) => {
     if (!deps.trace) return;
     try {
@@ -468,6 +479,8 @@ export async function runAgentTurn(
         promptMsgs: iterState.promptMsgs,
         staleReadStubs: iterState.staleReadStubs,
         compacted: iterState.compacted,
+        viewEvent: iterState.viewEvent,
+        estPromptTokens: iterState.estPromptTokens,
         modelMs: iterState.modelMs,
         promptTokens: m?.promptTokens,
         cachedTokens: m?.cachedTokens,
@@ -498,6 +511,8 @@ export async function runAgentTurn(
       compacted: promptView.some((m) => m.content.startsWith('[Earlier conversation summary')),
       modelMs: 0,
       metrics: undefined,
+      viewEvent: lastViewEvent,
+      estPromptTokens: lastEstTokens,
     };
     const modelStartedAt = Date.now();
 
@@ -536,6 +551,14 @@ export async function runAgentTurn(
     }
 
     iterState.modelMs = Date.now() - modelStartedAt;
+    if (cfg.contextAppendOnly) {
+      // Learn this model's chars/token from the runtime's real prompt-token count so the water marks use measured sizes, not a guess.
+      const m = iterState.metrics;
+      const curCpt = (compactionCache as PromptViewState | undefined)?.cpt || DEFAULT_CHARS_PER_TOKEN;
+      const total = m?.promptTotalTokens ?? (m?.promptTokens !== undefined && m.promptTokens >= 0.7 * (iterState.promptChars / curCpt) ? m.promptTokens : undefined);
+      const nextCpt = updateCharsPerToken(curCpt, iterState.promptChars, total);
+      compactionCache = { throughIndex: 0, summary: '', ...(compactionCache || {}), cpt: nextCpt } as PromptViewState;
+    }
 
     if (cancellation.isCancellationRequested) {
       emit({ type: 'aborted' });

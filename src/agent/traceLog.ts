@@ -28,6 +28,10 @@ export interface TraceRecord {
   staleReadStubs: number;
   /** True when the prompt contains an LLM compaction summary. */
   compacted: boolean;
+  /** Set only on steps where the append-only prompt was deliberately rewritten (each such step costs one cache miss): 'mask' = stale reads stubbed, 'compact' = oldest turns summarized. */
+  viewEvent?: 'mask' | 'compact';
+  /** Estimated prompt size in tokens used for the water-mark decision. */
+  estPromptTokens?: number;
   // ---- the model call ----
   modelMs: number;
   /** Prompt tokens the runtime reports it actually EVALUATED (a cache hit makes this smaller than what was sent). */

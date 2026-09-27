@@ -46,6 +46,11 @@ export interface ForgeConfig {
   loopDetectionEnabled: boolean;
   /** Write a per-iteration JSONL trace to .forge/traces/ (sizes/timings/tokens only, no content) — see agent/traceLog.ts. */
   traceEnabled: boolean;
+  /** Keep the prompt append-only between deliberate batched compactions, so the runtime's prompt cache stays valid (see agent/contextManager.ts updatePromptView). Off = the old per-step pruning. */
+  contextAppendOnly: boolean;
+  /** Estimated prompt size (% of the context window) that triggers a batched compaction, and the size it compacts down to. */
+  contextHighWaterPct: number;
+  contextLowWaterPct: number;
 
   /**
    * Opt-in structured-output tool calling (see agent/structuredOutput.ts):
@@ -146,6 +151,9 @@ export function getConfig(): ForgeConfig {
     showStatusMessages: cfg.get<boolean>('showStatusMessages') ?? true,
     loopDetectionEnabled: cfg.get<boolean>('loopDetection.enabled') ?? true,
     traceEnabled: cfg.get<boolean>('trace.enabled') ?? true,
+    contextAppendOnly: cfg.get<boolean>('context.appendOnly') ?? true,
+    contextHighWaterPct: cfg.get<number>('context.highWaterPct') ?? 75,
+    contextLowWaterPct: cfg.get<number>('context.lowWaterPct') ?? 45,
     structuredOutputEnabled: cfg.get<boolean>('structuredOutput.enabled') ?? false,
     planFirstEnabled: cfg.get<boolean>('planFirst.enabled') ?? false,
     selfCritiqueEnabled: cfg.get<boolean>('selfCritique.enabled') ?? false,

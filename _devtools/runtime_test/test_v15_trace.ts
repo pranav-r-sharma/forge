@@ -174,18 +174,39 @@ async function testAgentLoopTrace() {
 }
 
 async function testPruningStubsAreCounted() {
+  const vsAny: any = vscode;
   const files: Record<string, string> = {};
   for (let i = 0; i < 9; i++) files[`f${i}.txt`] = `content ${i}\n`;
-  const ws = workspaceWith(files);
-  const file = tracePathFor(ws.fsPath, 'sessP');
-  const writer = new TraceWriter(file, 'sessP');
   const replies = Array.from({ length: 9 }, (_, i) => act('read_file', { path: `f${i}.txt` })).concat(['done']);
-  await runAgentTurn([], 'read everything', depsFor(ws, [], scripted(replies), writer), () => {}, new vscode.CancellationTokenSource().token, 'fake', { mode: 'auto' });
-  await writer.flush();
-  const rec = readTraces(file);
-  ok(rec[0].staleReadStubs === 0, 'early in the turn nothing has been pruned yet');
-  ok(rec[rec.length - 1].staleReadStubs >= 1, `by the end, old reads have been replaced by "superseded" stubs and the trace counts them (got ${rec[rec.length - 1].staleReadStubs}) — each is a future re-read risk`);
-  ok(rec.every((r) => r.compacted === false), 'no compaction on a small session');
+
+  // Default (0.15.0): the prompt is append-only — a small session never rewrites an old read, so there are no stubs.
+  {
+    const ws = workspaceWith(files);
+    const file = tracePathFor(ws.fsPath, 'sessP');
+    const writer = new TraceWriter(file, 'sessP');
+    await runAgentTurn([], 'read everything', depsFor(ws, [], scripted(replies), writer), () => {}, new vscode.CancellationTokenSource().token, 'fake', { mode: 'auto' });
+    await writer.flush();
+    const rec = readTraces(file);
+    ok(rec.every((r) => r.staleReadStubs === 0 && r.viewEvent === undefined), 'append-only (default): a small session has NO stubs and no rewrite events — nothing already sent is touched');
+    ok(rec.every((r) => r.compacted === false), 'no compaction on a small session');
+    ok(rec.every((r) => typeof r.estPromptTokens === 'number' && r.estPromptTokens > 0), 'the estimated prompt size used for the water marks is recorded');
+  }
+  // Legacy switch: the old per-step pruning still exists and the trace still counts its stubs (the re-read risk this change removes).
+  {
+    vsAny.__setConfig({ 'forge.context.appendOnly': false });
+    try {
+      const ws = workspaceWith(files);
+      const file = tracePathFor(ws.fsPath, 'sessP2');
+      const writer = new TraceWriter(file, 'sessP2');
+      await runAgentTurn([], 'read everything', depsFor(ws, [], scripted(replies), writer), () => {}, new vscode.CancellationTokenSource().token, 'fake', { mode: 'auto' });
+      await writer.flush();
+      const rec = readTraces(file);
+      ok(rec[0].staleReadStubs === 0, 'legacy pruning: early in the turn nothing has been pruned yet');
+      ok(rec[rec.length - 1].staleReadStubs >= 1, `legacy pruning (forge.context.appendOnly=false): old reads become "superseded" stubs and the trace counts them (got ${rec[rec.length - 1].staleReadStubs})`);
+    } finally {
+      vsAny.__resetConfig();
+    }
+  }
 }
 
 async function testTraceCannotBreakATurn() {

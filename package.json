@@ -230,6 +230,25 @@
           "default": true,
           "description": "Detect and stop likely infinite loops in Auto/Outcome mode (repeating the same tool call with the same result over and over). Turn this off if it's incorrectly triggering on legitimately repetitive work. check_background_command is always exempt from loop detection, regardless of this setting."
         },
+        "forge.context.appendOnly": {
+          "type": "boolean",
+          "default": true,
+          "description": "Keep the conversation prompt append-only: nothing already sent is rewritten between steps, so the model runtime's prompt cache stays valid and each step only processes its NEW text (measured ~9x faster steps on MLX). Old file reads are dropped in ONE batched pass when the prompt nears the context limit instead of a little every step. Turn off to restore the previous per-step pruning."
+        },
+        "forge.context.highWaterPct": {
+          "type": "number",
+          "default": 75,
+          "minimum": 30,
+          "maximum": 95,
+          "description": "When the estimated prompt reaches this percent of the context window, Forge does one batched cleanup (drops stale file reads, then summarizes the oldest turns if still needed)."
+        },
+        "forge.context.lowWaterPct": {
+          "type": "number",
+          "default": 45,
+          "minimum": 10,
+          "maximum": 85,
+          "description": "The percent of the context window a batched cleanup tries to get down to, before the prompt grows append-only again."
+        },
         "forge.trace.enabled": {
           "type": "boolean",
           "default": true,
