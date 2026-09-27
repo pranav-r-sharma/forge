@@ -110,10 +110,18 @@ One short entry per loop cycle. Full narrative for each cycle stays in `PROGRESS
 - **Evidence:** `_devtools/e2e/results/t09-harder-build-gptossq8-cycle4.{json,trace.jsonl,messages.json,log}`
 - **Next:** t09 cycle 5 (validate `7186c10` live)
 
-## t09-harder-build — Cycle 5 — gpt-oss Q8 (MLX)
+## t09-harder-build — Cycle 5 (killed) — gpt-oss Q8 (MLX)
 
 - **Result:** INCOMPLETE — killed by SIGTERM at 543.7 s, 61 iterations; **not a valid attempt**
 - **Classification:** evidence only (run interrupted; do not count as pass/fail)
-- **Findings:** checker false positive — "You ran `python3 -h` on 1 of 7 files" (`python3 main.py -h` treated as per-file check; **unfixed**); "No changes — already matches" appeared again early (verify vs byte-identical search); `task-command-nudge` fired and the model began running spec forms
-- **Evidence:** `_devtools/e2e/results/t09-harder-build-gptossq8-cycle5.{json,trace.jsonl,messages.json,log}`
-- **Next:** fix the false positive, re-run cycle 5 (`HANDOFF.md` §5a / §6)
+- **Findings:** checker false positive — "You ran `python3 -h` on 1 of 7 files" (`python3 main.py -h` treated as per-file check; fixed `d77c057`); "No changes — already matches" appeared again early (fixed `c56a663`, `84a5c42`); `task-command-nudge` fired and the model began running spec forms
+- **Evidence:** `_devtools/e2e/results/t09-harder-build-gptossq8-cycle5-killed.{json,trace.jsonl,messages.json,log}`
+
+## t09-harder-build — Cycle 5 re-run — gpt-oss Q8 (MLX) — 2026-09-27
+
+- **Run:** t09-harder-build, gpt-oss-20b MXFP4-Q8 (MLX), Apple M5 32 GB; 5th t09 cycle this sitting (per-sitting limit)
+- **Result:** FAIL — 109 iterations, 788 s wall, `checkExit` 2 (argparse: `--db` not recognized before subcommand — model made `--db` top-level; ran most spec forms with `--db` before the subcommand)
+- **Classification:** model/task + harness gap (final claim accepted while forms still broken — task-form nudge was capped at 1; fixed `ece424d`)
+- **Findings:** model final: "All specified command forms now work correctly" (false). Harness fixes not yet validated live: `435aaaf` (Harmony tool-call whitespace in history), `84a5c42` (no-change when replace already present), `ece424d` (task-form re-nudge up to 3, unverified markers, bash unwrapping). Owner manual-test fixes logged separately (`8230c04` MLX library, `0eadfeb` Settings flicker, `f4a3a1c` QuickPick, `dec4e5b` warning loop). No `mlx_lm.server` left running.
+- **Evidence:** `_devtools/e2e/results/t09-harder-build-gptossq8-cycle5.{json,trace.jsonl,messages.json,log}` (results commit `70c4b4d`)
+- **Next:** t09 cycle 6 in a new sitting (owner approval); Ollama model switching deferred by owner

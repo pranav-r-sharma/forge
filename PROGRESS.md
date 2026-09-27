@@ -70,7 +70,32 @@ Then 0.15.0 items (see "Suggested release slicing" in the plan) once Phase 0 num
 **Superseding owner decision (2026-09-27): MLX is the actual direction — switch to it now, no more benchmark runs for the moment.** Changed `forge.provider`'s packaged default in `package.json` from `"ollama"` to `"mlx"` (also updated the doc comment in `src/util/config.ts`). Also activated it for real, live usage: added `forge.provider: "mlx"`, `forge.mlx.model` (the 4-bit snapshot, per the C2 decision above), and `forge.mlx.pythonPath` (pointing at the existing, already-approved `_devtools/mlx-venv` — no new install) to the owner's real VS Code user settings (`~/Library/Application Support/Code/User/settings.json`, outside this repo). `npm run typecheck && npm test && npm run compile`: clean (37/37, 1,338 checks) — the one test that checks a "default" provider value (`test_v15_factory.ts`) tests `parseProviderId`'s own unset/garbled-input fallback (a separate, intentional safety net, unrelated to the packaged schema default), so it was correctly unaffected. **Known gap:** `~/.forge/mlx-venv` (the fallback path `resolvePython()` uses when `forge.mlx.pythonPath` is empty, for use in *other* workspaces) does not exist yet — reusing this repo's dev venv works today via the explicit path, but is coupled to this checkout; creating a dedicated `~/.forge/mlx-venv` would be a *new* install and needs the owner's go-ahead first (standing rule 3), not done here.
 
 ## Next
-Ask owner for manual-test findings; then HANDOFF.md §6 steps 2-3.
+Validate harness fixes on **t09 cycle 6** in a **new sitting** (owner approval required — 5 t09 cycles already this sitting). Ollama model switching deferred by owner. Do not start MLX/server from logging/packaging tasks alone.
+
+## Owner manual test + MLX UI (2026-09-27)
+
+**Findings (before fixes):** MLX UI only listed Ornith (list came from the running server; picking only set `forge.chatModel`); Settings model dropdown closed after ~1 s (`hwStatus` re-rendered the whole Settings panel); absolute snapshot path not portable.
+
+**Fixes:** `8230c04` — local MLX model library scan, `forge.mlx.modelLibraryPath` default `~/.cache/huggingface/hub` + `forge.mlx.extraModelFolders`, portable repo ids, clear missing-model message. `0eadfeb` — Settings flicker. `f4a3a1c` — MLX QuickPick sets `forge.mlx.model` + restarts server; add folder / change library items. `dec4e5b` — no endless warning loop when no models found.
+
+## Harness fixes — claimChecker / write_file / Harmony history (2026-09-27)
+
+- `d77c057` — running a script (e.g. `python3 main.py …`) is not a per-file compile check.
+- `c56a663` — indent-only edits keep the model's first-line indent; do not claim no-change when search differs from replace.
+- `ece424d` — task-form nudges re-sent on progress (up to 3); unverified markers name forms never run; bash `-lc` / `sh -c` unwrapping for command matching.
+- `435aaaf` — Harmony tool calls stored in history with exact whitespace (before, all whitespace collapsed → model saw mangled copies of its own edits; see t09 msgs 41/49/63).
+- `84a5c42` — accurate no-change message when replace text is already present.
+- `adc616d` — extra regression test (indent-only / except-dedent).
+
+## t09-harder-build — cycle 5 re-run (gpt-oss-20b MXFP4-Q8, MLX, 2026-09-27)
+
+- **Hardware:** Apple M5, 32 GB.
+- **Result:** FAIL — 109 iterations, 788.1 s wall, `checkExit` 2 — grader: `main.py: error: unrecognized arguments: --db` (model wired `--db` as a top-level option; ran most task command forms with `--db` before the subcommand).
+- **Final answer:** falsely claimed "All specified command forms now work correctly" — accepted because task-form nudge was capped at 1 (addressed in `ece424d`).
+- **Earlier cycle 5:** SIGTERM kill at 61 iters kept as `t09-harder-build-gptossq8-cycle5-killed.*` (`70c4b4d`). This re-run is the **5th t09 cycle this sitting** (per-sitting limit).
+- **Not yet validated live:** `435aaaf`, `84a5c42`, `ece424d` after this run.
+- **Evidence:** `_devtools/e2e/results/t09-harder-build-gptossq8-cycle5.{json,trace.jsonl,messages.json,log}`.
+- **Infra:** no `mlx_lm.server` left running after the run.
 
 ## t09 / t10 — cycles 2–3 + harness (gpt-oss Q8, 2026-09-27)
 
@@ -237,4 +262,4 @@ Three commits (`d912e59`, `720e092`, `fc20381`) close the harness gap found in t
 - **t09 cycle 4:** FAIL — 120 iters / 764 s, loop stop after 2 loop-warnings; `check.sh` IndentationError `inventory/cli.py:149`. **Harness bug:** `write_file` whitespace-tolerant match falsely "No changes — already matches" on indentation-only fixes (13 wasted edits); ambiguous-match lacked line numbers; did-you-mean `cwd` for `cmd`. **Fix:** `7186c10`. Evidence: `t09-harder-build-gptossq8-cycle4.*`.
 - **t09 cycle 5:** INCOMPLETE — SIGTERM at 543.7 s / 61 iters (not a valid attempt). Evidence: checker false positive on `python3 main.py -h` as per-file check (unfixed); early "No changes" again (verify); task-command nudge + model re-running spec forms. Evidence: `t09-harder-build-gptossq8-cycle5.*`. Logged in `_devtools/e2e/ITERATION_LOG.md`.
 
-**Last updated:** 2026-09-27 18:45 (hand-off take 4; t09 c4–c5 logged; next: owner manual test, then §6.2–3)
+**Last updated:** 2026-09-27 19:47 (t09 cycle 5 re-run logged; MLX library + harness fixes; next: t09 cycle 6 new sitting)
