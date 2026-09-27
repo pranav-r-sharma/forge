@@ -75,6 +75,23 @@ async function main() {
   }
   result.serverReadyS = (Date.now() - tServer) / 1000;
 
+  // Guarantee the spawned MLX server is stopped even if this process is killed (a wrapper script's timeout, a `pkill`
+  // that only matched the wrapper and not this Node process, Ctrl-C, etc.) — an earlier comparison run left an orphaned
+  // mlx_lm.server bound to its port because nothing here ran on SIGTERM, only on normal completion.
+  let cleanedUp = false;
+  const cleanup = async () => {
+    if (cleanedUp) return;
+    cleanedUp = true;
+    if (mgr) { try { await mgr.stop(); } catch { /* best-effort: never let cleanup itself throw */ } }
+  };
+  for (const sig of ['SIGINT', 'SIGTERM'] as const) {
+    process.on(sig, () => {
+      console.error(`\nrun_task.ts: received ${sig}, stopping the MLX server before exit...`);
+      cleanup().finally(() => process.exit(130));
+    });
+  }
+
+  try {
   const sampler = new HwSampler();
   sampler.start(1000);
   await sampler.sampleOnce();
@@ -151,7 +168,9 @@ async function main() {
   result.tracePath = path.relative(repoRoot, tracePath);
   fs.writeFileSync(outFile, JSON.stringify(result, null, 2));
   fs.writeFileSync(outFile.replace(/\.json$/, '.messages.json'), JSON.stringify(lastMessages, null, 2));
-  if (mgr) await mgr.stop();
+  } finally {
+    await cleanup();
+  }
   if (!flag('keep')) fs.rmSync(ws, { recursive: true, force: true }); else result.workspace = ws;
   console.log(`\n${result.pass ? 'PASS' : 'FAIL'} ${taskId} [${provider}/${path.basename(model)} thinking=${thinking}] ${result.iterations} iterations, ${result.wallS.toFixed(1)}s (model ${result.modelS}s, tools ${result.toolS}s), cache hit ${result.cacheHitPct}%, reads ${result.reads} (redundant ${result.redundantReads})`);
   process.exit(0);
