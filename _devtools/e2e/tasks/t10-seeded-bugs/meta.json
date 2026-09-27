@@ -1,0 +1,15 @@
+{
+  "id": "t10-seeded-bugs",
+  "title": "Fix a broken CSV sales report tool (5 independent bugs)",
+  "category": "debug-fix",
+  "protected": ["data/sales.csv"],
+  "expected_files": [
+    "main.py",
+    "sales/parser.py",
+    "sales/validate.py",
+    "sales/aggregate.py",
+    "sales/cli.py",
+    "data/sales.csv"
+  ],
+  "referenceFinal": "Fixed all five bugs; report and top match expected output."
+}
