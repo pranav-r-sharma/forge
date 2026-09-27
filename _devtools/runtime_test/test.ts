@@ -1,5 +1,5 @@
 import { diffLines, unifiedDiff } from '../../src/util/diff';
-import { parseToolCall, stripActionBlock } from '../../src/agent/toolProtocol';
+import { parseToolCall, stripActionBlock, looksLikeAbandonedToolCall } from '../../src/agent/toolProtocol';
 import { cleanCompletion } from '../../src/completion/fimPrompt';
 
 function assert(cond: any, msg: string) {
@@ -64,6 +64,24 @@ function assert(cond: any, msg: string) {
 {
   const stripped = stripActionBlock('intro text\n```forge_action\n{"tool":"read_file","args":{}}\n```');
   assert(stripped === 'intro text', 'stripActionBlock removes the fenced block');
+}
+
+// ---- looksLikeAbandonedToolCall (t07-build-from-scratch acceptance-test finding: a stop token mid-JSON on a
+// large write_file leaves an unparseable forge_action block that must NOT be treated as a final answer) ----
+{
+  // Reproduces the actual failure: the model finishes a long write_file's content and stops (finishReason
+  // "stop", not "length") right after typing a closing ``` out of habit, never closing the JSON itself.
+  const truncated = '```forge_action\n{"tool":"write_file","args":{"path":"contacts/storage.py","content":"import json\\nclass ContactBook:\\n    def add(self';
+  assert(parseToolCall(truncated) === null, 'a forge_action JSON left open mid-string does not parse as a call');
+  assert(looksLikeAbandonedToolCall(truncated), 'but it IS recognized as an abandoned action attempt, not a clean final answer');
+}
+{
+  const prose = 'Done - I added the delete command and ran the tests, all green.';
+  assert(parseToolCall(prose) === null && !looksLikeAbandonedToolCall(prose), 'a genuine final answer with no tool mention is not flagged as an abandoned action');
+}
+{
+  const exampleJson = 'Here is the shape of one record:\n```json\n{"id": 1, "name": "Alice"}\n```';
+  assert(parseToolCall(exampleJson) === null && !looksLikeAbandonedToolCall(exampleJson), 'a valid JSON example with no "tool" key is not flagged as an abandoned action');
 }
 
 // ---- cleanCompletion ----

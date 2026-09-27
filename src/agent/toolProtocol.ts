@@ -94,3 +94,15 @@ function tryParseToolJson(text: string): { tool: string; args: Record<string, an
 export function stripActionBlock(raw: string): string {
   return raw.replace(FENCED_BLOCK_RE, '').trim();
 }
+
+/**
+ * True when `raw` looks like it was trying to be a tool call (contains a `"tool":"..."` fragment)
+ * but `parseToolCall(raw)` still returned null — i.e. the model started a forge_action JSON object
+ * and never finished it (e.g. it emitted a stop token mid-string on a long `write_file`), rather than
+ * writing a genuine final answer that just happens not to invoke a tool. Only meaningful when the
+ * caller has already confirmed `parseToolCall(raw)` returned null: if a `"tool"` fragment fully
+ * parsed, `parseToolCall` would have returned a real call and this check is moot.
+ */
+export function looksLikeAbandonedToolCall(raw: string): boolean {
+  return /"tool"\s*:\s*"/.test(raw);
+}
