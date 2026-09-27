@@ -1,0 +1,49 @@
+# PROGRESS
+
+**Goal:** Make Forge a fast, thoroughly vetted, MLX-first coding harness for multi-file repos, verified on Ornith-1.5-9B only.
+
+**Status:** PLANNING COMPLETE — **waiting for the owner to say "start"** before any code change or install.
+**Branch:** `v0.15.0-work` (commits allowed here). **Plan and reasons:** `v0.15.0 suggestions.md`.
+
+## Plan (small steps; each a few minutes; split further if it runs long)
+
+Phase 0 (first). Section numbers refer to `v0.15.0 suggestions.md`.
+
+1. **P0-1** Restore a runnable test setup: create the `vscode` stub for `_devtools/runtime_test`, make one existing test (`test_v14_indent_hardening.ts`) run here. (§0.4.1)
+2. **P0-2** Add `npm test` that runs all existing `test_*.ts` scripts; record which pass/fail today.
+3. **P0-3** Hardware readout, memory: sampler that reads `sysctl hw.memsize`, `kern.memorystatus_level`, `vm.swapusage`, and `vm_stat` (page size read from its header). Fixture-based unit tests. (§1.4)
+4. **P0-4** Hardware readout, GPU: parse `ioreg -c IOAccelerator` (`Device Utilization %`, `In use system memory`); fixture tests; `n/a` on failure. (§1.4)
+5. **P0-5** Wire the sampler into the composer footer / HW panel: replace the `os.freemem()`-based RAM number; add free memory + GPU %. (§1.4)
+6. **P0-6** Trace log: per-iteration JSONL writer under `.forge/traces/` (tool, sizes, prompt tokens, eval tokens, tok/s, timings). (§1.1)
+7. **P0-7** Trace log: add hardware sample (memory low-point, swap change, GPU avg/peak) to each record. (§1.1, §1.4)
+8. **P0-8** `LlmProvider` interface + `OllamaProvider` wrapping today's client; **no behavior change**; all tests still pass. Split per call site (16 files). (§0.1a)
+9. **P0-9** Provider capabilities + per-role routing (chat / sub-agent / compaction / autocomplete / embeddings). (§0.1a)
+10. **P0-10** OpenAI-compatible streaming client with fake-server tests (streaming, abort, malformed SSE, tool_calls, usage, crash). (§0.1b, §0.1f)
+11. **P0-11** MLX server lifecycle manager (start/ready/stop/crash, output channel). **Needs the MLX venv (approval).** (§0.1c)
+12. **P0-12** MLX setup wizard + `doctor` / runtime check; MLX model picker; context limit read from model config. (§0.1d)
+13. **P0-13** Headless bench runner + `--json` events; first 10–15 eval tasks on a fixture repo. (§0.3, §8.2)
+14. **P0-14** Baseline report on Ornith: O-Q4 vs M-4 vs M-8 × harness arms A / B1 / B2. (§0.2c, §0.3)
+15. **P0-15** Truncation detection + real-token counting (§2.1b) — needed before trusting any long-context result.
+
+Then 0.15.0 items (see "Suggested release slicing" in the plan) once Phase 0 numbers exist.
+
+## Done
+- Wrote `v0.15.0 suggestions.md`: Phase 0 (MLX, Ornith-only testing, A/B matrix), cross-spec review, hardware-readout requirement (§1.4), truncation finding (§2.1b), release slicing.
+- Measured (Ollama 0.34.3, this Mac M5 32 GB): speed vs model size for 6 models (kept as scaling reference; **closed — Ornith only from now on**). Results are in the plan §0.2b.
+- Created branch `v0.15.0-work`; added `CLAUDE.md` (standing rules + dev cycle) and this file.
+- Verified the RAM number is wrong: `os.freemem()` says 7.7 GB free (harness would show 24.3 GB used) while macOS reports 61% free.
+- Ornith context-limit probe (Ollama Q4_K_M, memory-gated): full **262,144-token context loads at 15.1 GB** (~35 KB/token); fill test in progress — see Open items.
+
+## Next
+**Wait for the owner to say "start".** Then begin **P0-1**: create the `vscode` stub module under `_devtools/runtime_test/` (find what the tests import from `vscode`: `grep -h "vscode\." _devtools/runtime_test/*.ts | sort | uniq -c | sort -rn`), and run `npx ts-node _devtools/runtime_test/test_v14_indent_hardening.ts` with `NODE_PATH` set.
+
+## Open questions / blockers
+- **MLX install approval:** may I create a project-local venv and `pip install` a pinned `mlx-lm` (third-party, not source-audited) and load the Ornith snapshot offline with remote code off? Python here is 3.14 — may lack MLX wheels; OK to use another Python for the venv? (Blocks P0-11.)
+- **Max stage:** which bigger Ornith-family model will run on the M5 Max? (Blocks only the Max-stage comparison.)
+- **Ollama 8-bit Ornith tag:** does one exist, and may I download it? (Optional arm O-Q8.)
+- Context-limit fill probe is still running in the background; results (32k done: 183 tok/s prefill, 12.4 tok/s decode; larger steps pending) must be copied into `_devtools/bench/results/` and the plan when it finishes.
+
+## Files touched (this session)
+`v0.15.0 suggestions.md`, `CLAUDE.md`, `PROGRESS.md`, `_devtools/bench/*` (probe scripts).
+
+**Last updated:** 2026-09-26 21:08
