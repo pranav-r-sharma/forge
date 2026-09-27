@@ -7,7 +7,7 @@ import { LlmProvider } from '../llm/provider';
 import { ChatMessage, OllamaCallMetrics } from '../ollama/types';
 import { AgentActivity, AgentEvent, ToolCall, ToolExecContext, ToolResult } from './types';
 import { buildSystemPrompt, buildTurnContextPrefix } from './systemPrompt';
-import { parseToolCall, looksLikeAbandonedToolCall, formatIncompleteActionNudge, formatIncompleteActionCapFailure, extractAbandonedActionTarget, preprocessHarmonyReply, containsHarmonyControls, detectForeignToolCall, formatForeignToolCallNudge, formatForeignToolCallCapFailure } from './toolProtocol';
+import { parseToolCall, looksLikeAbandonedToolCall, formatIncompleteActionNudge, formatIncompleteActionCapFailure, extractAbandonedActionTarget, preprocessHarmonyReply, containsHarmonyControls, detectForeignToolCall, formatForeignToolCallNudge, formatForeignToolCallCapFailure, assistantContentForHistory } from './toolProtocol';
 import { parseStructuredResponse, STRUCTURED_RESPONSE_SCHEMA } from './structuredOutput';
 import { generatePlanFirst, renderPlanFirstForPrompt } from './planFirst';
 import { shouldCritique, critiqueEdit } from './selfCritique';
@@ -293,6 +293,7 @@ export async function runAgentTurn(
     messages.push(msg);
     emit({ type: 'history_snapshot', messages: [...messages] });
   };
+  const pushAssistant = (raw: string) => pushMsg({ role: 'assistant', content: assistantContentForHistory(raw) });
   const allowedTools = new Set(toolsAllowedInMode(options.mode));
   // Native MCP tool connection: merged in alongside the built-in tool map at
   // every lookup site below, namespaced (mcp_<server>_<tool>) so it can
@@ -637,14 +638,14 @@ export async function runAgentTurn(
     const foreignCall = !call && options.mode !== 'plan' ? detectForeignToolCall(fullText) : null;
     if (foreignCall && truncationNudges < 3) {
       truncationNudges++;
-      pushMsg({ role: 'assistant', content: fullText });
+      pushAssistant(fullText);
       pushMsg({ role: 'user', content: formatForeignToolCallNudge(foreignCall, knownToolNames) });
       traceIter({ note: 'foreign-tool-call-nudge' });
       continue;
     }
     if (foreignCall && truncationNudges >= 3) {
       const failureNote = formatForeignToolCallCapFailure(foreignCall, truncationNudges);
-      pushMsg({ role: 'assistant', content: fullText });
+      pushAssistant(fullText);
       const finalText = `${displayText.trim()}\n\n[System] ${failureNote}`.trim();
       traceIter({ note: 'incomplete-action-cap', final: true });
       pendingActionTarget = undefined;
@@ -665,7 +666,7 @@ export async function runAgentTurn(
       // What we have is an INCOMPLETE action or thought, not a final answer — treating it as one is how a run
       // silently "finishes" without doing the work. Keep the partial text in the transcript and ask the model to carry on with an action.
       truncationNudges++;
-      pushMsg({ role: 'assistant', content: fullText });
+      pushAssistant(fullText);
       pushMsg({ role: 'user', content: formatIncompleteActionNudge(fullText, lengthTruncated) });
       const nudgeTarget = extractAbandonedActionTarget(fullText);
       if (nudgeTarget?.path) {
@@ -677,7 +678,7 @@ export async function runAgentTurn(
 
     if (incompleteReply && truncationNudges >= 3) {
       const failureNote = formatIncompleteActionCapFailure(fullText, truncationNudges);
-      pushMsg({ role: 'assistant', content: fullText });
+      pushAssistant(fullText);
       const finalText = `${displayText.trim()}\n\n[System] ${failureNote}`.trim();
       traceIter({ note: 'incomplete-action-cap', final: true });
       pendingActionTarget = undefined;
@@ -694,13 +695,13 @@ export async function runAgentTurn(
       const unverified = findUnverifiedClaims(displayText, messages);
       if (unverified.length > 0 && hallucinationNudges < 2) {
         hallucinationNudges++;
-        pushMsg({ role: 'assistant', content: fullText });
+        pushAssistant(fullText);
         const nudge = `[System check] You said you changed ${unverified.map((p) => `\`${p}\``).join(', ')}, but no write_file call for ${unverified.length === 1 ? 'that path' : 'those paths'} appears anywhere in this conversation. If you meant to make that change, call write_file now. If it's already done and this check is wrong, just continue — but don't simply repeat the same claim without acting or correcting it.`;
         pushMsg({ role: 'user', content: nudge });
         traceIter({ note: 'unverified-claim-nudge' });
         continue;
       }
-      pushMsg({ role: 'assistant', content: fullText });
+      pushAssistant(fullText);
 
       // "Definition of done": a plain-text final answer isn't the actual end
       // of the turn if a verify command is configured — Forge, not the
@@ -744,7 +745,7 @@ export async function runAgentTurn(
 
     // Keep the model's own transcript of what it did, so it has memory of
     // prior tool calls across iterations.
-    pushMsg({ role: 'assistant', content: fullText });
+    pushAssistant(fullText);
 
     if (pendingActionTarget) {
       const pending = pendingActionTarget;
@@ -801,7 +802,7 @@ export async function runAgentTurn(
             if (best.call && best.fullText !== fullText) {
               call = best.call;
               fullText = best.fullText;
-              messages[messages.length - 1] = { role: 'assistant', content: best.fullText };
+              messages[messages.length - 1] = { role: 'assistant', content: assistantContentForHistory(best.fullText) };
             }
           }
         } catch (err) {

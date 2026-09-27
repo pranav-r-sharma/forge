@@ -377,3 +377,28 @@ export function formatForeignToolCallNudge(foreign: ForeignToolCall, knownTools:
 export function formatForeignToolCallCapFailure(foreign: ForeignToolCall, attempts: number): string {
   return `stopped: could not resend ${foreign.tool} as a forge_action block after ${attempts} attempts`;
 }
+
+/**
+ * Text stored on assistant turns in the model-facing transcript. mlx_lm.server (gpt-oss / Harmony) rejects
+ * `<|...|>` control tokens in `content` on replay — analysis is dropped; foreign native tool calls become a short plain line.
+ */
+export function assistantContentForHistory(raw: string): string {
+  const foreign = detectForeignToolCall(raw);
+  if (foreign) {
+    const argsStr = foreign.args !== null ? JSON.stringify(foreign.args) : '{}';
+    return `(called ${foreign.tool} with ${argsStr} in native format)`;
+  }
+
+  if (!containsHarmonyControls(raw)) {
+    return raw;
+  }
+
+  const pre = preprocessHarmonyReply(raw);
+  if (pre.displayText) {
+    return pre.displayText;
+  }
+
+  let stripped = raw.replace(/<\|channel\|>analysis<\|message\|>[\s\S]*?<\|end\|>/gi, '');
+  stripped = stripped.replace(/<\|[^|]+\|>/g, '').trim();
+  return stripped;
+}

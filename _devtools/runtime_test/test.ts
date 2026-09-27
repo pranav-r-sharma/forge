@@ -11,13 +11,21 @@ import {
   stripHarmonyControlTokens,
   detectForeignToolCall,
   formatForeignToolCallNudge,
+  assistantContentForHistory,
 } from '../../src/agent/toolProtocol';
 import { resolveModelResponse } from '../../src/agent/agentLoop';
 import { cleanCompletion } from '../../src/completion/fimPrompt';
 
+let passed = 0;
+let failed = 0;
 function assert(cond: any, msg: string) {
-  if (!cond) throw new Error('FAIL: ' + msg);
-  console.log('ok -', msg);
+  if (cond) {
+    passed++;
+    console.log('ok -', msg);
+  } else {
+    failed++;
+    console.log('NOT OK -', msg);
+  }
 }
 
 // ---- diffLines / unifiedDiff ----
@@ -178,6 +186,19 @@ function assert(cond: any, msg: string) {
   assert(parseToolCall(fenced)?.tool === 'read_file', 'normal forge_action still parses');
   assert(detectForeignToolCall(fenced) === null, 'valid forge_action is not flagged as foreign');
 }
+{
+  const smoke =
+    '<|channel|>analysis<|message|>We need to run tests. Let\'s run tests.<|end|><|start|>assistant<|channel|>commentary to=run_command <|constrain|>json<|message|>{"command":"python3 -m unittest discover -s tests -t ."}';
+  const stored = assistantContentForHistory(smoke);
+  assert(!/<\|[^|]+\|>/.test(stored), 'history never stores Harmony control tokens');
+  assert(stored.includes('run_command') && stored.includes('native format'), 'foreign Harmony call becomes a short plain history line');
+  assert(!stored.includes('We need to run tests'), 'analysis channel is not stored in history');
+  const finalOnly =
+    '<|channel|>analysis<|message|>hidden<|end|><|start|>assistant<|channel|>final<|message|>Done.<|end|>';
+  assert(assistantContentForHistory(finalOnly) === 'Done.', 'final channel text is stored without controls or analysis');
+  const plain = '```forge_action\n{"tool": "read_file", "args": {"path": "a.ts"}}\n```';
+  assert(assistantContentForHistory(plain) === plain, 'plain forge_action is stored verbatim');
+}
 
 // ---- parseToolCall: invalid JSON in closed fence (t08 cycle 1, no brace auto-repair) ----
 {
@@ -211,4 +232,6 @@ function assert(cond: any, msg: string) {
   assert(!c.includes('function next() {\n  return 0'), 'cleanCompletion trims when model re-types the suffix');
 }
 
-console.log('\nAll runtime tests passed.');
+console.log(`\n${passed} passed, ${failed} failed.`);
+if (failed > 0) process.exit(1);
+console.log('All runtime tests passed.');
