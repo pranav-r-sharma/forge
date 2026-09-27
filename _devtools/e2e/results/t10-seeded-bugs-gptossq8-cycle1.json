@@ -1,0 +1,49 @@
+{
+  "task": "t10-seeded-bugs",
+  "provider": "mlx",
+  "model": "773a7da77e569019bb0fd17a554b263738d669a3",
+  "thinking": "auto",
+  "ctx": 32768,
+  "appendOnly": true,
+  "maxIters": 80,
+  "timeoutS": 1200,
+  "startedAt": "2026-09-27T20:07:29.350Z",
+  "hardware": "Apple M5, 32 GB",
+  "serverReadyS": 2.084,
+  "wallS": 341.467,
+  "checkExit": 0,
+  "checkOutput": "",
+  "protectedTouched": [],
+  "filesChanged": [
+    "sales/aggregate.py",
+    "sales/cli.py",
+    "sales/parser.py",
+    "sales/validate.py"
+  ],
+  "pass": true,
+  "finalText": "All bugs fixed. - Corrected import typo in `sales/cli.py`. - Fixed product revenue calculation (`qty * price`) in `sales/aggregate.py`. - Implemented proper top‑product logic with revenue tie‑break. - Added missing colon in `validate_row` definition. - Skipped blank lines in CSV parsing. - Adjusted product sorting to ascending order. The script now compiles, runs, and matches the expected output.",
+  "iterations": 39,
+  "tools": {
+    "list_dir": 2,
+    "read_file": 7,
+    "write_file": 5,
+    "run_command": 5
+  },
+  "toolFailures": 2,
+  "redundantReads": 0,
+  "reads": 7,
+  "viewEvents": 0,
+  "modelS": 560.31,
+  "toolS": 0.17,
+  "tokensEvaluated": 22232,
+  "tokensCached": 296643,
+  "cacheHitPct": 93,
+  "evalTokens": 19207,
+  "promptCharsMax": 40998,
+  "hw": {
+    "minAvailableGB": 8.8,
+    "maxSwapGB": 0.37,
+    "gpuPeakPct": 100
+  },
+  "tracePath": "_devtools/e2e/results/t10-seeded-bugs-gptossq8-cycle1.trace.jsonl"
+}
