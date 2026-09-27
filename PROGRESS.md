@@ -153,7 +153,15 @@ Reran `t07-build-from-scratch` once more with both fixes in place, watched live 
 
 **Files actually written this run:** `contacts/__init__.py`, `contacts/_finder.py`, `contacts/_install.py`, `conftest.py`, `pyproject.toml`, `tests/__init__.py`, `tests/test_storage.py`, plus `.pytest_cache/*` and `contacts.egg-info/*` — never `contacts/storage.py` or `contacts/cli.py`, the two files the task actually needed.
 
-## Files touched (this session, continued)
-`src/agent/toolProtocol.ts`, `src/agent/agentLoop.ts`, `src/tools/commandTool.ts`, `src/agent/types.ts`, `src/agent/approvalBroker.ts`, `_devtools/bench/run_task.ts`, `_devtools/runtime_test/test.ts`, `_devtools/runtime_test/test_v15_truncation.ts`, `_devtools/runtime_test/test_v15_command.ts`.
+## Handed off again (2026-09-27): continue as an autonomous fix-fail-fast loop
 
-**Last updated:** 2026-09-27 (two harness bugs found via the final acceptance test, both fixed with the owner's explicit go-ahead; Fix #1 confirmed live on a real rerun, Fix #2 not exercised this time; a third, different, unfixed finding recorded — the model's self-reinforcing wrong diagnosis of a missing file as a packaging bug)
+**Owner decision:** no longer wants to be involved in this loop. The next agent is pre-authorized to find harness bugs via `t07-build-from-scratch`, fix them, and re-run — repeatedly, without stopping to ask — within bounds spelled out in a rewritten `HANDOFF.md`. Two owner-requested process changes for this next phase:
+1. **Fail-fast:** the moment a run is recognized as hitting a genuine harness bug (not a model reasoning slip), kill it immediately — do not let it burn through its remaining iterations/timeout — fix, then restart from a fresh empty workspace.
+2. **Iteration log:** a new file, `_devtools/e2e/ITERATION_LOG.md`, one short entry per loop cycle, so progress is checkable at a glance without interrupting the agent. `PROGRESS.md` remains the detailed technical record per cycle, same as before.
+
+See `HANDOFF.md` for the full brief: classification guidance (harness bug vs. model limitation, calibrated against this session's 3 findings), the exact autonomy boundary (still bound by CLAUDE.md's no-sudo/no-new-installs/Ornith-only/branch/budget rules — the grant is narrowly "fix-and-rerun without asking," not a blanket waiver), and stopping conditions (success, model-limitation floor, a 5-cycle safety valve, or the existing budget-pause rule).
+
+## Files touched (this session, continued)
+`src/agent/toolProtocol.ts`, `src/agent/agentLoop.ts`, `src/tools/commandTool.ts`, `src/agent/types.ts`, `src/agent/approvalBroker.ts`, `_devtools/bench/run_task.ts`, `_devtools/runtime_test/test.ts`, `_devtools/runtime_test/test_v15_truncation.ts`, `_devtools/runtime_test/test_v15_command.ts`, `HANDOFF.md`.
+
+**Last updated:** 2026-09-27 (two harness bugs found via the final acceptance test, both fixed with the owner's explicit go-ahead; Fix #1 confirmed live on a real rerun, Fix #2 not exercised this time; a third, different, unfixed finding recorded; handed off again for an autonomous fix-fail-fast loop with a new iteration log)
