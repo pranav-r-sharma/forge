@@ -1,0 +1,1 @@
+{"id": "t07-build-from-scratch", "title": "Build a contacts-book CLI tool from an empty repository", "category": "build-from-scratch", "protected": [], "expected_files": ["contacts/__init__.py", "contacts/storage.py", "contacts/cli.py", "tests/__init__.py", "tests/test_storage.py"], "referenceFinal": "Done."}
