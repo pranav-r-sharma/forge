@@ -519,13 +519,13 @@ export class ChatSession {
     for (const rel of files) {
       try {
         const uri = vscode.Uri.joinPath(this.services.workspaceRoot, rel);
-        const stat = await vscode.workspace.fs.stat(uri).catch(() => undefined);
+        const stat = await Promise.resolve(vscode.workspace.fs.stat(uri)).catch(() => undefined);
         if (stat && stat.type === vscode.FileType.Directory) {
           // Item #5: folders can be @-tagged too. We don't dump a whole
           // folder's contents into context (could be huge/binary-laden) —
           // give the model a shallow listing and let it list_dir/read_file
           // its way in from there, same as if it discovered the folder itself.
-          const children: [string, vscode.FileType][] = await vscode.workspace.fs.readDirectory(uri).catch(() => []);
+          const children: [string, vscode.FileType][] = await Promise.resolve(vscode.workspace.fs.readDirectory(uri)).catch(() => [] as [string, vscode.FileType][]);
           const names = children.slice(0, 200).map(([name, type]: [string, vscode.FileType]) => `${name}${type === vscode.FileType.Directory ? '/' : ''}`).join('\n');
           augmented += `\n\n[Attached folder: ${rel}]\n${names || '(empty)'}${children.length > 200 ? '\n... (truncated; use list_dir for more)' : ''}`;
           continue;
