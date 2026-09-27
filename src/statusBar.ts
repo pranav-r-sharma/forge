@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { OllamaClient } from './ollama/client';
+import { LlmProvider } from './llm/provider';
 import { getConfig } from './util/config';
 
 /**
@@ -10,7 +10,7 @@ export class ForgeStatusBar {
   private item: vscode.StatusBarItem;
   private timer: ReturnType<typeof setInterval> | undefined;
 
-  constructor(private ollama: OllamaClient, context: vscode.ExtensionContext) {
+  constructor(private ollama: LlmProvider, context: vscode.ExtensionContext) {
     this.item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
     this.item.command = 'forge.selectChatModel';
     context.subscriptions.push(this.item);

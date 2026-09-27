@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { TraceWriter, tracePathFor } from '../agent/traceLog';
-import { OllamaClient } from '../ollama/client';
+import { LlmProvider } from '../llm/provider';
 import { ChatMessage } from '../ollama/types';
 import { PendingEditManager } from '../tools/editApply';
 import { BackgroundProcessManager } from '../tools/backgroundProcessManager';
@@ -33,7 +33,7 @@ import { ExtensionToWebviewMessage, SessionState, UiTranscriptEntry } from '../w
 const MEMORY_REVIEW_INTERVAL = 6;
 
 export interface ChatSessionServices {
-  ollama: OllamaClient;
+  ollama: LlmProvider;
   pendingEdits: PendingEditManager;
   backgroundProcesses: BackgroundProcessManager;
   workspaceIndex: WorkspaceIndex;

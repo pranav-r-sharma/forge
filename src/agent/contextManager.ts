@@ -1,5 +1,5 @@
 import { ChatMessage } from '../ollama/types';
-import { OllamaClient } from '../ollama/client';
+import { LlmProvider } from '../llm/provider';
 import { parseToolCall } from './toolProtocol';
 
 /**
@@ -112,7 +112,7 @@ export async function maybeCompact(
   cache: CompactionCache | undefined,
   model: string,
   numCtx: number,
-  ollama: OllamaClient,
+  ollama: LlmProvider,
   signal?: AbortSignal
 ): Promise<{ promptMessages: ChatMessage[]; cache: CompactionCache | undefined }> {
   const threshold = compactionThreshold(numCtx);

@@ -1,5 +1,5 @@
 import { ChatMessage } from '../ollama/types';
-import { OllamaClient } from '../ollama/client';
+import { LlmProvider } from '../llm/provider';
 import { logger } from '../util/logger';
 
 const MAX_PLAN_CHARS = 1500;
@@ -31,7 +31,7 @@ const MAX_SNIPPET_CHARS = 600;
  * maybeCompact() already uses for its own extra model call.
  */
 export async function generatePlanFirst(opts: {
-  ollama: OllamaClient;
+  ollama: LlmProvider;
   model: string;
   userMessage: string;
   recentMessages: ChatMessage[];

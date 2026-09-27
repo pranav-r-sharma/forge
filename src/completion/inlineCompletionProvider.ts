@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
-import { OllamaClient, keepAliveOpt } from '../ollama/client';
+import { keepAliveOpt } from '../ollama/client';
+import { LlmProvider } from '../llm/provider';
 import { getConfig } from '../util/config';
 import { buildFimContext, cleanCompletion } from './fimPrompt';
 import { logger } from '../util/logger';
@@ -15,7 +16,7 @@ export class ForgeInlineCompletionProvider implements vscode.InlineCompletionIte
   private debounceTimer: ReturnType<typeof setTimeout> | undefined;
   private generation = 0;
 
-  constructor(private ollama: OllamaClient) {}
+  constructor(private ollama: LlmProvider) {}
 
   async provideInlineCompletionItems(
     document: vscode.TextDocument,

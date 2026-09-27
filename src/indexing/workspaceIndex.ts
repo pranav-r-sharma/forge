@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { OllamaClient } from '../ollama/client';
+import { LlmProvider } from '../llm/provider';
 import { isIgnoredDir, looksBinary, toRelative } from '../util/paths';
 import { sha1 } from '../util/hash';
 import { keywordCodebaseSearch } from './keywordSearch';
@@ -61,7 +61,7 @@ export class WorkspaceIndex {
   private recentlyTouched = new Map<string, number>();
 
   constructor(
-    private ollama: OllamaClient,
+    private ollama: LlmProvider,
     private workspaceRoot: vscode.Uri,
     private storageUri: vscode.Uri | undefined,
     private getEmbeddingModel: () => string,

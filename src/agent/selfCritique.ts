@@ -1,4 +1,4 @@
-import { OllamaClient } from '../ollama/client';
+import { LlmProvider } from '../llm/provider';
 import { logger } from '../util/logger';
 
 const MAX_SNIPPET_CHARS = 3000;
@@ -36,7 +36,7 @@ export function shouldCritique(args: Record<string, any>, minLines: number): boo
  * an edit the pending-edit review system already handles.
  */
 export async function critiqueEdit(opts: {
-  ollama: OllamaClient;
+  ollama: LlmProvider;
   model: string;
   path: string;
   writtenText: string;

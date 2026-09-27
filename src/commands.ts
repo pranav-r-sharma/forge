@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
-import { OllamaClient, pickBestCompletionModel, pickBestDefaultModel } from './ollama/client';
+import { pickBestCompletionModel, pickBestDefaultModel } from './ollama/client';
+import { LlmProvider } from './llm/provider';
 import { setChatModel, setCompletionModel, setModelForMode, getConfig } from './util/config';
 import { PendingEditManager } from './tools/editApply';
 import { openDiffForEdit } from './tools/diffContentProvider';
@@ -54,7 +55,7 @@ export async function setWebSearchApiKeyCommand(keyStore: WebSearchKeyStore) {
 }
 
 /** Item "HWD Utilization metrics" — a quick, no-UI-work-required way to see what's currently resident in Ollama and its VRAM footprint (GET /api/ps), for when the composer-footer readout (live tokens/sec, from ChatSession's 'metrics' events) isn't enough. */
-export async function showHwStatusCommand(ollama: OllamaClient) {
+export async function showHwStatusCommand(ollama: LlmProvider) {
   const health = await ollama.health();
   if (!health.ok) {
     vscode.window.showErrorMessage(`Forge: can't reach Ollama (${health.error}).`);
@@ -163,7 +164,7 @@ export async function compactMemoryCommand(memory: MemoryStore) {
   }
 }
 
-export async function selectChatModelCommand(ollama: OllamaClient) {
+export async function selectChatModelCommand(ollama: LlmProvider) {
   const health = await ollama.health();
   if (!health.ok) {
     vscode.window.showErrorMessage(`Forge: can't reach Ollama (${health.error}). Run "ollama serve" and try again.`);
@@ -188,7 +189,7 @@ export async function selectChatModelCommand(ollama: OllamaClient) {
   vscode.window.showInformationMessage(`Forge chat model set to ${picked.label}.`);
 }
 
-export async function selectCompletionModelCommand(ollama: OllamaClient) {
+export async function selectCompletionModelCommand(ollama: LlmProvider) {
   const health = await ollama.health();
   if (!health.ok) {
     vscode.window.showErrorMessage(`Forge: can't reach Ollama (${health.error}).`);
@@ -217,7 +218,7 @@ export async function selectCompletionModelCommand(ollama: OllamaClient) {
 }
 
 /** Item "multi-model task routing" — a small model for Tab completion and Ask, a strong one for Agent/Auto/Outcome's actual editing work, a reasoning-tuned one for Plan, without hand-editing forge.modelRouting JSON. */
-export async function setModelForModeCommand(ollama: OllamaClient) {
+export async function setModelForModeCommand(ollama: LlmProvider) {
   const health = await ollama.health();
   if (!health.ok) {
     vscode.window.showErrorMessage(`Forge: can't reach Ollama (${health.error}).`);
@@ -252,7 +253,7 @@ export async function setModelForModeCommand(ollama: OllamaClient) {
   );
 }
 
-export async function checkOllamaStatusCommand(ollama: OllamaClient) {
+export async function checkOllamaStatusCommand(ollama: LlmProvider) {
   const cfg = getConfig();
   const health = await ollama.health();
   if (!health.ok) {

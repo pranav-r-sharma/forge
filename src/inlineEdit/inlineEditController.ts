@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
-import { OllamaClient, keepAliveOpt } from '../ollama/client';
+import { keepAliveOpt } from '../ollama/client';
+import { LlmProvider } from '../llm/provider';
 import { getConfig } from '../util/config';
 import { unifiedDiff } from '../util/diff';
 import { logger } from '../util/logger';
@@ -24,7 +25,7 @@ interface ActiveEdit {
 export class InlineEditController {
   private active: ActiveEdit | undefined;
 
-  constructor(private ollama: OllamaClient, private context: vscode.ExtensionContext) {}
+  constructor(private ollama: LlmProvider, private context: vscode.ExtensionContext) {}
 
   private setActiveContext(value: boolean) {
     vscode.commands.executeCommand('setContext', 'forge.inlineEditActive', value);

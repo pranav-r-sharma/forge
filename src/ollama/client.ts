@@ -11,6 +11,7 @@ import {
   OllamaTagsResponse,
 } from './types';
 import { logger } from '../util/logger';
+import { LlmProvider, ProviderCapabilities, OLLAMA_CAPABILITIES } from '../llm/provider';
 
 /** `0` in ForgeConfig.keepAliveMinutes means "server default" — translate that to "omit the field" for the wire request. -1 (never unload) and positive minute counts pass through as-is. */
 export function keepAliveOpt(minutes: number): number | undefined {
@@ -28,7 +29,9 @@ export class OllamaError extends Error {
  * Minimal, dependency-free client for a local Ollama server. Uses Node 18+'s
  * global `fetch` so the extension ships with zero runtime npm dependencies.
  */
-export class OllamaClient {
+export class OllamaClient implements LlmProvider {
+  readonly capabilities: ProviderCapabilities = OLLAMA_CAPABILITIES;
+
   constructor(private getBaseUrl: () => string) {}
 
   private url(path: string): string {

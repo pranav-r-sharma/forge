@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
-import { OllamaClient, pickBestDefaultModel } from '../ollama/client';
+import { pickBestDefaultModel } from '../ollama/client';
+import { LlmProvider } from '../llm/provider';
 import { PendingEditManager } from '../tools/editApply';
 import { BackgroundProcessManager } from '../tools/backgroundProcessManager';
 import { openDiffForEdit } from '../tools/diffContentProvider';
@@ -106,12 +107,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
   /** One shared sampler for every webview host (v0.15.0 §1.4) — pushes accurate memory/GPU readings instead of waiting for a click. */
   private readonly hwSampler = new HwSampler();
-  private psCache: { at: number; value: Awaited<ReturnType<OllamaClient['ps']>> } | undefined;
+  private psCache: { at: number; value: Awaited<ReturnType<LlmProvider['ps']>> } | undefined;
   private hwPushInFlight = false;
 
   constructor(
     private readonly context: vscode.ExtensionContext,
-    private readonly ollama: OllamaClient,
+    private readonly ollama: LlmProvider,
     private readonly pendingEdits: PendingEditManager,
     private readonly backgroundProcesses: BackgroundProcessManager,
     private readonly workspaceIndex: WorkspaceIndex,

@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { OllamaClient } from '../ollama/client';
+import { LlmProvider } from '../llm/provider';
 import { StoredSession } from '../forge/chatStore';
 import { UiTranscriptEntry } from '../webview/protocol';
 import { sha1 } from '../util/hash';
@@ -65,7 +65,7 @@ export class ChatMemoryIndex {
   private saveQueued = false;
 
   constructor(
-    private ollama: OllamaClient,
+    private ollama: LlmProvider,
     private storageUri: vscode.Uri | undefined,
     private getEmbeddingModel: () => string
   ) {

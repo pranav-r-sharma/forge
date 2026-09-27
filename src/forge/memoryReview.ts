@@ -1,4 +1,4 @@
-import { OllamaClient } from '../ollama/client';
+import { LlmProvider } from '../llm/provider';
 
 const MAX_FACTS_PER_REVIEW = 5;
 const MAX_TRANSCRIPT_CHARS = 6000;
@@ -19,7 +19,7 @@ const MAX_TRANSCRIPT_CHARS = 6000;
  */
 export async function reviewForMemoryFacts(
   transcriptExcerpt: string,
-  ollama: OllamaClient,
+  ollama: LlmProvider,
   model: string,
   existingFacts: string[]
 ): Promise<string[]> {

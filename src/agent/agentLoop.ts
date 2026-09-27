@@ -2,7 +2,8 @@ import { ReadCoverage } from './readCoverage';
 import { TraceWriter, TraceInput, argsHash, describeArgsForTrace, hwForTrace } from './traceLog';
 import type { HwSnapshot } from '../util/hwSampler';
 import * as vscode from 'vscode';
-import { OllamaClient, keepAliveOpt } from '../ollama/client';
+import { keepAliveOpt } from '../ollama/client';
+import { LlmProvider } from '../llm/provider';
 import { ChatMessage, OllamaCallMetrics } from '../ollama/types';
 import { AgentActivity, AgentEvent, ToolCall, ToolExecContext, ToolResult } from './types';
 import { buildSystemPrompt, buildTurnContextPrefix } from './systemPrompt';
@@ -28,7 +29,7 @@ import { BackgroundProcessManager } from '../tools/backgroundProcessManager';
 import { DynamicToolSpec } from '../mcp/mcpTypes';
 
 export interface AgentDeps {
-  ollama: OllamaClient;
+  ollama: LlmProvider;
   pendingEdits: PendingEditManager;
   approvalBroker: ApprovalBroker;
   hooks: HookRunner;

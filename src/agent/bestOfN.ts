@@ -1,5 +1,5 @@
 import { ChatMessage } from '../ollama/types';
-import { OllamaClient } from '../ollama/client';
+import { LlmProvider } from '../llm/provider';
 import { ToolCall } from './types';
 import { parseToolCall } from './toolProtocol';
 import { detectBalanceRegression } from '../tools/fileTools';
@@ -48,7 +48,7 @@ export interface RewriteCandidate {
  * turn or force a retry loop.
  */
 export async function sampleBestOfNForRewrite(opts: {
-  ollama: OllamaClient;
+  ollama: LlmProvider;
   promptView: ChatMessage[];
   model: string;
   temperature: number;
