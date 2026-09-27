@@ -270,10 +270,15 @@
         },
         "forge.thinking": {
           "type": "string",
-          "enum": ["default", "off", "on"],
-          "default": "default",
-          "enumDescriptions": ["Use the model's own default.", "Turn thinking off: much faster tool-calling steps, at some cost on hard reasoning.", "Force thinking on."],
-          "description": "Thinking mode for the chat/agent on runtimes that support switching it (MLX). Thinking models spend many tokens reasoning before every action; turning it off is often the biggest speed-up for routine tool steps."
+          "enum": ["auto", "default", "off", "on"],
+          "default": "auto",
+          "enumDescriptions": [
+            "Fast by default (thinking off), and turn thinking ON automatically when the agent gets stuck (its commands/tests keep failing).",
+            "Use the model's own default.",
+            "Always off: fastest, but the model can't reason its way out of a hard problem.",
+            "Always on: slowest."
+          ],
+          "description": "Thinking mode for the chat/agent on runtimes that support switching it (MLX). Measured on a 9B model: thinking off is 2-4x faster for routine tool steps but can fail problems that thinking solves; 'auto' gets both."
         },
         "forge.context.appendOnly": {
           "type": "boolean",

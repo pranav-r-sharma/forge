@@ -58,7 +58,7 @@ export interface ForgeConfig {
   /** Keep the prompt append-only between deliberate batched compactions, so the runtime's prompt cache stays valid (see agent/contextManager.ts updatePromptView). Off = the old per-step pruning. */
   contextAppendOnly: boolean;
   /** Thinking mode for chat/agent calls on runtimes that support it (MLX): 'default' = the model's own default, 'off' = faster tool steps, 'on' = force. */
-  thinking: 'default' | 'off' | 'on';
+  thinking: 'default' | 'off' | 'on' | 'auto';
   /** Output-token limit per model reply (0 = the runtime's own default, which can be as low as 512 on MLX and silently cuts replies short). */
   maxOutputTokens: number;
   /** Ask the model for one-sentence tool steps and short final answers (generated tokens dominate step time on local models). */
@@ -172,7 +172,7 @@ export function getConfig(): ForgeConfig {
     loopDetectionEnabled: cfg.get<boolean>('loopDetection.enabled') ?? true,
     traceEnabled: cfg.get<boolean>('trace.enabled') ?? true,
     contextAppendOnly: cfg.get<boolean>('context.appendOnly') ?? true,
-    thinking: ((v) => (v === 'off' || v === 'on' ? v : 'default'))(cfg.get<string>('thinking')),
+    thinking: ((v) => (v === 'off' || v === 'on' || v === 'auto' ? v : 'auto'))(cfg.get<string>('thinking')),
     terseSteps: cfg.get<boolean>('terseSteps') ?? true,
     maxOutputTokens: Math.max(0, Math.floor(cfg.get<number>('maxOutputTokens') ?? 4096)),
     contextHighWaterPct: cfg.get<number>('context.highWaterPct') ?? 75,

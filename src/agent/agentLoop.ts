@@ -53,6 +53,21 @@ export interface AgentDeps {
   workspaceName: string;
 }
 
+/** How many failed commands in a row make forge.thinking='auto' switch thinking on. */
+export const THINKING_ESCALATION_FAILURES = 2;
+
+/**
+ * The `thinking` flag for a model call. 'auto' = fast (off) until the agent is visibly stuck — its commands have failed
+ * THINKING_ESCALATION_FAILURES times in a row — then on. Measured on a 9B model (t03-add-function): thinking off failed the task,
+ * thinking on solved it in 335 s; 'auto' spends the thinking budget only where it is needed. undefined = leave it to the model.
+ */
+export function thinkingForStep(mode: 'default' | 'off' | 'on' | 'auto', failedRunsInARow: number): boolean | undefined {
+  if (mode === 'default') return undefined;
+  if (mode === 'on') return true;
+  if (mode === 'off') return false;
+  return failedRunsInARow >= THINKING_ESCALATION_FAILURES;
+}
+
 export interface AgentTurnOptions {
   mode: ForgeMode;
   /** Rendered environment facts (agent/environment.ts) for the system prompt: installed tools, likely test command. */
@@ -459,11 +474,13 @@ export async function runAgentTurn(
 
   let hallucinationNudges = 0;
   let truncationNudges = 0;
+  /** Consecutive failed run_command results (tests/build still failing) — drives forge.thinking='auto': the agent is stuck, so let the model think. */
+  let failedRunsInARow = 0;
 
   // ---- trace + read-coverage (v0.15.0 §1.1/§1.2): measurement only, guarded so it can never break a turn ----
   const turnId = Date.now().toString(36);
   const readCoverage = new ReadCoverage();
-  let iterState = { iter: 0, promptChars: 0, promptMsgs: 0, staleReadStubs: 0, compacted: false, modelMs: 0, metrics: undefined as OllamaCallMetrics | undefined, viewEvent: undefined as 'mask' | 'compact' | undefined, estPromptTokens: undefined as number | undefined };
+  let iterState = { iter: 0, promptChars: 0, promptMsgs: 0, staleReadStubs: 0, compacted: false, modelMs: 0, metrics: undefined as OllamaCallMetrics | undefined, viewEvent: undefined as 'mask' | 'compact' | undefined, estPromptTokens: undefined as number | undefined, thinking: undefined as boolean | undefined };
   const traceIter = (extra: Partial<TraceInput>) => {
     if (!deps.trace) return;
     try {
@@ -494,6 +511,7 @@ export async function runAgentTurn(
         promptEvalMs: m?.promptEvalDurationMs,
         loadMs: m?.loadDurationMs,
         finishReason: m?.finishReason,
+        thinking: iterState.thinking,
         hw,
         ...extra,
       });
@@ -519,6 +537,7 @@ export async function runAgentTurn(
       metrics: undefined,
       viewEvent: lastViewEvent,
       estPromptTokens: lastEstTokens,
+      thinking: thinkingForStep(cfg.thinking, failedRunsInARow),
     };
     const modelStartedAt = Date.now();
 
@@ -537,7 +556,7 @@ export async function runAgentTurn(
         numCtx,
         keepAliveMinutes: keepAliveOpt(cfg.keepAliveMinutes),
         format: structuredOutputEnabled ? STRUCTURED_RESPONSE_SCHEMA : undefined,
-        thinking: cfg.thinking === 'default' ? undefined : cfg.thinking === 'on',
+        thinking: thinkingForStep(cfg.thinking, failedRunsInARow),
         maxTokens: cfg.maxOutputTokens > 0 ? cfg.maxOutputTokens : undefined,
         onToken: (token) => emit({ type: 'token', text: token }),
         onMetrics: (metrics) => {
@@ -816,6 +835,8 @@ export async function runAgentTurn(
     });
 
     pushMsg({ role: 'user', content: `[Tool "${call.tool}" result]\n${resultContentForModel}` });
+
+    if (call.tool === 'run_command') failedRunsInARow = result.ok ? 0 : failedRunsInARow + 1;
 
     // Trace + redundant-read detection (measurement only).
     try {

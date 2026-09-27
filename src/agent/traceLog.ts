@@ -44,6 +44,8 @@ export interface TraceRecord {
   loadMs?: number;
   /** 'length' = the reply was cut off by the output limit (incomplete). */
   finishReason?: string;
+  /** The thinking flag sent for this call (undefined = the model's default). With forge.thinking='auto' it turns true when the agent gets stuck. */
+  thinking?: boolean;
   // ---- the action taken ----
   tool?: string;
   argsHash?: string;
