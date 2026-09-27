@@ -714,7 +714,7 @@ export async function runAgentTurn(
       const pending = pendingActionTarget;
       const bypass = PENDING_ACTION_BYPASS_TOOLS.has(call.tool);
       const matches =
-        call.tool === pending.tool && toolCallMatchesPendingPath(call, pending.path, deps.workspaceRoot);
+        !bypass && toolCallMatchesPendingPath(call, pending.path, deps.workspaceRoot);
       if (bypass) {
         /* keep pending — reading/searching before finishing the write is fine */
       } else if (matches) {

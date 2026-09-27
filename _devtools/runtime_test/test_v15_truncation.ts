@@ -190,6 +190,18 @@ async function main() {
     ok(ev.filter((e) => e.type === 'tool_call' && e.tool === 'write_file').length === 1, 'pending target: after one redirect the wrong write is allowed through');
   }
 
+  // strict-catch: pending clears on any non-bypass tool targeting the same path (not only the same tool name)
+  {
+    const ws = workspace();
+    const abandoned = '```forge_action\n{"tool":"edit_file","args":{"path":"contacts/storage.py","content":"class X';
+    const finish = act('write_file', { path: 'contacts/storage.py', content: 'class X:\n  pass\n' });
+    const m = scripted([[abandoned, 'stop'], [finish, 'stop'], ['done', 'stop']]);
+    const ev: AgentEvent[] = [];
+    await runAgentTurn([], 'go', deps(ws, m), (e) => ev.push(e), new vscode.CancellationTokenSource().token, 'fake', { mode: 'auto' });
+    ok(!/Not executed/.test(m.seen[1].last), 'pending target: write_file on the pending path is not redirected when the abandoned tool name differed');
+    ok(ev.filter((e) => e.type === 'tool_call' && e.tool === 'write_file').length === 1, 'pending target: same-path write_file runs once after a differently named abandoned action');
+  }
+
   // strict-catch: read-only tools pass through while pending is still outstanding
   {
     const ws = workspace();
