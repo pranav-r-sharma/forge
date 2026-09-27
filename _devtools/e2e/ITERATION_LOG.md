@@ -51,3 +51,12 @@ One short entry per loop cycle. Full narrative for each cycle stays in `PROGRESS
 - **Findings:** (a) **Model limitation** — final answer overclaims: says all five files compile and summary works but never ran `py_compile` on `main.py` nor `summary` (true per `check.sh`, unverified in transcript); possible future harness idea: verify commands named in the final answer were run this turn. (b) **Harness inaccuracy (msg 24–25)** — empty native `to=forge_action {}` nudged as “not a Forge tool”; fixed `805c115`.
 - **Evidence:** `_devtools/e2e/results/t08-five-file-build-gptossq8-cycle2.{json,trace.jsonl,messages.json}`
 - **Next:** t08 cycle 3 (need 2 consecutive clean passes)
+
+## Cycle 3 — gpt-oss-20b MXFP4-Q8 (MLX)
+
+- **Run:** t08-five-file-build, gpt-oss-20b MXFP4-Q8 (MLX snapshot), thinking=auto terse=true
+- **Result:** PASS — 27 iterations, 116.0 s wall, 6 `write_file` + 8 `run_command`, 0 tool failures, 0 nudges; `check.sh` pass; this run also exercised `summary` (cycle 2 did not)
+- **Classification:** success — loop stop condition met (2 consecutive clean passes on t08, cycles 2 and 3)
+- **Findings:** **Model limitation (recurring, 2/2 cycles)** — final answer still claims all five files compile without ever running `py_compile` on `main.py` in the transcript. **Open gap:** no t08 run so far produced a code error, so the fix-an-error path was not exercised by this fixture.
+- **Evidence:** `_devtools/e2e/results/t08-five-file-build-gptossq8-cycle3.{json,trace.jsonl,messages.json}`
+- **Next:** owner to choose the next test (e.g. a harder multi-file task where errors are likely, or a task seeded with bugs)
