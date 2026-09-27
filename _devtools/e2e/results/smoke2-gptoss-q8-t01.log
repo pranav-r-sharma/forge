@@ -1,0 +1,3 @@
+  ERROR: MLX (mlx_lm.server) request failed (HTTP 404): {"error": "You have passed a message containing <|channel|> tags in the content field. Instead of doing this, you should pass analysis messages (the string between '<|message|>' and '<|end|>') in the 'thinking' field, and final messages (the string between '<|message|>' and '<|end|>') in the 'content' field."}
+
+FAIL t01-fix-bug [mlx/773a7da77e569019bb0fd17a554b263738d669a3 thinking=auto] 1 iterations, 5.8s (model 5.76s, tools 0s), cache hit 0%, reads 0 (redundant 0)

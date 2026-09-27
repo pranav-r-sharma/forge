@@ -1,0 +1,2 @@
+
+FAIL t01-fix-bug [mlx/773a7da77e569019bb0fd17a554b263738d669a3 thinking=auto] 1 iterations, 10.1s (model 10.09s, tools 0s), cache hit 0%, reads 0 (redundant 0)
