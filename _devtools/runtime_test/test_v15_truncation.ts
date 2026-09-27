@@ -56,18 +56,18 @@ function scripted(replies: [string, string][]) {
 async function main() {
   // config defaults
   vs.__resetConfig();
-  ok(getConfig().maxOutputTokens === 4096 && getConfig().thinking === 'default', 'defaults: 4096 output tokens per reply, thinking = model default');
+  ok(getConfig().maxOutputTokens === 4096 && getConfig().thinking === 'auto', "defaults: 4096 output tokens per reply, thinking = 'auto' (fast until stuck)");
   vs.__setConfig({ 'forge.maxOutputTokens': 0, 'forge.thinking': 'off' });
   ok(getConfig().maxOutputTokens === 0 && getConfig().thinking === 'off', 'settings are read (0 = runtime default, thinking off)');
   vs.__setConfig({ 'forge.maxOutputTokens': -5, 'forge.thinking': 'garbage' });
-  ok(getConfig().maxOutputTokens === 0 && getConfig().thinking === 'default', 'negative / garbled values degrade safely');
+  ok(getConfig().maxOutputTokens === 0 && getConfig().thinking === 'auto', 'negative / garbled values degrade safely');
   vs.__resetConfig();
 
   // the limit and thinking mode are actually sent
   {
     const m = scripted([['done', 'stop']]);
     await runAgentTurn([], 'go', deps(workspace(), m), () => {}, new vscode.CancellationTokenSource().token, 'fake', { mode: 'auto' });
-    ok(m.seen[0].maxTokens === 4096 && m.seen[0].thinking === undefined, 'the agent loop sends the configured output limit; thinking is left to the model by default');
+    ok(m.seen[0].maxTokens === 4096 && m.seen[0].thinking === false, "the agent loop sends the configured output limit; with the default 'auto', thinking starts OFF (fast)");
     vs.__setConfig({ 'forge.maxOutputTokens': 0, 'forge.thinking': 'off' });
     const m2 = scripted([['done', 'stop']]);
     await runAgentTurn([], 'go', deps(workspace(), m2), () => {}, new vscode.CancellationTokenSource().token, 'fake', { mode: 'auto' });
