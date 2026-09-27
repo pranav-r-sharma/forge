@@ -7,7 +7,7 @@ import { LlmProvider } from '../llm/provider';
 import { ChatMessage, OllamaCallMetrics } from '../ollama/types';
 import { AgentActivity, AgentEvent, ToolCall, ToolExecContext, ToolResult } from './types';
 import { buildSystemPrompt, buildTurnContextPrefix } from './systemPrompt';
-import { parseToolCall } from './toolProtocol';
+import { parseToolCall, looksLikeAbandonedToolCall } from './toolProtocol';
 import { parseStructuredResponse, STRUCTURED_RESPONSE_SCHEMA } from './structuredOutput';
 import { generatePlanFirst, renderPlanFirstForPrompt } from './planFirst';
 import { shouldCritique, critiqueEdit } from './selfCritique';
@@ -601,13 +601,23 @@ export async function runAgentTurn(
       ? { call: null as ToolCall | null, displayText: fullText }
       : resolveModelResponse(fullText, structuredOutputEnabled);
 
-    if (!call && options.mode !== 'plan' && iterState.metrics?.finishReason === 'length' && truncationNudges < 3) {
-      // The reply hit the output-token limit, so what we have is an INCOMPLETE thought, not a final answer — treating it as one is how a run
-      // silently "finishes" mid-analysis. Keep the partial text in the transcript and ask the model to carry on with an action.
+    const lengthTruncated = iterState.metrics?.finishReason === 'length';
+    // A model can also abandon an action mid-JSON on its OWN stop token (finishReason 'stop', not 'length') —
+    // e.g. it finishes a long write_file's content and, out of habit, types a closing ``` without ever closing
+    // the JSON. That leaves a `"tool":"..."` fragment that parseToolCall correctly refuses to parse, but the
+    // fragment must not be silently accepted as a final answer either (found via the t07-build-from-scratch
+    // acceptance test — see PROGRESS.md — where this was 100% reproducible on a large new-file write).
+    const abandonedAction = !call && !lengthTruncated && options.mode !== 'plan' && looksLikeAbandonedToolCall(fullText);
+    if (!call && options.mode !== 'plan' && (lengthTruncated || abandonedAction) && truncationNudges < 3) {
+      // What we have is an INCOMPLETE action or thought, not a final answer — treating it as one is how a run
+      // silently "finishes" without doing the work. Keep the partial text in the transcript and ask the model to carry on with an action.
       truncationNudges++;
       pushMsg({ role: 'assistant', content: fullText });
-      pushMsg({ role: 'user', content: '[System check] Your last reply was cut off by the output-length limit before you finished, so it was not a complete action or answer. Do not repeat your analysis. Keep any reasoning to a couple of sentences and reply now with your next action (one forge_action block) or, if the task is complete, your final answer.' });
-      traceIter({ note: 'truncated-reply-nudge' });
+      const reason = lengthTruncated
+        ? 'Your last reply was cut off by the output-length limit before you finished, so it was not a complete action or answer.'
+        : 'Your last reply started an action but the JSON was left incomplete, so it was not a valid action or answer.';
+      pushMsg({ role: 'user', content: `[System check] ${reason} Do not repeat your analysis. Keep any reasoning to a couple of sentences and reply now with your next action (one forge_action block) or, if the task is complete, your final answer.` });
+      traceIter({ note: lengthTruncated ? 'truncated-reply-nudge' : 'abandoned-action-nudge' });
       continue;
     }
 

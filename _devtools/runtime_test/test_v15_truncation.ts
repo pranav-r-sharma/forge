@@ -96,12 +96,51 @@ async function main() {
     ok(rec[0].finishReason === 'length' && rec[0].note === 'truncated-reply-nudge', 'the trace records finishReason "length" and the nudge');
   }
 
+  // an abandoned action (a "tool":"..." fragment that never closes, finishReason "stop" not "length" -
+  // the t07-build-from-scratch acceptance-test finding) is ALSO not accepted as a final answer
+  {
+    const ws = workspace();
+    const file = tracePathFor(ws.fsPath, 'abandoned');
+    const w = new TraceWriter(file, 'abandoned');
+    const abandoned = '```forge_action\n{"tool":"write_file","args":{"path":"contacts/storage.py","content":"import json\\nclass ContactBook:\\n    def add(self';
+    const m = scripted([
+      [abandoned, 'stop'], // the model's own stop token, mid-JSON - NOT a length cutoff
+      [act('read_file', { path: 'a.txt' }), 'stop'],
+      ['All done.', 'stop'],
+    ]);
+    const ev: AgentEvent[] = [];
+    await runAgentTurn([], 'go', deps(ws, m, w), (e) => ev.push(e), new vscode.CancellationTokenSource().token, 'fake', { mode: 'auto' });
+    await w.flush();
+    ok(m.seen.length === 3, `the abandoned action did NOT end the turn — the model was asked again (${m.seen.length} model calls)`);
+    ok(/JSON was left incomplete/.test(m.seen[1].last), 'the continuation request explains the JSON was left incomplete, not an output-length excuse');
+    ok(ev.filter((e) => e.type === 'final').length === 1 && (ev.find((e) => e.type === 'final') as any).text === 'All done.', 'the final answer is the real one, not the abandoned JSON fragment');
+    const rec = fs.readFileSync(file, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+    ok(rec[0].finishReason === 'stop' && rec[0].note === 'abandoned-action-nudge', 'the trace records finishReason "stop" and the abandoned-action nudge (distinct from the length-cutoff nudge)');
+  }
+
+  // a genuine final answer that happens to contain valid, non-tool JSON (no "tool" key) is NOT mistaken for an abandoned action
+  {
+    const m = scripted([['Here is the record shape:\n```json\n{"id": 1, "name": "Alice"}\n```', 'stop']]);
+    const ev: AgentEvent[] = [];
+    await runAgentTurn([], 'go', deps(workspace(), m), (e) => ev.push(e), new vscode.CancellationTokenSource().token, 'fake', { mode: 'auto' });
+    ok(m.seen.length === 1 && ev.some((e) => e.type === 'final'), 'a valid non-tool JSON example in a final answer is accepted immediately, no nudge');
+  }
+
   // bounded: a model that is ALWAYS cut off does not loop forever
   {
     const m = scripted([['blah blah', 'length']]);
     const ev: AgentEvent[] = [];
     await runAgentTurn([], 'go', deps(workspace(), m), (e) => ev.push(e), new vscode.CancellationTokenSource().token, 'fake', { mode: 'auto' });
     ok(m.seen.length === 4 && ev.some((e) => e.type === 'final'), `after 3 continuation requests it stops (4 model calls) and reports what it has (${m.seen.length})`);
+  }
+
+  // bounded: a model that ALWAYS abandons its action mid-JSON does not loop forever either (shares the same cap)
+  {
+    const abandoned = '```forge_action\n{"tool":"write_file","args":{"path":"x.py","content":"start of file';
+    const m = scripted([[abandoned, 'stop']]);
+    const ev: AgentEvent[] = [];
+    await runAgentTurn([], 'go', deps(workspace(), m), (e) => ev.push(e), new vscode.CancellationTokenSource().token, 'fake', { mode: 'auto' });
+    ok(m.seen.length === 4 && ev.some((e) => e.type === 'final'), `after 3 continuation requests it stops (4 model calls) even for a repeatedly-abandoned action (${m.seen.length})`);
   }
 
   // a truncated reply that nonetheless contains a complete action is just executed
