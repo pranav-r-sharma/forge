@@ -70,7 +70,14 @@ Then 0.15.0 items (see "Suggested release slicing" in the plan) once Phase 0 num
 **Superseding owner decision (2026-09-27): MLX is the actual direction — switch to it now, no more benchmark runs for the moment.** Changed `forge.provider`'s packaged default in `package.json` from `"ollama"` to `"mlx"` (also updated the doc comment in `src/util/config.ts`). Also activated it for real, live usage: added `forge.provider: "mlx"`, `forge.mlx.model` (the 4-bit snapshot, per the C2 decision above), and `forge.mlx.pythonPath` (pointing at the existing, already-approved `_devtools/mlx-venv` — no new install) to the owner's real VS Code user settings (`~/Library/Application Support/Code/User/settings.json`, outside this repo). `npm run typecheck && npm test && npm run compile`: clean (37/37, 1,338 checks) — the one test that checks a "default" provider value (`test_v15_factory.ts`) tests `parseProviderId`'s own unset/garbled-input fallback (a separate, intentional safety net, unrelated to the packaged schema default), so it was correctly unaffected. **Known gap:** `~/.forge/mlx-venv` (the fallback path `resolvePython()` uses when `forge.mlx.pythonPath` is empty, for use in *other* workspaces) does not exist yet — reusing this repo's dev venv works today via the explicit path, but is coupled to this checkout; creating a dedicated `~/.forge/mlx-venv` would be a *new* install and needs the owner's go-ahead first (standing rule 3), not done here.
 
 ## Next
-Step 2 — replacement fixture for t07, waiting on owner option choice
+**gpt-oss-20b MXFP4-Q8 smoke test** (MLX, snapshot per CLAUDE.md rule 1), then **t08-five-file-build cycle 2** on the new model.
+
+## t08-five-file-build — fixture + cycle 1 (2026-09-27)
+
+- **Fixture:** `t08-five-file-build` added (`0331596`), task/check tightened for exact CLI forms (`468586c`). Five-file build with compile + end-to-end run (replacement direction after t07 retirement).
+- **Cycle 1 (Ornith MLX-4bit):** FAIL in 5 iterations / 114.5 s, **no files written**. Root issue: model omitted one closing brace in an otherwise complete `write_file` reply (model error). Harness misclassified as a cut-off, nudged retry with identical bytes, then ended silently at the cap — **harness bug** in messaging/classification, not auto-repair. Fixes: `3458397` (name real JSON/tool/path errors; cut-off wording only for real cut-offs; explicit failure on cap) + `64d4205` (drop brace auto-repair — owner: no auto-repair; model fixes its own JSON).
+- **Owner decisions (2026-09-27):** no JSON brace auto-repair; switch test model from Ornith-1.5-9B to **gpt-oss-20b MXFP4-Q8** (MLX); harness philosophy — universal model-agnostic fixes, accurate targeted feedback, the model corrects its own errors.
+- **Evidence:** `_devtools/e2e/results/t08-five-file-build-mlx4bit-cycle1.{json,trace.jsonl,messages.json}`
 
 ## Owner decisions (2026-09-26)
 - Start given. MLX install approved (project venv, pinned, offline, no remote code, no sudo).
@@ -191,4 +198,4 @@ Three commits (`d912e59`, `720e092`, `fc20381`) close the harness gap found in t
 ## Files touched (this session, continued)
 `src/agent/toolProtocol.ts`, `src/agent/agentLoop.ts`, `src/tools/commandTool.ts`, `src/agent/types.ts`, `src/agent/approvalBroker.ts`, `_devtools/bench/run_task.ts`, `_devtools/runtime_test/test.ts`, `_devtools/runtime_test/test_v15_truncation.ts`, `_devtools/runtime_test/test_v15_command.ts`, `HANDOFF.md`, `_devtools/e2e/ITERATION_LOG.md` (new), `_devtools/e2e/results/t07-build-from-scratch-mlx4bit-cycle{1,2}.*` (new).
 
-**Last updated:** 2026-09-27 (strict-catch nudge fix landed: d912e59, 720e092, fc20381; Next = replacement t07 fixture, owner option choice)
+**Last updated:** 2026-09-27 (t08 cycle 1 logged; test model → gpt-oss-20b MXFP4-Q8; Next = gpt-oss smoke test, t08 cycle 2)

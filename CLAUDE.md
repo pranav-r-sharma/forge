@@ -6,7 +6,7 @@ Forge is a VS Code extension (TypeScript, **zero runtime npm dependencies**) tha
 
 ## Standing rules (from the owner — do not relax)
 
-1. **Ornith only for testing.** All testing, benchmarking and A/B use **Ornith-1.5-9B** and no other model. The only variables are runtime (Ollama vs MLX) and quantization. See "0.2c" in the plan.
+1. **gpt-oss-20b MXFP4-Q8 (MLX) only for testing.** All testing, benchmarking and A/B use **gpt-oss-20b MXFP4-Q8** loaded from the local MLX snapshot `~/.cache/huggingface/hub/models--mlx-community--gpt-oss-20b-MXFP4-Q8/snapshots/773a7da77e569019bb0fd17a554b263738d669a3` — no other model. The only variables are runtime (Ollama vs MLX) and quantization where applicable. See "0.2c" in the plan. *Superseded 2026-09-27:* Ornith-1.5-9B-only testing.
 2. **Development STARTED 2026-09-26** (owner said "go start"). Work through the plan in `PROGRESS.md` in order, thoroughly: test constantly, monitor performance and efficiency, iterate. Efficiency is paramount.
 3. **Installs:** the owner approved installing **MLX** on 2026-09-26 — a **project-local venv** (`_devtools/mlx-venv`, gitignored) with a **pinned** `mlx-lm`, user-level only (no sudo), load the Ornith snapshot **offline** with `trust_remote_code` **off**. Ask before any *other* install/download (brew, another Python, more models).
 4. **Memory-safe testing on this Mac (M5, 32 GB).** One model loaded at a time; unload before the next; check free memory and swap before loading; abort on pressure. Never push to a crash. Record hardware in every result.

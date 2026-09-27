@@ -22,3 +22,15 @@ One short entry per loop cycle. Full narrative for each cycle stays in `PROGRESS
 - **Fix:** none yet — recorded this cycle; fixing the nudge is the next agent's first priority per the rewritten `HANDOFF.md`.
 - **Evidence:** `_devtools/e2e/results/t07-build-from-scratch-mlx4bit-cycle2.{json,trace.jsonl,messages.json}`
 - **Next:** stop the loop on `t07` — retire the fixture (owner decision), fix the nudge-specificity gap, design + validate a new fixture, then resume the loop on that. See `HANDOFF.md`.
+
+# Iteration log — t08-five-file-build loop
+
+## Cycle 1 — Ornith MLX-4bit
+
+- **Run:** t08-five-file-build, MLX-4bit/Ornith-1.5-9B, thinking=auto terse=true, max-iters 40, timeout-s 600
+- **Result:** FAIL — 5 iterations, 114.5 s wall, no files written
+- **Classification:** harness bug (model omitted one closing brace in an otherwise complete reply; harness misreported it as "cut off" so the model resent identical bytes; iteration cap then ended silently as a normal final answer)
+- **Finding:** The model's `write_file` JSON was missing a single closing `}` — a real model error, not a length cutoff. The harness used cut-off wording anyway, the model repeated the same broken payload, and after the nudge cap the run stopped without surfacing the actual parse failure.
+- **Fix:** `3458397` + `64d4205` — specific invalid-JSON message naming tool/path/parse error; cut-off wording only for real cut-offs; explicit failure when the cap is hit; no auto-repair (owner: model fixes its own JSON).
+- **Evidence:** `_devtools/e2e/results/t08-five-file-build-mlx4bit-cycle1.{json,trace.jsonl,messages.json}`, `_devtools/e2e/results/t08-cycle1.log`
+- **Next:** switch test model to gpt-oss-20b MXFP4-Q8 (MLX), smoke test, then t08 cycle 2
