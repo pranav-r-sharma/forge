@@ -203,15 +203,18 @@ export async function selectChatModelCommand(ollama: LlmProvider, ensureMlx?: ()
 }
 
 async function selectMlxChatModelCommand(_ollama: LlmProvider, ensureMlx?: () => Promise<void>) {
-  const offerNoModelsHelp = async (lib: string, extra: string[]) => {
+  const offerNoModelsHelp = async (lib: string, extra: string[]): Promise<boolean> => {
     const searched = searchedFoldersForResolve(lib, extra);
     const choice = await vscode.window.showWarningMessage(
       `Forge: no MLX models found locally. Searched: ${searched.join(', ')}`,
       'Add a model folder…',
       'Open Settings'
     );
-    if (choice === 'Add a model folder…') await addMlxExtraModelFolder();
-    else if (choice === 'Open Settings') await vscode.commands.executeCommand('workbench.action.openSettings', 'forge.mlx.modelLibraryPath');
+    if (choice === 'Add a model folder…') return addMlxExtraModelFolder();
+    if (choice === 'Open Settings') {
+      await vscode.commands.executeCommand('workbench.action.openSettings', 'forge.mlx.modelLibraryPath');
+    }
+    return false;
   };
 
   for (;;) {
@@ -220,7 +223,7 @@ async function selectMlxChatModelCommand(_ollama: LlmProvider, ensureMlx?: () =>
     const extra = (cfg.mlxExtraModelFolders || []).map(expandTilde);
     const local = listLocalMlxModels(lib, extra);
     if (local.length === 0) {
-      await offerNoModelsHelp(lib, extra);
+      if (!(await offerNoModelsHelp(lib, extra))) return;
       continue;
     }
     const current = cfg.mlxModel || cfg.chatModel;
@@ -232,7 +235,7 @@ async function selectMlxChatModelCommand(_ollama: LlmProvider, ensureMlx?: () =>
     });
     if (!picked) return;
     if (picked.action === 'addFolder') {
-      await addMlxExtraModelFolder();
+      if (!(await addMlxExtraModelFolder())) return;
       continue;
     }
     if (picked.action === 'changeLibrary') {
@@ -254,16 +257,18 @@ async function selectMlxChatModelCommand(_ollama: LlmProvider, ensureMlx?: () =>
   }
 }
 
-async function addMlxExtraModelFolder(): Promise<void> {
+async function addMlxExtraModelFolder(): Promise<boolean> {
   const folders = await vscode.window.showOpenDialog({ canSelectFolders: true, canSelectFiles: false, canSelectMany: false, openLabel: 'Add MLX model folder' });
-  if (!folders?.length) return;
+  if (!folders?.length) return false;
   const folder = folders[0].fsPath;
   const cfg = getConfig();
   const extra = [...(cfg.mlxExtraModelFolders || [])];
   if (!extra.includes(folder)) {
     extra.push(folder);
     await vscode.workspace.getConfiguration('forge').update('mlx.extraModelFolders', extra, vscode.ConfigurationTarget.Global);
+    return true;
   }
+  return false;
 }
 
 export async function selectCompletionModelCommand(ollama: LlmProvider) {
