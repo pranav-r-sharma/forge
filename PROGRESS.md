@@ -76,4 +76,4 @@ Then 0.15.0 items (see "Suggested release slicing" in the plan) once Phase 0 num
 ## Files touched (this session)
 `v0.15.0 suggestions.md`, `CLAUDE.md`, `PROGRESS.md`, `_devtools/bench/*` (probe scripts).
 
-**Last updated:** 2026-09-27 13:45
+**Last updated:** 2026-09-27 (session end — see HANDOFF.md)
