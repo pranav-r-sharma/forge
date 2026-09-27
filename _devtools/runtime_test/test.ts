@@ -7,7 +7,12 @@ import {
   looksLikeAbandonedToolCall,
   extractAbandonedActionTarget,
   formatIncompleteActionNudge,
+  preprocessHarmonyReply,
+  stripHarmonyControlTokens,
+  detectForeignToolCall,
+  formatForeignToolCallNudge,
 } from '../../src/agent/toolProtocol';
+import { resolveModelResponse } from '../../src/agent/agentLoop';
 import { cleanCompletion } from '../../src/completion/fimPrompt';
 
 function assert(cond: any, msg: string) {
@@ -63,7 +68,9 @@ function assert(cond: any, msg: string) {
 }
 {
   const r = parseToolCall('I will run: {"tool": "search_code", "args": {"query": "foo"}} now.');
-  assert(r && r.tool === 'search_code', 'parses bare JSON object fallback (no fence)');
+  assert(r === null, 'bare tool/args JSON outside a fence is not executed (foreign-format nudge instead)');
+  const foreign = detectForeignToolCall('I will run: {"tool": "search_code", "args": {"query": "foo"}} now.');
+  assert(foreign && foreign.tool === 'search_code' && foreign.args?.query === 'foo', 'detectForeignToolCall finds bare tool/args JSON');
 }
 {
   const r = parseToolCall('```forge_action\n{"tool": "write_file", "args": {"path": "x.ts", "content": "line1\\nline2"}}\n```');
@@ -130,6 +137,46 @@ function assert(cond: any, msg: string) {
     false
   );
   assert(/Do not repeat your analysis; keep any reasoning to a couple of sentences/.test(specificPath), 'formatIncompleteActionNudge appends the short reasoning hint on specific path nudges');
+}
+
+// ---- Harmony channels + foreign tool-call formats (gpt-oss smoke finding) ----
+{
+  const smoke =
+    '<|channel|>analysis<|message|>We need to run tests. Let\'s run tests.<|end|><|start|>assistant<|channel|>commentary to=run_command <|constrain|>json<|message|>{"command":"python3 -m unittest discover -s tests -t ."}';
+  const pre = preprocessHarmonyReply(smoke);
+  assert(pre.reasoning.includes('run tests') && !pre.displayText.includes('analysis'), 'analysis channel becomes reasoning, not display text');
+  assert(parseToolCall(smoke) === null, 'Harmony commentary tool call is not a forge_action');
+  const foreign = detectForeignToolCall(smoke);
+  assert(foreign && foreign.tool === 'run_command' && foreign.args?.command === 'python3 -m unittest discover -s tests -t .', 'detectForeignToolCall extracts Harmony to=run_command args');
+  const known = ['run_command', 'read_file'];
+  const nudge = formatForeignToolCallNudge(foreign!, known);
+  assert(/Not executed: you called run_command using a native tool-call format/.test(nudge), 'foreign nudge names run_command');
+  assert(/"command":"python3 -m unittest discover -s tests -t ."/.test(nudge), 'foreign nudge includes extracted command args in forge_action resend');
+  const resolved = resolveModelResponse(smoke, false);
+  assert(resolved.call === null && !resolved.displayText.includes('<|channel|>'), 'Harmony smoke reply is not a final answer with raw control tokens');
+}
+{
+  const xml = 'Here <tool_call>{"name":"list_dir","arguments":{"path":"src"}}</tool_call>';
+  const foreign = detectForeignToolCall(xml);
+  assert(foreign && foreign.tool === 'list_dir' && foreign.args?.path === 'src', 'detectForeignToolCall parses <tool_call> name/arguments');
+}
+{
+  const unknown = '<tool_call>{"name":"bash","arguments":{"cmd":"ls"}}</tool_call>';
+  const nudge = formatForeignToolCallNudge(detectForeignToolCall(unknown)!, ['read_file', 'run_command']);
+  assert(/which is not a Forge tool/.test(nudge) && /read_file/.test(nudge) && /run_command/.test(nudge), 'unknown foreign tool lists available Forge tools');
+}
+{
+  const harmonyFinal =
+    '<|channel|>analysis<|message|>secret thoughts<|end|><|start|>assistant<|channel|>final<|message|>The answer is 42<|end|>';
+  const pre = preprocessHarmonyReply(harmonyFinal);
+  assert(pre.reasoning === 'secret thoughts' && pre.displayText === 'The answer is 42', 'final channel is display text without analysis');
+  assert(stripHarmonyControlTokens(pre.displayText) === 'The answer is 42', 'stripHarmonyControlTokens leaves clean answer text');
+  assert(detectForeignToolCall(harmonyFinal) === null, 'analysis + final prose is not a foreign tool call');
+}
+{
+  const fenced = '```forge_action\n{"tool": "read_file", "args": {"path": "a.ts"}}\n```';
+  assert(parseToolCall(fenced)?.tool === 'read_file', 'normal forge_action still parses');
+  assert(detectForeignToolCall(fenced) === null, 'valid forge_action is not flagged as foreign');
 }
 
 // ---- parseToolCall: invalid JSON in closed fence (t08 cycle 1, no brace auto-repair) ----

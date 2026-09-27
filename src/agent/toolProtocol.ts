@@ -26,15 +26,8 @@ export function parseToolCall(raw: string): ToolCall | null {
     if (parsed) return { ...parsed, raw };
   }
 
-  // Last resort: hunt for a bare JSON object containing a "tool" key, in
-  // case the model forgot the code fence entirely. Uses brace-balanced
-  // scanning (not a regex) because "args" is almost always itself a nested
-  // object, which a naive non-greedy regex truncates at the first inner `}`.
-  const bare = findBalancedJsonWithTool(raw);
-  if (bare) {
-    const parsed = tryParseToolJson(bare);
-    if (parsed) return { ...parsed, raw };
-  }
+  // Bare {"tool":...} outside a fence is a native tool-call shape — not executed here;
+  // detectForeignToolCall() nudges the model to use ```forge_action instead.
 
   return null;
 }
@@ -223,4 +216,164 @@ export function formatIncompleteActionCapFailure(raw: string, attempts: number):
   const tool = target?.tool ?? 'tool';
   const path = target?.path ?? 'unknown path';
   return `stopped: could not produce a valid action for ${tool} on ${path} after ${attempts} attempts`;
+}
+
+const HARMONY_MARKER = /<\|(?:channel|message|start|end|constrain)\|>/;
+
+/** True when the text uses Harmony-style control tokens (`<|channel|>`, etc.). */
+export function containsHarmonyControls(raw: string): boolean {
+  return HARMONY_MARKER.test(raw);
+}
+
+/** Removes Harmony control tokens from text shown or stored as the answer. */
+export function stripHarmonyControlTokens(text: string): string {
+  return text.replace(/<\|[^|]+\|>/g, '').replace(/\s+/g, ' ').trim();
+}
+
+export type PreprocessedModelReply = {
+  /** Text passed to forge_action / foreign-tool parsing. */
+  textForParsing: string;
+  /** User-visible answer text (no analysis channel, no control tokens). */
+  displayText: string;
+  /** Analysis-channel content, when present (same role as streaming "reasoning"). */
+  reasoning: string;
+};
+
+/**
+ * Splits Harmony-channel replies: analysis → reasoning; final → displayText;
+ * strips control tokens from anything shown as the answer.
+ */
+export function preprocessHarmonyReply(raw: string): PreprocessedModelReply {
+  if (!containsHarmonyControls(raw)) {
+    return { textForParsing: raw, displayText: raw, reasoning: '' };
+  }
+
+  const reasoningParts: string[] = [];
+  const analysisRe = /<\|channel\|>analysis<\|message\|>([\s\S]*?)<\|end\|>/gi;
+  let m: RegExpExecArray | null;
+  while ((m = analysisRe.exec(raw)) !== null) {
+    const t = m[1].trim();
+    if (t) reasoningParts.push(t);
+  }
+
+  const finalParts: string[] = [];
+  const finalRe = /<\|channel\|>final<\|message\|>([\s\S]*?)(?:<\|end\|>|(?=<\|start\|>)|$)/gi;
+  while ((m = finalRe.exec(raw)) !== null) {
+    const t = stripHarmonyControlTokens(m[1]);
+    if (t) finalParts.push(t);
+  }
+
+  const displayText = finalParts.join('\n').trim();
+  return {
+    textForParsing: raw,
+    displayText,
+    reasoning: reasoningParts.join('\n').trim(),
+  };
+}
+
+export type ForeignToolCall = { tool: string; args: Record<string, unknown> | null };
+
+function parseJsonObject(text: string): Record<string, unknown> | null {
+  const trimmed = text.trim();
+  try {
+    const obj = JSON.parse(trimmed);
+    if (obj && typeof obj === 'object' && !Array.isArray(obj)) return obj as Record<string, unknown>;
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
+function hasValidFencedForgeAction(raw: string): boolean {
+  FENCED_BLOCK_RE.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = FENCED_BLOCK_RE.exec(raw)) !== null) {
+    if (parseToolJsonObject(m[1].trim())) return true;
+  }
+  return false;
+}
+
+/** Scans for the first `{...}` whose top level has a "name" key (OpenAI-style tool_calls body). */
+function findBalancedJsonWithName(text: string): string | null {
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] !== '{') continue;
+    const end = findMatchingBrace(text, i);
+    if (end === -1) continue;
+    const candidate = text.slice(i, end + 1);
+    if (/"name"\s*:\s*"[^"]+"/.test(candidate) && /"(?:arguments|args)"\s*:/.test(candidate)) return candidate;
+  }
+  return null;
+}
+
+/**
+ * Detects a tool invocation in a non-Forge format when there is no valid fenced forge_action.
+ * Generic (Harmony, XML tool_call, OpenAI-style name/arguments, bare tool/args JSON).
+ */
+export function detectForeignToolCall(raw: string): ForeignToolCall | null {
+  if (hasValidFencedForgeAction(raw)) return null;
+
+  const harmonyRe =
+    /<\|channel\|>commentary\s+to=(?:functions\.)?([\w.-]+)\b[^<]*(?:<\|constrain\|>[^<]*)?<\|message\|>([\s\S]*?)(?:<\|end\|>|(?=<\|start\|>)|$)/i;
+  const harmony = harmonyRe.exec(raw);
+  if (harmony) {
+    const tool = harmony[1];
+    const payload = harmony[2].trim();
+    const args = parseJsonObject(payload);
+    return { tool, args };
+  }
+
+  const xmlRe = /<tool_call>\s*([\s\S]*?)\s*<\/tool_call>/i;
+  const xml = xmlRe.exec(raw);
+  if (xml) {
+    const obj = parseJsonObject(xml[1]);
+    if (obj && typeof obj.name === 'string') {
+      const args =
+        obj.arguments && typeof obj.arguments === 'object' && !Array.isArray(obj.arguments)
+          ? (obj.arguments as Record<string, unknown>)
+          : obj.args && typeof obj.args === 'object' && !Array.isArray(obj.args)
+            ? (obj.args as Record<string, unknown>)
+            : null;
+      return { tool: obj.name, args };
+    }
+  }
+
+  const bareName = findBalancedJsonWithName(raw);
+  if (bareName) {
+    try {
+      const obj = JSON.parse(bareName) as { name?: string; arguments?: unknown; args?: unknown };
+      if (typeof obj.name === 'string' && (obj.arguments !== undefined || obj.args !== undefined)) {
+        const args =
+          obj.arguments && typeof obj.arguments === 'object' && !Array.isArray(obj.arguments)
+            ? (obj.arguments as Record<string, unknown>)
+            : obj.args && typeof obj.args === 'object' && !Array.isArray(obj.args)
+              ? (obj.args as Record<string, unknown>)
+              : null;
+        return { tool: obj.name, args };
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
+  const bareTool = findBalancedJsonWithTool(raw);
+  if (bareTool) {
+    const parsed = tryParseToolJson(bareTool);
+    if (parsed) return { tool: parsed.tool, args: parsed.args };
+  }
+
+  return null;
+}
+
+/** User nudge when the model used a native tool-call format instead of forge_action. */
+export function formatForeignToolCallNudge(foreign: ForeignToolCall, knownTools: string[]): string {
+  const known = knownTools.includes(foreign.tool);
+  if (!known) {
+    return `[System check] Not executed: you called ${foreign.tool} using a native tool-call format, which is not a Forge tool. Forge only runs actions written as a \`\`\`forge_action block. Available tools: ${knownTools.join(', ')}. Resend using a \`\`\`forge_action block with a known tool name.`;
+  }
+  const forgeArgs = foreign.args !== null ? JSON.stringify(foreign.args) : '{}';
+  return `[System check] Not executed: you called ${foreign.tool} using a native tool-call format. Forge only runs actions written as a \`\`\`forge_action block. Resend exactly this:\n\`\`\`forge_action\n{"tool":"${foreign.tool}","args":${forgeArgs}}\n\`\`\``;
+}
+
+export function formatForeignToolCallCapFailure(foreign: ForeignToolCall, attempts: number): string {
+  return `stopped: could not resend ${foreign.tool} as a forge_action block after ${attempts} attempts`;
 }

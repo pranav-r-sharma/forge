@@ -7,7 +7,7 @@ import { LlmProvider } from '../llm/provider';
 import { ChatMessage, OllamaCallMetrics } from '../ollama/types';
 import { AgentActivity, AgentEvent, ToolCall, ToolExecContext, ToolResult } from './types';
 import { buildSystemPrompt, buildTurnContextPrefix } from './systemPrompt';
-import { parseToolCall, looksLikeAbandonedToolCall, formatIncompleteActionNudge, formatIncompleteActionCapFailure, extractAbandonedActionTarget } from './toolProtocol';
+import { parseToolCall, looksLikeAbandonedToolCall, formatIncompleteActionNudge, formatIncompleteActionCapFailure, extractAbandonedActionTarget, preprocessHarmonyReply, containsHarmonyControls, detectForeignToolCall, formatForeignToolCallNudge, formatForeignToolCallCapFailure } from './toolProtocol';
 import { parseStructuredResponse, STRUCTURED_RESPONSE_SCHEMA } from './structuredOutput';
 import { generatePlanFirst, renderPlanFirstForPrompt } from './planFirst';
 import { shouldCritique, critiqueEdit } from './selfCritique';
@@ -205,15 +205,19 @@ function truncateOneLine(s: string, maxLen: number): string {
  * fenced-block parser rather than erroring the turn. Exported for direct
  * unit testing.
  */
-export function resolveModelResponse(fullText: string, structuredOutputEnabled: boolean): { call: ToolCall | null; displayText: string } {
+export function resolveModelResponse(fullText: string, structuredOutputEnabled: boolean): { call: ToolCall | null; displayText: string; reasoning?: string } {
+  const harmony = preprocessHarmonyReply(fullText);
+  const parseSource = harmony.textForParsing;
   if (structuredOutputEnabled) {
-    const structured = parseStructuredResponse(fullText);
+    const structured = parseStructuredResponse(parseSource);
     if (structured) {
-      if (structured.call) return { call: structured.call, displayText: fullText };
-      return { call: null, displayText: structured.finalText ?? '' };
+      if (structured.call) return { call: structured.call, displayText: harmony.displayText || fullText, reasoning: harmony.reasoning || undefined };
+      return { call: null, displayText: structured.finalText ?? harmony.displayText, reasoning: harmony.reasoning || undefined };
     }
   }
-  return { call: parseToolCall(fullText), displayText: fullText };
+  const call = parseToolCall(parseSource);
+  const displayText = containsHarmonyControls(fullText) ? harmony.displayText : fullText;
+  return { call, displayText, reasoning: harmony.reasoning || undefined };
 }
 
 /** Investigation-only tools — allowed while a pending unfinished write is outstanding. */
@@ -628,6 +632,26 @@ export async function runAgentTurn(
     let { call, displayText } = options.mode === 'plan'
       ? { call: null as ToolCall | null, displayText: fullText }
       : resolveModelResponse(fullText, structuredOutputEnabled);
+
+    const knownToolNames = [...Object.keys(TOOL_MAP), ...mcpToolMap.keys()];
+    const foreignCall = !call && options.mode !== 'plan' ? detectForeignToolCall(fullText) : null;
+    if (foreignCall && truncationNudges < 3) {
+      truncationNudges++;
+      pushMsg({ role: 'assistant', content: fullText });
+      pushMsg({ role: 'user', content: formatForeignToolCallNudge(foreignCall, knownToolNames) });
+      traceIter({ note: 'foreign-tool-call-nudge' });
+      continue;
+    }
+    if (foreignCall && truncationNudges >= 3) {
+      const failureNote = formatForeignToolCallCapFailure(foreignCall, truncationNudges);
+      pushMsg({ role: 'assistant', content: fullText });
+      const finalText = `${displayText.trim()}\n\n[System] ${failureNote}`.trim();
+      traceIter({ note: 'incomplete-action-cap', final: true });
+      pendingActionTarget = undefined;
+      emit({ type: 'final', text: finalText });
+      emit({ type: 'done' });
+      return { messages, compactionCache };
+    }
 
     const lengthTruncated = iterState.metrics?.finishReason === 'length';
     // A model can also abandon an action mid-JSON on its OWN stop token (finishReason 'stop', not 'length') —
