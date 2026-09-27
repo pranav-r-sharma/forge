@@ -31,6 +31,7 @@ Then 0.15.0 items (see "Suggested release slicing" in the plan) once Phase 0 num
 - Wrote `v0.15.0 suggestions.md`: Phase 0 (MLX, Ornith-only testing, A/B matrix), cross-spec review, hardware-readout requirement (§1.4), truncation finding (§2.1b), release slicing.
 - Measured (Ollama 0.34.3, this Mac M5 32 GB): speed vs model size for 6 models (kept as scaling reference; **closed — Ornith only from now on**). Results are in the plan §0.2b.
 - Created branch `v0.15.0-work`; added `CLAUDE.md` (standing rules + dev cycle) and this file.
+- Added Directive 6 / standing rule 6: **no sudo in anything that ships** (removed `powermetrics` from the product plan; GPU working-set limit is read, never changed). Audited the plan: only the `powermetrics` mention needed privileges.
 - Verified the RAM number is wrong: `os.freemem()` says 7.7 GB free (harness would show 24.3 GB used) while macOS reports 61% free.
 - Ornith context-limit probe (Ollama Q4_K_M, memory-gated): full **262,144-token context loads at 15.1 GB** (~35 KB/token); fill test in progress — see Open items.
 
@@ -46,4 +47,4 @@ Then 0.15.0 items (see "Suggested release slicing" in the plan) once Phase 0 num
 ## Files touched (this session)
 `v0.15.0 suggestions.md`, `CLAUDE.md`, `PROGRESS.md`, `_devtools/bench/*` (probe scripts).
 
-**Last updated:** 2026-09-26 21:08
+**Last updated:** 2026-09-26 21:12

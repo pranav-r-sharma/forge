@@ -11,7 +11,8 @@ Forge is a VS Code extension (TypeScript, **zero runtime npm dependencies**) tha
 3. **Ask before installing anything** (`pip install`, `brew`, downloads). The MLX venv install needs explicit approval each time it is proposed.
 4. **Memory-safe testing on this Mac (M5, 32 GB).** One model loaded at a time; unload before the next; check free memory and swap before loading; abort on pressure. Never push to a crash. Record hardware in every result.
 5. **Work on branch `v0.15.0-work`.** Commits are allowed there (owner approved 2026-09-26). Do not commit to `master`/`main`. Never push or force-push without being asked.
-6. **Accuracy over completeness for measurements.** A missing number is fine; a wrong number is not. Report failures and skipped steps faithfully.
+6. **No `sudo` in anything that ships.** Product code, setup steps and features must work for a normal user without administrator rights. `sudo` is allowed only for the developer's own investigation during development (e.g. cross-checking with `powermetrics`), and never in committed product code or docs a user follows. Read system limits; never change them.
+7. **Accuracy over completeness for measurements.** A missing number is fine; a wrong number is not. Report failures and skipped steps faithfully.
 
 ## Dev cycle — work so a usage-limit cutoff never loses progress
 
