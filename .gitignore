@@ -8,3 +8,4 @@ _devtools/e2e/node_modules/
 .forge/cache/
 .forge/traces/
 _devtools/runtime_test/fixtures/memroot*/
+.agent-bridge/
