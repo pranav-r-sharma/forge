@@ -90,6 +90,14 @@ One short entry per loop cycle. Full narrative for each cycle stays in `PROGRESS
 
 ## t10-seeded-bugs — Cycle 2 — gpt-oss Q8 (MLX)
 
-- **Result:** PASS — 43 iterations, 354.1 s wall; 2 consecutive passes (cycles 1–2)
+- **Result:** PASS — 43 iterations, 354.1 s wall; 2 consecutive passes (cycles 1–2) — **t10 done**
 - **Findings:** `truncated-reply-nudge` iter 7 (same as cycle 1); 2 tool failures; 0 agentError
 - **Evidence:** `_devtools/e2e/results/t10-seeded-bugs-gptossq8-cycle2.*`; workspace `--keep`: `.../forge-e2e-t10-seeded-bugs-FgdJuT`
+
+## t09-harder-build — Cycle 3 — gpt-oss Q8 (MLX)
+
+- **Result:** FAIL — 122 iterations, 896.9 s wall, `checkExit` 1 (`inventory/cli.py` `NameError: name 'args' is not defined`); **agentError** loop hard-stop (no prior warning)
+- **Classification:** model + harness gaps (fixed after this run: unknown `line_start`/`line_end` on `read_file` ignored silently; loop detector stopped cold on 3× identical `write_file`)
+- **Findings:** `task-command-nudge` / **`115a52b`** task-form checker helped — model used spec CLI forms and started fixing; then thrashed on `cli.py`. Cycle 2 checker fix **`375d40c`** (no false `python3 demo` compile claim; nested-action error). Cycle 2 FAIL was global `--db` vs per-subcommand spec.
+- **Evidence:** `_devtools/e2e/results/t09-harder-build-gptossq8-cycle3.{json,trace.jsonl,messages.json}` (`agentError` + msgs 30–31, 44–45, 52–53, 64–65, 74–77, 86–87, 120–131)
+- **Next:** t09 cycle 4 after unknown-arg + loop-warn harness commits
