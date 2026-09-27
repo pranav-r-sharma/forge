@@ -1,0 +1,46 @@
+{
+  "task": "t05-large-file",
+  "provider": "mlx",
+  "model": "b4b70543d60c81e7c418a001b74cd4352212bd44",
+  "thinking": "auto",
+  "ctx": 32768,
+  "appendOnly": true,
+  "maxIters": 30,
+  "timeoutS": 600,
+  "startedAt": "2026-09-27T13:20:52.657Z",
+  "hardware": "Apple M5, 32 GB",
+  "serverReadyS": 2.602,
+  "wallS": 52.235,
+  "checkExit": 0,
+  "checkOutput": "----------------------------------------------------------------------\nRan 3 tests in 0.000s\n\nOK",
+  "protectedTouched": [],
+  "filesChanged": [
+    "pricing/rules.py"
+  ],
+  "pass": true,
+  "finalText": "All 3 tests pass.\n\n**Bug:** In `pricing/rules.py`, `price_with_tax` computed `amount * (1 + TAX_RATE * 10)` — applying 80% tax instead of the documented 8%.\n\n**Fix:** Changed to `amount * (1 + TAX_RATE)` (8% tax). No tests or other functions were modified.",
+  "iterations": 7,
+  "tools": {
+    "read_file": 2,
+    "search_code": 2,
+    "write_file": 1,
+    "run_command": 1
+  },
+  "toolFailures": 0,
+  "redundantReads": 0,
+  "reads": 2,
+  "viewEvents": 0,
+  "modelS": 52.12,
+  "toolS": 0.11,
+  "tokensEvaluated": 5148,
+  "tokensCached": 27041,
+  "cacheHitPct": 84,
+  "evalTokens": 418,
+  "promptCharsMax": 20646,
+  "hw": {
+    "minAvailableGB": 11,
+    "maxSwapGB": 1.58,
+    "gpuPeakPct": 100
+  },
+  "tracePath": "_devtools/e2e/results/p15-t05-large-file-mlx8bit-r2.trace.jsonl"
+}

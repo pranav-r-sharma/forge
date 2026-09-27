@@ -1,0 +1,49 @@
+{
+  "task": "t04-rename-symbol",
+  "provider": "mlx",
+  "model": "b4b70543d60c81e7c418a001b74cd4352212bd44",
+  "thinking": "auto",
+  "ctx": 32768,
+  "appendOnly": true,
+  "maxIters": 30,
+  "timeoutS": 600,
+  "startedAt": "2026-09-27T13:15:51.232Z",
+  "hardware": "Apple M5, 32 GB",
+  "serverReadyS": 2.596,
+  "wallS": 77.829,
+  "checkExit": 0,
+  "checkOutput": "----------------------------------------------------------------------\nRan 4 tests in 0.000s\n\nOK",
+  "protectedTouched": [],
+  "filesChanged": [
+    "orders/cli.py",
+    "orders/invoice.py",
+    "orders/pricing.py",
+    "orders/report.py",
+    "tests/test_orders.py"
+  ],
+  "pass": true,
+  "finalText": "Done. `calc_tot` has been renamed to `calculate_total` everywhere — the definition in `orders/pricing.py`, all call/import sites in `orders/cli.py`, `orders/invoice.py`, `orders/report.py`, and the tests in `tests/test_orders.py` (including the two test method names). No references to `calc_tot` remain, and all 4 tests pass.",
+  "iterations": 9,
+  "tools": {
+    "search_code": 1,
+    "write_file": 5,
+    "run_command": 2
+  },
+  "toolFailures": 0,
+  "redundantReads": 0,
+  "reads": 0,
+  "viewEvents": 0,
+  "modelS": 77.7,
+  "toolS": 0.11,
+  "tokensEvaluated": 4714,
+  "tokensCached": 35733,
+  "cacheHitPct": 88.3,
+  "evalTokens": 717,
+  "promptCharsMax": 21349,
+  "hw": {
+    "minAvailableGB": 10.8,
+    "maxSwapGB": 1.58,
+    "gpuPeakPct": 100
+  },
+  "tracePath": "_devtools/e2e/results/p15-t04-rename-symbol-mlx8bit-r1.trace.jsonl"
+}

@@ -1,0 +1,46 @@
+{
+  "task": "t01-fix-bug",
+  "provider": "mlx",
+  "model": "b4b70543d60c81e7c418a001b74cd4352212bd44",
+  "thinking": "auto",
+  "ctx": 32768,
+  "appendOnly": true,
+  "maxIters": 30,
+  "timeoutS": 600,
+  "startedAt": "2026-09-27T13:12:42.468Z",
+  "hardware": "Apple M5, 32 GB",
+  "serverReadyS": 2.576,
+  "wallS": 52.254,
+  "checkExit": 0,
+  "checkOutput": "----------------------------------------------------------------------\nRan 4 tests in 0.000s\n\nOK",
+  "protectedTouched": [],
+  "filesChanged": [
+    "shop/cart.py"
+  ],
+  "pass": true,
+  "finalText": "All 4 tests pass.\n\n**The bug:** In `shop/cart.py`, `cart_total` computed the subtotal by calling `line_total(price, 1)` — hardcoding the quantity to `1` and ignoring the actual quantity from each `(price, quantity)` pair.\n\n**The fix:** Changed it to `line_total(price, quantity)` so each line is priced by its real quantity.\n\nI did not touch any tests. Run `python3 -m unittest discover -s tests -t .",
+  "iterations": 6,
+  "tools": {
+    "list_dir": 1,
+    "read_file": 2,
+    "write_file": 1,
+    "run_command": 1
+  },
+  "toolFailures": 0,
+  "redundantReads": 0,
+  "reads": 2,
+  "viewEvents": 0,
+  "modelS": 52.13,
+  "toolS": 0.11,
+  "tokensEvaluated": 4227,
+  "tokensCached": 20029,
+  "cacheHitPct": 82.6,
+  "evalTokens": 434,
+  "promptCharsMax": 18833,
+  "hw": {
+    "minAvailableGB": 10.2,
+    "maxSwapGB": 1.58,
+    "gpuPeakPct": 100
+  },
+  "tracePath": "_devtools/e2e/results/p15-t01-fix-bug-mlx8bit-r1.trace.jsonl"
+}
