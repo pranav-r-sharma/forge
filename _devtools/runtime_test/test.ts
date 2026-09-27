@@ -1,5 +1,5 @@
 import { diffLines, unifiedDiff } from '../../src/util/diff';
-import { parseToolCall, stripActionBlock, looksLikeAbandonedToolCall } from '../../src/agent/toolProtocol';
+import { parseToolCall, stripActionBlock, looksLikeAbandonedToolCall, extractAbandonedActionTarget, formatIncompleteActionNudge } from '../../src/agent/toolProtocol';
 import { cleanCompletion } from '../../src/completion/fimPrompt';
 
 function assert(cond: any, msg: string) {
@@ -82,6 +82,29 @@ function assert(cond: any, msg: string) {
 {
   const exampleJson = 'Here is the shape of one record:\n```json\n{"id": 1, "name": "Alice"}\n```';
   assert(parseToolCall(exampleJson) === null && !looksLikeAbandonedToolCall(exampleJson), 'a valid JSON example with no "tool" key is not flagged as an abandoned action');
+}
+
+// ---- extractAbandonedActionTarget / formatIncompleteActionNudge (strict-catch nudge specificity) ----
+{
+  const truncated = '```forge_action\n{"tool":"write_file","args":{"path":"contacts/storage.py","content":"import json\\nclass ContactBook:\\n    def add(self';
+  const t = extractAbandonedActionTarget(truncated);
+  assert(t && t.tool === 'write_file' && t.path === 'contacts/storage.py', 'extractAbandonedActionTarget gets tool+path from an abandoned write_file fragment');
+}
+{
+  const toolOnly = '{"tool": "search_code", "args": {"query": "foo';
+  const t = extractAbandonedActionTarget(toolOnly);
+  assert(t && t.tool === 'search_code' && t.path === undefined, 'extractAbandonedActionTarget gets tool only when path string is not closed');
+}
+{
+  assert(extractAbandonedActionTarget('plain prose with no tool key') === undefined, 'extractAbandonedActionTarget returns undefined when no tool name is extractable');
+}
+{
+  const generic = formatIncompleteActionNudge('still thinking about the module…', true);
+  assert(/cut off by the output-length limit/.test(generic) && /your next action/.test(generic), 'formatIncompleteActionNudge keeps generic length wording when nothing is extractable');
+  const genericAbandoned = formatIncompleteActionNudge('```forge_action\n{"tool":"write', false);
+  assert(/JSON was left incomplete/.test(genericAbandoned) && /your next action/.test(genericAbandoned), 'formatIncompleteActionNudge keeps generic abandoned wording when tool name is not fully quoted');
+  const toolOnlyNudge = formatIncompleteActionNudge('{"tool":"write_file","args":{"path":"contacts/storage.py', false);
+  assert(/middle of write_file/.test(toolOnlyNudge) && /Finish that exact write_file action/.test(toolOnlyNudge), 'formatIncompleteActionNudge names the tool when path is not extractable');
 }
 
 // ---- cleanCompletion ----

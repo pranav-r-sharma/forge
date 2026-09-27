@@ -106,3 +106,43 @@ export function stripActionBlock(raw: string): string {
 export function looksLikeAbandonedToolCall(raw: string): boolean {
   return /"tool"\s*:\s*"/.test(raw);
 }
+
+export type AbandonedActionTarget = { tool: string; path?: string };
+
+const JSON_STRING_IN_QUOTES = '"((?:[^"\\\\]|\\\\.)*)"';
+
+/** Pull tool name (and path when fully quoted) from a partial forge_action JSON fragment. */
+export function extractAbandonedActionTarget(raw: string): AbandonedActionTarget | undefined {
+  const toolMatch = new RegExp(`"tool"\\s*:\\s*${JSON_STRING_IN_QUOTES}`).exec(raw);
+  if (!toolMatch) return undefined;
+  const tool = decodeJsonStringFragment(toolMatch[1]);
+  const pathMatch = new RegExp(`"path"\\s*:\\s*${JSON_STRING_IN_QUOTES}`).exec(raw);
+  if (!pathMatch) return { tool };
+  return { tool, path: decodeJsonStringFragment(pathMatch[1]) };
+}
+
+function decodeJsonStringFragment(s: string): string {
+  return s.replace(/\\(.)/g, (_, ch: string) => {
+    if (ch === 'n') return '\n';
+    if (ch === 'r') return '\r';
+    if (ch === 't') return '\t';
+    if (ch === '"') return '"';
+    if (ch === '\\') return '\\';
+    return ch;
+  });
+}
+
+/** User nudge when a reply was length-truncated or abandoned mid-action. Exported for unit tests. */
+export function formatIncompleteActionNudge(raw: string, lengthTruncated: boolean): string {
+  const target = extractAbandonedActionTarget(raw);
+  if (target) {
+    if (target.path) {
+      return `[System check] You were in the middle of ${target.tool} on \`${target.path}\` and the reply was cut off. Finish that exact action on \`${target.path}\` now, in one forge_action block. Do not move on to a different file or action until it is done.`;
+    }
+    return `[System check] You were in the middle of ${target.tool} and the reply was cut off. Finish that exact ${target.tool} action now, in one forge_action block. Do not move on to a different action until it is done.`;
+  }
+  const reason = lengthTruncated
+    ? 'Your last reply was cut off by the output-length limit before you finished, so it was not a complete action or answer.'
+    : 'Your last reply started an action but the JSON was left incomplete, so it was not a valid action or answer.';
+  return `[System check] ${reason} Do not repeat your analysis. Keep any reasoning to a couple of sentences and reply now with your next action (one forge_action block) or, if the task is complete, your final answer.`;
+}

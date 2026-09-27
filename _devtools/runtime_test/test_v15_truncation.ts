@@ -75,6 +75,14 @@ async function main() {
     vs.__resetConfig();
   }
 
+  // length-truncated mid-write_file: nudge names the path (not generic "next action")
+  {
+    const partial = '```forge_action\n{"tool":"write_file","args":{"path":"src/discounts.py","content":"def apply(';
+    const m = scripted([[partial, 'length'], ['done', 'stop']]);
+    await runAgentTurn([], 'go', deps(workspace(), m), () => {}, new vscode.CancellationTokenSource().token, 'fake', { mode: 'auto' });
+    ok(/src\/discounts\.py/.test(m.seen[1].last) && /Finish that exact action on `src\/discounts\.py`/.test(m.seen[1].last), 'the length-truncation nudge names the exact file that was left unfinished');
+  }
+
   // a truncated reply is answered with "continue", then the run proceeds normally
   {
     const ws = workspace();
@@ -112,7 +120,7 @@ async function main() {
     await runAgentTurn([], 'go', deps(ws, m, w), (e) => ev.push(e), new vscode.CancellationTokenSource().token, 'fake', { mode: 'auto' });
     await w.flush();
     ok(m.seen.length === 3, `the abandoned action did NOT end the turn — the model was asked again (${m.seen.length} model calls)`);
-    ok(/JSON was left incomplete/.test(m.seen[1].last), 'the continuation request explains the JSON was left incomplete, not an output-length excuse');
+    ok(/contacts\/storage\.py/.test(m.seen[1].last) && /Finish that exact action on `contacts\/storage\.py`/.test(m.seen[1].last), 'the abandoned-action nudge names the exact file that was left unfinished');
     ok(ev.filter((e) => e.type === 'final').length === 1 && (ev.find((e) => e.type === 'final') as any).text === 'All done.', 'the final answer is the real one, not the abandoned JSON fragment');
     const rec = fs.readFileSync(file, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
     ok(rec[0].finishReason === 'stop' && rec[0].note === 'abandoned-action-nudge', 'the trace records finishReason "stop" and the abandoned-action nudge (distinct from the length-cutoff nudge)');

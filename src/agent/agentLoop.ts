@@ -7,7 +7,7 @@ import { LlmProvider } from '../llm/provider';
 import { ChatMessage, OllamaCallMetrics } from '../ollama/types';
 import { AgentActivity, AgentEvent, ToolCall, ToolExecContext, ToolResult } from './types';
 import { buildSystemPrompt, buildTurnContextPrefix } from './systemPrompt';
-import { parseToolCall, looksLikeAbandonedToolCall } from './toolProtocol';
+import { parseToolCall, looksLikeAbandonedToolCall, formatIncompleteActionNudge } from './toolProtocol';
 import { parseStructuredResponse, STRUCTURED_RESPONSE_SCHEMA } from './structuredOutput';
 import { generatePlanFirst, renderPlanFirstForPrompt } from './planFirst';
 import { shouldCritique, critiqueEdit } from './selfCritique';
@@ -613,10 +613,7 @@ export async function runAgentTurn(
       // silently "finishes" without doing the work. Keep the partial text in the transcript and ask the model to carry on with an action.
       truncationNudges++;
       pushMsg({ role: 'assistant', content: fullText });
-      const reason = lengthTruncated
-        ? 'Your last reply was cut off by the output-length limit before you finished, so it was not a complete action or answer.'
-        : 'Your last reply started an action but the JSON was left incomplete, so it was not a valid action or answer.';
-      pushMsg({ role: 'user', content: `[System check] ${reason} Do not repeat your analysis. Keep any reasoning to a couple of sentences and reply now with your next action (one forge_action block) or, if the task is complete, your final answer.` });
+      pushMsg({ role: 'user', content: formatIncompleteActionNudge(fullText, lengthTruncated) });
       traceIter({ note: lengthTruncated ? 'truncated-reply-nudge' : 'abandoned-action-nudge' });
       continue;
     }
