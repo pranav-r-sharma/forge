@@ -143,7 +143,7 @@ function ok(cond: boolean, label: string) {
   ok(check.unverifiedMarkers.some((m) => m.includes('main.py')), 'leftover markers list uncovered files for the final event');
 }
 
-// ---------- t09 cycle-2: no false per-file nudge on program runs ----------
+// ---------- t09 cycle-2: task CLI forms must match token order ----------
 {
   const repoRoot = path.join(__dirname, '..', '..');
   const cycle2Path = path.join(repoRoot, '_devtools', 'e2e', 'results', 't09-harder-build-gptossq8-cycle2.messages.json');
@@ -153,26 +153,32 @@ function ok(cond: boolean, label: string) {
   const finalBeforeNudge =
     'All seven files compile and the CLI works as specified. The demo runs, showing overdue books and a return fee. A scripted sequence with a fresh `--db` file demonstrates adding a book/member, borrowing, returning late, checking overdue (none after return), and listing fees. No errors were encountered.';
   const { executedCommands, filesWritten } = collectTurnToolFacts(messages);
-  const check = evaluateClaimedCommands(finalBeforeNudge, executedCommands, filesWritten, extractTaskCommandForms(taskMd));
+  const taskForms = extractTaskCommandForms(taskMd);
+  const check = evaluateClaimedCommands(finalBeforeNudge, executedCommands, filesWritten, taskForms);
   ok(check.perFileGaps.length === 0, 't09 cycle-2 final text: no per-file py_compile-style false positives from main.py demo runs');
-  ok(check.nudgeMessage === '', 't09 cycle-2: no combined claim/task nudge when CLI forms were exercised');
-  const forms = extractTaskCommandForms(taskMd);
-  const unex = findUnexercisedTaskForms(forms, executedCommands);
+  ok(check.unexercisedTaskForms.length === 6, 't09 cycle-2: six CLI forms not run in task order (demo + py_compile exercised)');
   ok(
-    unex.every((f) => f.includes('py_compile') || f.includes('add --db') || f.includes('list --db') || f.includes('summary --db')),
-    `t09 cycle-2: add-book/add-member/borrow/return/overdue/fees/demo forms count as exercised (leftover only py_compile/list/summary if any): ${JSON.stringify(unex)}`,
+    check.nudgeMessage.includes('add-book') &&
+      check.nudgeMessage.includes('add-member') &&
+      check.nudgeMessage.includes('borrow') &&
+      check.nudgeMessage.includes('return') &&
+      check.nudgeMessage.includes('overdue') &&
+      check.nudgeMessage.includes('fees') &&
+      !check.nudgeMessage.includes('demo') &&
+      !check.nudgeMessage.includes('py_compile'),
+    't09 cycle-2 nudge names add-book, add-member, borrow, return, overdue, fees (not demo/py_compile)',
   );
   ok(
-    forms.some((f) => f.includes('add-book')) &&
-      commandMatchesTaskForm(
-        'python3 main.py add-book --db PATH --isbn ISBN --title TITLE --author AUTHOR',
-        "python3 main.py --db testdb.json add-book --isbn 111 --title 'Test Book' --author 'Author A'",
-      ),
-    'task form matcher: add-book with --db before subcommand',
+    !commandMatchesTaskForm(
+      'python3 main.py add-book --db PATH --isbn ISBN --title TITLE --author AUTHOR',
+      "python3 main.py --db testdb.json add-book --isbn 111 --title 'Test Book' --author 'Author A'",
+    ),
+    'task form matcher rejects --db before subcommand',
   );
+  ok(commandMatchesTaskForm('python3 main.py demo', 'python3 main.py demo'), 'task form matcher: exact demo form');
 }
 
-// ---------- t08 cycle-3: task CLI forms matched ----------
+// ---------- t08 cycle-3: task CLI forms matched in order ----------
 {
   const repoRoot = path.join(__dirname, '..', '..');
   const taskPath = path.join(repoRoot, '_devtools', 'e2e', 'tasks', 't08-five-file-build', 'task.md');
@@ -180,12 +186,11 @@ function ok(cond: boolean, label: string) {
   const taskMd = fs.readFileSync(taskPath, 'utf8');
   const messages = JSON.parse(fs.readFileSync(cycle3Path, 'utf8')) as ChatMessage[];
   const { executedCommands } = collectTurnToolFacts(messages);
-  const forms = extractTaskCommandForms(taskMd);
-  const unex = findUnexercisedTaskForms(forms, executedCommands);
-  ok(
-    unex.every((f) => f.includes('py_compile') || f.includes('<file>')),
-    `t08 cycle-3: add/list/summary/demo forms exercised (unexercised only compile placeholder): ${JSON.stringify(unex)}`,
-  );
+  const taskForms = extractTaskCommandForms(taskMd);
+  const unex = findUnexercisedTaskForms(taskForms, executedCommands);
+  ok(unex.length === 0, `t08 cycle-3: all task command forms exercised: ${JSON.stringify(unex)}`);
+  const taskOnly = evaluateClaimedCommands('', executedCommands, [], taskForms);
+  ok(taskOnly.unexercisedTaskForms.length === 0 && taskOnly.nudgeMessage === '', 't08 cycle-3: no task-command nudge');
 }
 
 // ---------- nested action in args ----------

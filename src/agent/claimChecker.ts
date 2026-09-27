@@ -253,18 +253,6 @@ export function isTaskFormPlaceholder(token: string): boolean {
   return false;
 }
 
-function stripDbFlagTokens(tokens: string[]): string[] {
-  const out: string[] = [];
-  for (let i = 0; i < tokens.length; i++) {
-    if (tokens[i] === '--db' && i + 1 < tokens.length) {
-      i++;
-      continue;
-    }
-    out.push(tokens[i]!);
-  }
-  return out;
-}
-
 function tokensMatchTaskForm(formTokens: string[], execTokens: string[]): boolean {
   let f = [...formTokens];
   let allowExtra = false;
@@ -272,74 +260,55 @@ function tokensMatchTaskForm(formTokens: string[], execTokens: string[]): boolea
     allowExtra = true;
     f.pop();
   }
-  if (execTokens.length < f.length) return false;
-  if (!allowExtra && execTokens.length !== f.length) return false;
-  for (let i = 0; i < f.length; i++) {
-    if (taskFormTokensEquivalent(f[i]!, execTokens[i]!)) continue;
-    return false;
-  }
-  return true;
+  return matchTaskFormTokens(f, 0, execTokens, 0, allowExtra);
 }
 
-function taskFormTokensEquivalent(formTok: string, execTok: string): boolean {
+function matchTaskFormTokens(
+  f: string[],
+  fi: number,
+  e: string[],
+  ei: number,
+  allowExtraTail: boolean,
+): boolean {
+  if (fi >= f.length) {
+    if (ei === e.length) return true;
+    return allowExtraTail;
+  }
+  if (f[fi] === '<file>') {
+    if (ei >= e.length) return false;
+    const restStart = fi + 1;
+    if (restStart >= f.length) {
+      // One <file> placeholder may expand to several path tokens at the end of the command.
+      return ei < e.length && matchTaskFormTokens(f, restStart, e, e.length, allowExtraTail);
+    }
+    for (let k = 1; k <= e.length - ei; k++) {
+      if (matchTaskFormTokens(f, restStart, e, ei + k, allowExtraTail)) return true;
+    }
+    return false;
+  }
+  if (ei >= e.length) return false;
+  if (!taskFormTokensEquivalent(f[fi]!, e[ei]!, fi, f)) return false;
+  return matchTaskFormTokens(f, fi + 1, e, ei + 1, allowExtraTail);
+}
+
+function taskFormTokensEquivalent(formTok: string, execTok: string, formIndex: number, formTokens: string[]): boolean {
+  if (formTok === execTok) return true;
+  if (formTok.startsWith('-')) return formTok === execTok;
+  if (formTok === 'python3' || formTok === 'main.py') return formTok === execTok;
+  if (formIndex === 2 && formTokens[0] === 'python3' && formTokens[1] === 'main.py') {
+    return formTok === execTok;
+  }
   if (isTaskFormPlaceholder(formTok)) return true;
   if (/^\d{4}-\d{2}-\d{2}$/.test(formTok) && /^\d{4}-\d{2}-\d{2}$/.test(execTok)) return true;
   if (/^\d+\.?\d*$/.test(formTok) && /^\d+\.?\d*$/.test(execTok)) return true;
-  return formTok === execTok;
-}
-
-/** `python3 main.py <subcmd>` with the same subcommand and flag names (values may differ). */
-function pythonMainPyCliStructureMatches(form: string, executed: string): boolean {
-  const formParsed = parsePythonMainPyCli(tokenizeShellCommand(normalizeCommandWhitespace(form)));
-  const execParsed = parsePythonMainPyCli(tokenizeShellCommand(normalizeCommandWhitespace(executed)));
-  if (!formParsed || !execParsed) return false;
-  if (formParsed.subcommand !== execParsed.subcommand) return false;
-  for (const flag of formParsed.flags) {
-    if (!execParsed.flags.has(flag)) return false;
-  }
   return true;
 }
 
-function parsePythonMainPyCli(tokens: string[]): { subcommand: string; flags: Set<string> } | undefined {
-  let i = 0;
-  if (tokens[i]?.toLowerCase() !== 'python3') return undefined;
-  i++;
-  if (i >= tokens.length) return undefined;
-  if (tokens[i] === 'main.py' || tokens[i]?.endsWith('.py')) i++;
-  const flags = new Set<string>();
-  const positional: string[] = [];
-  while (i < tokens.length) {
-    const t = tokens[i]!;
-    if (t === '--db' && i + 1 < tokens.length) {
-      i += 2;
-      continue;
-    }
-    if (t.startsWith('--')) {
-      flags.add(t);
-      i++;
-      if (i < tokens.length && !tokens[i]!.startsWith('-')) i++;
-      continue;
-    }
-    positional.push(t);
-    i++;
-  }
-  if (positional.length === 0) return undefined;
-  return { subcommand: positional[0]!, flags };
-}
-
-/** True when an executed command matches a task-specified form (wildcards; `--db` may move). */
+/** True when an executed command matches a task form: same tokens in order (wildcards; multi-file `<file>`). */
 export function commandMatchesTaskForm(form: string, executed: string): boolean {
-  const normForm = normalizeCommandWhitespace(form);
-  if (/<[^>]+>/.test(normForm)) {
-    const prefix = normalizeCommandWhitespace(normForm.replace(/<[^>]+>/g, ' '));
-    const execNorm = normalizeCommandWhitespace(executed);
-    if (prefix && execNorm.startsWith(prefix) && execNorm.length > prefix.length) return true;
-  }
-  if (pythonMainPyCliStructureMatches(form, executed)) return true;
-  const f = tokenizeShellCommand(normForm);
+  const f = tokenizeShellCommand(normalizeCommandWhitespace(form));
   const e = tokenizeShellCommand(normalizeCommandWhitespace(executed));
-  if (tokensMatchTaskForm(f, e)) return true;
-  return tokensMatchTaskForm(stripDbFlagTokens(f), stripDbFlagTokens(e));
+  return tokensMatchTaskForm(f, e);
 }
 
 export function findUnexercisedTaskForms(taskForms: string[], executedCommands: string[]): string[] {
