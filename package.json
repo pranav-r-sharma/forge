@@ -97,7 +97,7 @@
         "forge.provider": {
           "type": "string",
           "enum": ["ollama", "mlx", "openai-compatible"],
-          "default": "ollama",
+          "default": "mlx",
           "enumDescriptions": [
             "Ollama (llama.cpp/Metal).",
             "MLX via mlx_lm.server (Apple's framework) - typically faster prompt reading on Apple silicon, with a prompt cache that makes long agent sessions much cheaper. Embeddings and Tab autocomplete stay on Ollama.",

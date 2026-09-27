@@ -5,7 +5,7 @@ import { McpServerConfig } from '../mcp/mcpTypes';
 
 /** Strongly-typed accessor for the `forge.*` settings, re-read on every call so live edits apply immediately. */
 export interface ForgeConfig {
-  /** Which runtime chat/agent uses: 'ollama' (default), 'mlx' (mlx_lm.server), or 'openai-compatible'. See llm/factory.ts. */
+  /** Which runtime chat/agent uses: 'ollama', 'mlx' (mlx_lm.server, default per P0-15's C1 decision — see PROGRESS.md), or 'openai-compatible'. See llm/factory.ts. */
   provider: 'ollama' | 'mlx' | 'openai-compatible';
   mlxBaseUrl: string;
   /** Local model folder or Hugging Face repo id (already downloaded) the managed MLX server loads. */
