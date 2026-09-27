@@ -257,6 +257,19 @@
           "default": true,
           "description": "Detect and stop likely infinite loops in Auto/Outcome mode (repeating the same tool call with the same result over and over). Turn this off if it's incorrectly triggering on legitimately repetitive work. check_background_command is always exempt from loop detection, regardless of this setting."
         },
+        "forge.maxOutputTokens": {
+          "type": "number",
+          "default": 4096,
+          "minimum": 0,
+          "description": "Maximum tokens per model reply in the agent loop (thinking tokens count too). 0 = the runtime's own default, which can be very low (mlx_lm.server defaults to 512) and used to cut replies off mid-thought. If a reply is still cut off, Forge asks the model to continue instead of treating it as finished."
+        },
+        "forge.thinking": {
+          "type": "string",
+          "enum": ["default", "off", "on"],
+          "default": "default",
+          "enumDescriptions": ["Use the model's own default.", "Turn thinking off: much faster tool-calling steps, at some cost on hard reasoning.", "Force thinking on."],
+          "description": "Thinking mode for the chat/agent on runtimes that support switching it (MLX). Thinking models spend many tokens reasoning before every action; turning it off is often the biggest speed-up for routine tool steps."
+        },
         "forge.context.appendOnly": {
           "type": "boolean",
           "default": true,

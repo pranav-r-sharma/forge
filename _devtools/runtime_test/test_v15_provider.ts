@@ -21,6 +21,12 @@ async function main() {
     ok(client.capabilities.contextWindow === 'per-request' && client.capabilities.keepAlive && client.capabilities.listsLoadedModels && client.capabilities.fim && client.capabilities.embeddings, 'Ollama capabilities describe per-request context, keep-alive, loaded-model listing, FIM and embeddings');
     await runProviderContract(client, 'ollama', ok, { model: 'm1', slow: { model: 'slow-model' }, failing: { model: 'boom' }, noEmbedModel: 'no-embed' });
 
+    let om: any;
+    await client.chat({ model: 'len-model', messages: [{ role: 'user', content: 'x' }], onMetrics: (m) => (om = m) });
+    ok(om.finishReason === 'length', 'Ollama: done_reason "length" is surfaced as finishReason');
+    await client.chat({ model: 'm1', messages: [{ role: 'user', content: 'x' }], onMetrics: (m) => (om = m) });
+    ok(om.finishReason === 'stop', 'Ollama: a normal reply reports finishReason "stop"');
+
     // Wire-level checks: existing request shape is unchanged (options carried through exactly as before).
     fake.requests.length = 0;
     await client.chat({ model: 'm1', messages: [{ role: 'user', content: 'x' }], temperature: 0.3, numCtx: 8192, keepAliveMinutes: -1, maxTokens: 64, stop: ['END'], format: 'json' });

@@ -1,0 +1,1 @@
+{"id":"t01-fix-bug","title":"Fix a bug so the failing unit tests pass","category":"bug-fix","protected":["tests/test_cart.py"],"expected_files":["shop/cart.py"]}

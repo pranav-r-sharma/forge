@@ -53,7 +53,7 @@ export async function startFakeOpenAI(): Promise<FakeOpenAI> {
           await sleep(20); await frame(chunk({ content: ' ' }));
           await sleep(20); await frame(chunk({ content: 'world' }));
         }
-        await frame(chunk({}, 'stop'));
+        await frame(chunk({}, last === 'LENGTH' ? 'length' : 'stop'));
         if (body?.stream_options?.include_usage) await frame({ id: 'c1', object: 'chat.completion', choices: [], usage: { prompt_tokens: 50, completion_tokens: 3, total_tokens: 53, prompt_tokens_details: { cached_tokens: 8 } } });
         res.write('data: [DONE]\n\n');
         return res.end();

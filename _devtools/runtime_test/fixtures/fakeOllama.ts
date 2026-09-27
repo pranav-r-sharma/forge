@@ -33,7 +33,7 @@ export async function startFakeOllama(): Promise<FakeOllama> {
           if (res.destroyed) return;
           res.write(JSON.stringify(isChat ? { model: body?.model, message: { role: 'assistant', content: t }, done: false } : { model: body?.model, response: t, done: false }) + '\n');
         }
-        const tail = { model: body?.model, done: true, done_reason: 'stop', eval_count: toks.length, prompt_eval_count: 42, eval_duration: 100_000_000, prompt_eval_duration: 200_000_000, total_duration: 400_000_000, load_duration: 5_000_000 };
+        const tail = { model: body?.model, done: true, done_reason: body?.model === 'len-model' ? 'length' : 'stop', eval_count: toks.length, prompt_eval_count: 42, eval_duration: 100_000_000, prompt_eval_duration: 200_000_000, total_duration: 400_000_000, load_duration: 5_000_000 };
         res.end(JSON.stringify(isChat ? { ...tail, message: { role: 'assistant', content: '' } } : { ...tail, response: '' }) + '\n');
         return;
       }

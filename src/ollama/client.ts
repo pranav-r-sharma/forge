@@ -199,6 +199,7 @@ function metricsFromChunk(model: string, chunk: ChatStreamChunk | GenerateStream
     tokensPerSecond,
     totalDurationMs: chunk.total_duration !== undefined ? Math.round(chunk.total_duration / 1e6) : undefined,
     loadDurationMs: chunk.load_duration !== undefined ? Math.round(chunk.load_duration / 1e6) : undefined,
+    finishReason: (chunk as any).done_reason,
     promptEvalDurationMs: chunk.prompt_eval_duration !== undefined ? Math.round(chunk.prompt_eval_duration / 1e6) : undefined,
     evalDurationMs: chunk.eval_duration !== undefined ? Math.round(chunk.eval_duration / 1e6) : undefined,
   };

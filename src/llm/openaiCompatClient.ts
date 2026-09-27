@@ -147,9 +147,11 @@ export class OpenAiCompatClient implements LlmProvider {
     let full = '';
     let firstTokenAt: number | undefined;
     let usage: any;
+    let finishReason: string | undefined;
     await this.readSse(res, (json) => {
       if (json.error) throw new OllamaError(`Chat request failed: ${typeof json.error === 'string' ? json.error : json.error.message || JSON.stringify(json.error)}`);
       if (json.usage) usage = json.usage;
+      if (json.choices?.[0]?.finish_reason) finishReason = json.choices[0].finish_reason;
       const delta = json.choices?.[0]?.delta;
       if (!delta) return;
       const content: unknown = delta.content;
@@ -160,7 +162,7 @@ export class OpenAiCompatClient implements LlmProvider {
         opts.onToken?.(content);
       }
     });
-    opts.onMetrics?.(this.metrics(opts.model, t0, firstTokenAt, performance.now(), usage));
+    opts.onMetrics?.({ ...this.metrics(opts.model, t0, firstTokenAt, performance.now(), usage), finishReason });
     return full;
   }
 

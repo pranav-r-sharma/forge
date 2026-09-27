@@ -42,6 +42,8 @@ export interface TraceRecord {
   tokPerSec?: number;
   promptEvalMs?: number;
   loadMs?: number;
+  /** 'length' = the reply was cut off by the output limit (incomplete). */
+  finishReason?: string;
   // ---- the action taken ----
   tool?: string;
   argsHash?: string;

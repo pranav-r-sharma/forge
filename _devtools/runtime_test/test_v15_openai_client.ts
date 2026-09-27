@@ -86,6 +86,13 @@ async function testContractAndWire() {
     ok(typeof m.promptEvalDurationMs === 'number' && m.promptEvalDurationMs >= 0 && m.promptEvalDurationMs < m.totalDurationMs, `prefill time is approximated by time-to-first-token — a thinking token counts as the first token, since prefill ends when generation starts (got ${m.promptEvalDurationMs} of ${m.totalDurationMs} ms)`);
     ok(m.tokensPerSecond > 0 && m.totalDurationMs >= m.promptEvalDurationMs, `generation speed is computed client-side over the tokens after the first (got ${m.tokensPerSecond} tok/s)`);
 
+    // ---- finish reason: was the reply complete or cut off? ----
+    let fm: any;
+    await mlx.chat({ model: 'x', messages: [{ role: 'user', content: 'hi' }], onMetrics: (x) => (fm = x) });
+    ok(fm.finishReason === 'stop', 'a normal reply reports finishReason "stop"');
+    await mlx.chat({ model: 'x', messages: [{ role: 'user', content: 'LENGTH' }], onMetrics: (x) => (fm = x) });
+    ok(fm.finishReason === 'length', 'a reply cut off by the output limit reports finishReason "length" (so the agent can tell it is incomplete)');
+
     // ---- resilience ----
     let mm2: any;
     const t2 = await mlx.chat({ model: 'x', messages: [{ role: 'user', content: 'MALFORMED' }], onMetrics: (x) => (mm2 = x) });

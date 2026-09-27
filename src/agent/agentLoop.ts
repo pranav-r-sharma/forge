@@ -454,6 +454,7 @@ export async function runAgentTurn(
   }
 
   let hallucinationNudges = 0;
+  let truncationNudges = 0;
 
   // ---- trace + read-coverage (v0.15.0 §1.1/§1.2): measurement only, guarded so it can never break a turn ----
   const turnId = Date.now().toString(36);
@@ -488,6 +489,7 @@ export async function runAgentTurn(
         tokPerSec: m?.tokensPerSecond,
         promptEvalMs: m?.promptEvalDurationMs,
         loadMs: m?.loadDurationMs,
+        finishReason: m?.finishReason,
         hw,
         ...extra,
       });
@@ -531,6 +533,8 @@ export async function runAgentTurn(
         numCtx,
         keepAliveMinutes: keepAliveOpt(cfg.keepAliveMinutes),
         format: structuredOutputEnabled ? STRUCTURED_RESPONSE_SCHEMA : undefined,
+        thinking: cfg.thinking === 'default' ? undefined : cfg.thinking === 'on',
+        maxTokens: cfg.maxOutputTokens > 0 ? cfg.maxOutputTokens : undefined,
         onToken: (token) => emit({ type: 'token', text: token }),
         onMetrics: (metrics) => {
           iterState.metrics = metrics;
@@ -573,6 +577,16 @@ export async function runAgentTurn(
     let { call, displayText } = options.mode === 'plan'
       ? { call: null as ToolCall | null, displayText: fullText }
       : resolveModelResponse(fullText, structuredOutputEnabled);
+
+    if (!call && options.mode !== 'plan' && iterState.metrics?.finishReason === 'length' && truncationNudges < 3) {
+      // The reply hit the output-token limit, so what we have is an INCOMPLETE thought, not a final answer — treating it as one is how a run
+      // silently "finishes" mid-analysis. Keep the partial text in the transcript and ask the model to carry on with an action.
+      truncationNudges++;
+      pushMsg({ role: 'assistant', content: fullText });
+      pushMsg({ role: 'user', content: '[System check] Your last reply was cut off by the output-length limit before you finished, so it was not a complete action or answer. Do not repeat your analysis. Keep any reasoning to a couple of sentences and reply now with your next action (one forge_action block) or, if the task is complete, your final answer.' });
+      traceIter({ note: 'truncated-reply-nudge' });
+      continue;
+    }
 
     if (!call) {
       // Item #10: catch the model claiming it made a change ("created

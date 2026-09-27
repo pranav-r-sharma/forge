@@ -1,0 +1,46 @@
+{
+  "task": "t01-fix-bug",
+  "provider": "mlx",
+  "model": "a48173b246ac705be75c05bedf1a0666db522d53",
+  "thinking": "default",
+  "ctx": 32768,
+  "appendOnly": true,
+  "maxIters": 30,
+  "timeoutS": 600,
+  "startedAt": "2026-09-27T03:28:07.702Z",
+  "hardware": "Apple M5, 32 GB",
+  "serverReadyS": 1.138,
+  "wallS": 107.516,
+  "checkExit": 0,
+  "checkOutput": "----------------------------------------------------------------------\nRan 4 tests in 0.000s\n\nOK",
+  "protectedTouched": [],
+  "filesChanged": [
+    "shop/cart.py"
+  ],
+  "pass": true,
+  "finalText": "All 4 tests pass. The bug is fixed.\n\n## Summary\n\n**The bug** was in `shop/cart.py` (line 14):\n\n```python\nsubtotal += line_total(price, 1)  # BUG: ignores the quantity\n```\n\n`cart_total` was calling `line_total` with a hardcoded quantity of `1` instead of the actual quantity from each item. This meant the subtotal summed unit prices rather than `price × quantity`.\n\n**The fix:**\n\n```python\nsubtotal +",
+  "iterations": 11,
+  "tools": {
+    "list_dir": 1,
+    "read_file": 4,
+    "write_file": 1,
+    "run_command": 4
+  },
+  "toolFailures": 3,
+  "redundantReads": 0,
+  "reads": 4,
+  "viewEvents": 0,
+  "modelS": 107.39,
+  "toolS": 0.12,
+  "tokensEvaluated": 5345,
+  "tokensCached": 40730,
+  "cacheHitPct": 88.4,
+  "evalTokens": 2466,
+  "promptCharsMax": 21110,
+  "hw": {
+    "minAvailableGB": 11.7,
+    "maxSwapGB": 0.75,
+    "gpuPeakPct": 100
+  },
+  "tracePath": "_devtools/e2e/results/2026-09-27-t01-mlx4-thinkdefault.trace.jsonl"
+}

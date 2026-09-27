@@ -72,6 +72,8 @@ export interface OllamaCallMetrics {
   cachedTokens?: number;
   /** Full prompt size in tokens (evaluated + cached), when known. `promptTokens` above is always the number EVALUATED. */
   promptTotalTokens?: number;
+  /** Why the reply ended: 'stop' (finished naturally), 'length' (cut off by the output-token limit — the text is INCOMPLETE), or a runtime-specific value. */
+  finishReason?: string;
   /** True when timings are client-side approximations (e.g. prompt-eval time = time to first token) rather than the runtime's own figures. */
   timingsApproximate?: boolean;
 }
