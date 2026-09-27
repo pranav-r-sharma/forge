@@ -257,6 +257,11 @@
           "default": true,
           "description": "Detect and stop likely infinite loops in Auto/Outcome mode (repeating the same tool call with the same result over and over). Turn this off if it's incorrectly triggering on legitimately repetitive work. check_background_command is always exempt from loop detection, regardless of this setting."
         },
+        "forge.terseSteps": {
+          "type": "boolean",
+          "default": true,
+          "description": "Tell the model to keep tool steps to one short sentence and final answers to a few lines. On a local model every generated token costs real time (measured: output tokens, not prompt reading, dominate a step), so this makes agent runs noticeably faster. Turn off if you prefer long explanations."
+        },
         "forge.maxOutputTokens": {
           "type": "number",
           "default": 4096,

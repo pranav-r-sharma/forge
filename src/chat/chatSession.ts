@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { TraceWriter, tracePathFor } from '../agent/traceLog';
+import { detectEnvironment, renderEnvironment } from '../agent/environment';
 import { LlmProvider } from '../llm/provider';
 import { ChatMessage } from '../ollama/types';
 import { PendingEditManager } from '../tools/editApply';
@@ -82,6 +83,11 @@ export class ChatSession {
   uiHistory: UiTranscriptEntry[] = [];
   modelHistory: ChatMessage[] = [];
   busy = false;
+  private environmentText: string | undefined;
+  /** Detected machine/project facts for the system prompt — computed once per session (cheap, deterministic, keeps the cached prompt prefix stable). */
+  private getEnvironmentText(): string {
+    return (this.environmentText ??= renderEnvironment(detectEnvironment(this.services.workspaceRoot.fsPath, this.services.workspaceName)));
+  }
   private traceWriter: TraceWriter | undefined;
   /** Lazily created per-session trace sink (.forge/traces/<id>.jsonl) — see agent/traceLog.ts. */
   private getTraceWriter(): TraceWriter {
@@ -628,6 +634,7 @@ export class ChatSession {
         {
           mode: this.mode,
           rulesText: rulesText || undefined,
+          environmentText: this.getEnvironmentText(),
           memoryText: memoryText || undefined,
           milestonesText,
           projectLogText: projectLogText || undefined,

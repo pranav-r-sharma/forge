@@ -61,6 +61,8 @@ export interface ForgeConfig {
   thinking: 'default' | 'off' | 'on';
   /** Output-token limit per model reply (0 = the runtime's own default, which can be as low as 512 on MLX and silently cuts replies short). */
   maxOutputTokens: number;
+  /** Ask the model for one-sentence tool steps and short final answers (generated tokens dominate step time on local models). */
+  terseSteps: boolean;
   /** Estimated prompt size (% of the context window) that triggers a batched compaction, and the size it compacts down to. */
   contextHighWaterPct: number;
   contextLowWaterPct: number;
@@ -171,6 +173,7 @@ export function getConfig(): ForgeConfig {
     traceEnabled: cfg.get<boolean>('trace.enabled') ?? true,
     contextAppendOnly: cfg.get<boolean>('context.appendOnly') ?? true,
     thinking: ((v) => (v === 'off' || v === 'on' ? v : 'default'))(cfg.get<string>('thinking')),
+    terseSteps: cfg.get<boolean>('terseSteps') ?? true,
     maxOutputTokens: Math.max(0, Math.floor(cfg.get<number>('maxOutputTokens') ?? 4096)),
     contextHighWaterPct: cfg.get<number>('context.highWaterPct') ?? 75,
     contextLowWaterPct: cfg.get<number>('context.lowWaterPct') ?? 45,

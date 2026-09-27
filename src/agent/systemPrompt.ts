@@ -51,6 +51,10 @@ export function buildSystemPrompt(
      * progress explicitly, rather than doing everything inline itself.
      */
     orchestrationEnabled?: boolean;
+    /** Detected machine/project facts (agent/environment.ts renderEnvironment) — installed tools, likely test command — so the model stops guessing (e.g. `python` vs `python3`). Stable per session, so it lives in the cached system prompt. */
+    environmentText?: string;
+    /** forge.terseSteps: ask for one-sentence steps and short final answers. Measured: generated tokens dominate step time on local models. */
+    terse?: boolean;
   }
 ): string {
   const allowed = new Set(toolsAllowedInMode(mode));
@@ -101,6 +105,7 @@ Rules for actions:
     `## Available tools\n${toolDocs}`,
   ];
 
+  if (extra?.environmentText && mode !== 'plan') sections.push(extra.environmentText);
   if (extra?.rulesText) sections.push(extra.rulesText);
   if (extra?.planContext) sections.push(`## Approved plan for this task\n${extra.planContext}\n\nExecute this plan now, step by step, using tools as needed. Deviate from it only if you discover it's wrong, and say so.`);
 
@@ -122,8 +127,11 @@ Rules for actions:
     );
   }
 
+  const styleFirst = extra?.terse
+    ? `- Every generated token costs real time on this machine. On tool steps write AT MOST ONE short sentence before the forge_action block — no step-by-step reasoning, arithmetic, or restating file contents in your reply. Decide, then act.\n- Final answers: at most 4 short sentences or bullets — what changed and what to check. No headings, and do not repeat code or diffs the user can already see.`
+    : `- Be concise in your final answers. Prefer short explanations plus the concrete change over long essays.`;
   sections.push(
-    `## Style\n- Be concise in your final answers. Prefer short explanations plus the concrete change over long essays.\n- When you finish a multi-step task, summarize what changed and what the user should check (e.g. "review the 2 proposed edits in the panel, then run the tests").\n- Match the project's existing code style, imports, and conventions — infer them from the files you read rather than imposing your own.\n- Never fabricate file contents, line numbers, or command output — only report what tools actually returned.`
+    `## Style\n${styleFirst}\n- When you finish a multi-step task, summarize what changed and what the user should check (e.g. "review the 2 proposed edits in the panel, then run the tests").\n- Match the project's existing code style, imports, and conventions — infer them from the files you read rather than imposing your own.\n- Never fabricate file contents, line numbers, or command output — only report what tools actually returned.`
   );
 
   return sections.join('\n\n');

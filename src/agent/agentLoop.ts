@@ -55,6 +55,8 @@ export interface AgentDeps {
 
 export interface AgentTurnOptions {
   mode: ForgeMode;
+  /** Rendered environment facts (agent/environment.ts) for the system prompt: installed tools, likely test command. */
+  environmentText?: string;
   rulesText?: string;
   /**
    * Durable facts from .forge/memory.md. NOTE: as of the prompt-prefix
@@ -278,6 +280,8 @@ export async function runAgentTurn(
     mcpTools: deps.mcpTools,
     structuredOutput: structuredOutputEnabled,
     orchestrationEnabled: options.orchestrationEnabled,
+    environmentText: options.environmentText,
+    terse: cfg.terseSteps,
   });
   if (messages.length > 0 && messages[0].role === 'system') {
     messages[0] = { role: 'system', content: systemPrompt };

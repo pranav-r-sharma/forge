@@ -20,6 +20,7 @@ import { OllamaClient } from '../../src/ollama/client';
 import { MlxServerManager } from '../../src/llm/mlxServer';
 import { HwSampler, readMemorySample } from '../../src/util/hwSampler';
 import { keywordCodebaseSearch } from '../../src/indexing/keywordSearch';
+import { detectEnvironment, renderEnvironment } from '../../src/agent/environment';
 import { AgentEvent } from '../../src/agent/types';
 import { LlmProvider } from '../../src/llm/provider';
 
@@ -53,7 +54,7 @@ async function main() {
   vs.__setConfig({
     'forge.temperature': 0, 'forge.thinking': thinking, 'forge.provider': provider === 'mlx' ? 'mlx' : 'ollama', 'forge.mlx.contextTokens': ctx, 'forge.numCtx': ctx,
     'forge.maxAgentIterations': maxIters, 'forge.autoModeMaxIterations': maxIters, 'forge.context.appendOnly': appendOnly,
-    'forge.loopDetection.enabled': true,
+    'forge.loopDetection.enabled': true, 'forge.terseSteps': arg('terse', 'true') === 'true',
   });
 
   const result: any = { task: taskId, provider, model: path.basename(model), thinking, ctx, appendOnly, maxIters, timeoutS, startedAt: new Date().toISOString(), hardware: 'Apple M5, 32 GB' };
@@ -93,14 +94,16 @@ async function main() {
   let step = 0;
   const t0 = Date.now();
   let finalText = '';
+  let lastMessages: any[] = [];
   try {
     await runAgentTurn([], taskText, deps, (e: AgentEvent) => {
       events.push(e);
       if (e.type === 'tool_call') { step++; console.log(`  step ${step}: ${e.tool} ${JSON.stringify(e.args).slice(0, 110)}`); }
       if (e.type === 'tool_result') console.log(`     → ${e.ok ? 'ok' : 'FAIL'} ${e.summary.slice(0, 90)}`);
       if (e.type === 'final') finalText = e.text;
+      if (e.type === 'history_snapshot') lastMessages = e.messages;
       if (e.type === 'error') { result.agentError = e.message; console.log('  ERROR:', e.message); }
-    }, cts.token, provider === 'mlx' ? 'default_model' : model, { mode: 'auto', numCtx: ctx, maxIterationsOverride: maxIters });
+    }, cts.token, provider === 'mlx' ? 'default_model' : model, { mode: 'auto', numCtx: ctx, maxIterationsOverride: maxIters, environmentText: flag('no-env') ? undefined : renderEnvironment(detectEnvironment(ws, taskId)) });
   } catch (err: any) {
     result.crash = String(err?.stack || err);
   }
@@ -144,6 +147,7 @@ async function main() {
   result.hw = { minAvailableGB: Math.min(...hw.map((h: any) => h.availableGB ?? 1e9)), maxSwapGB: Math.max(0, ...hw.map((h: any) => h.swapGB ?? 0)), gpuPeakPct: Math.max(0, ...hw.map((h: any) => h.gpuPeakPct ?? 0)) };
   result.tracePath = path.relative(repoRoot, tracePath);
   fs.writeFileSync(outFile, JSON.stringify(result, null, 2));
+  fs.writeFileSync(outFile.replace(/\.json$/, '.messages.json'), JSON.stringify(lastMessages, null, 2));
   if (mgr) await mgr.stop();
   if (!flag('keep')) fs.rmSync(ws, { recursive: true, force: true }); else result.workspace = ws;
   console.log(`\n${result.pass ? 'PASS' : 'FAIL'} ${taskId} [${provider}/${path.basename(model)} thinking=${thinking}] ${result.iterations} iterations, ${result.wallS.toFixed(1)}s (model ${result.modelS}s, tools ${result.toolS}s), cache hit ${result.cacheHitPct}%, reads ${result.reads} (redundant ${result.redundantReads})`);

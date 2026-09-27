@@ -1,0 +1,18 @@
+[base r1] pass=True wall=85.014 iters=16 evalTok=1878 cache=93.6% (87s incl. server)
+[base r2] pass=True wall=77.711 iters=13 evalTok=1702 cache=92% (79s incl. server)
+[base r3] pass=True wall=68.231 iters=11 evalTok=1501 cache=90.5% (70s incl. server)
+[env r1] pass=True wall=39.67 iters=9 evalTok=812 cache=88.3% (42s incl. server)
+[env r2] pass=True wall=39.547 iters=9 evalTok=812 cache=88.3% (41s incl. server)
+[env r3] pass=True wall=39.586 iters=9 evalTok=812 cache=88.3% (41s incl. server)
+[terse r1] pass=True wall=28.346 iters=7 evalTok=539 cache=84.4% (30s incl. server)
+[terse r2] pass=True wall=28.034 iters=7 evalTok=533 cache=84.4% (30s incl. server)
+[terse r3] pass=True wall=28.211 iters=7 evalTok=538 cache=84.4% (30s incl. server)
+[both r1] pass=True wall=26.636 iters=6 evalTok=511 cache=83.1% (28s incl. server)
+[both r2] pass=True wall=26.51 iters=6 evalTok=511 cache=83.1% (28s incl. server)
+[both r3] pass=True wall=26.564 iters=6 evalTok=511 cache=83.1% (28s incl. server)
+
+config      pass   wall_s  iters  evalTok  tool_fail  cache%   (medians)
+base        3/3     77.7     13     1702          2      92
+env         3/3     39.6      9      812          0    88.3
+terse       3/3     28.2      7      538          1    84.4
+both        3/3     26.6      6      511          0    83.1
