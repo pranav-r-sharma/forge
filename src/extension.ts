@@ -76,9 +76,10 @@ export async function activate(context: vscode.ExtensionContext) {
     },
   });
   activeMlxServer = mlxServer;
+  const ensureMlx = makeEnsureMlx(() => getConfig(), mlxServer);
   const ollama = new SwitchableProvider(() => getConfig(), {
     getResident: async () => mlxServer.resident(),
-    ensureReady: makeEnsureMlx(() => getConfig(), mlxServer),
+    ensureReady: ensureMlx,
     mlxState: () => mlxServer.state,
     mlxLastError: () => mlxServer.lastError,
   });
@@ -86,7 +87,18 @@ export async function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((e) => {
       try {
-        if (e.affectsConfiguration('forge.provider') && getConfig().provider !== 'mlx') void mlxServer.stop();
+        const cfg = getConfig();
+        if (e.affectsConfiguration('forge.provider') && cfg.provider !== 'mlx') void mlxServer.stop();
+        if (
+          cfg.provider === 'mlx' &&
+          (e.affectsConfiguration('forge.mlx.model') ||
+            e.affectsConfiguration('forge.mlx.baseUrl') ||
+            e.affectsConfiguration('forge.mlx.pythonPath') ||
+            e.affectsConfiguration('forge.mlx.promptCacheGB') ||
+            e.affectsConfiguration('forge.mlx.extraArgs'))
+        ) {
+          void ensureMlx().catch((err) => logger.warn('MLX server restart after settings change failed', String(err)));
+        }
       } catch {
         /* never let a settings event break the extension */
       }
@@ -184,7 +196,8 @@ export async function activate(context: vscode.ExtensionContext) {
     webSearchKeyStore,
     mcpManager,
     workspaceRoot,
-    workspaceName
+    workspaceName,
+    ensureMlx
   );
   context.subscriptions.push({ dispose: () => chatViewProvider.dispose() });
   context.subscriptions.push(vscode.window.registerWebviewViewProvider('forge.chatView', chatViewProvider, {
@@ -220,7 +233,7 @@ export async function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('forge.acceptInlineEdit', () => inlineEdit.accept()),
     vscode.commands.registerCommand('forge.rejectInlineEdit', () => inlineEdit.reject()),
     vscode.commands.registerCommand('forge.selectChatModel', async () => {
-      await selectChatModelCommand(ollama);
+      await selectChatModelCommand(ollama, ensureMlx);
       await statusBar.refresh();
     }),
     vscode.commands.registerCommand('forge.selectCompletionModel', () => selectCompletionModelCommand(ollama)),

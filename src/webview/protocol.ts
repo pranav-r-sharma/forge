@@ -152,8 +152,12 @@ export interface HwStatus {
 export interface InitState {
   connected: boolean;
   connectionError?: string;
+  /** Active LLM runtime — drives MLX-specific UI (e.g. global model picker in Settings). */
+  provider: 'ollama' | 'mlx' | 'openai-compatible';
   models: ModelInfo[];
   chatModel: string;
+  /** forge.mlx.model (portable repo id); meaningful when provider === 'mlx'. */
+  mlxModel: string;
   completionModel: string;
   indexStatus: { indexed: number; total: number; embeddingsAvailable: boolean };
   pendingEdits: PendingEditSerialized[];
@@ -237,6 +241,8 @@ export type WebviewToExtensionMessage =
   | { type: 'clearWebSearchApiKey'; providerId: string }
   /** Item "ability to run separate models in different chats" — sets (empty string clears) this one chat's own model override. See ChatSession.setModelOverride()/resolveModelForMode(). */
   | { type: 'setSessionModel'; model: string }
+  /** On MLX, mlx_lm.server runs one model — this sets forge.mlx.model globally (all chats). */
+  | { type: 'setMlxModel'; model: string }
   /** Item "ability to kill commands while they are running from the chat window". */
   | { type: 'listBackgroundCommands' }
   | { type: 'killBackgroundCommand'; id: string }

@@ -213,6 +213,13 @@ export async function setChatModel(model: string) {
   await vscode.workspace.getConfiguration('forge').update('chatModel', model, vscode.ConfigurationTarget.Global);
 }
 
+/** Sets the global MLX model (repo id) and keeps forge.chatModel in sync for routing/display. */
+export async function setMlxChatModel(modelId: string) {
+  const cfg = vscode.workspace.getConfiguration('forge');
+  await cfg.update('mlx.model', modelId, vscode.ConfigurationTarget.Global);
+  await cfg.update('chatModel', modelId, vscode.ConfigurationTarget.Global);
+}
+
 export async function setCompletionModel(model: string) {
   await vscode.workspace.getConfiguration('forge').update('completionModel', model, vscode.ConfigurationTarget.Global);
 }

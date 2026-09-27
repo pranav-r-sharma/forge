@@ -2,7 +2,14 @@ import * as vscode from 'vscode';
 import { pickBestCompletionModel, pickBestDefaultModel } from './ollama/client';
 import { LlmProvider } from './llm/provider';
 import { providerEndpoint } from './llm/factory';
-import { setChatModel, setCompletionModel, setModelForMode, getConfig } from './util/config';
+import { setChatModel, setCompletionModel, setModelForMode, setMlxChatModel, getConfig } from './util/config';
+import { buildMlxModelQuickPickItems, MlxModelQuickPickItem } from './llm/mlxModelPicker';
+import {
+  expandTilde,
+  listLocalMlxModels,
+  resolveModelLibraryPath,
+  searchedFoldersForResolve,
+} from './llm/mlxModels';
 import { PendingEditManager } from './tools/editApply';
 import { openDiffForEdit } from './tools/diffContentProvider';
 import { WorkspaceIndex } from './indexing/workspaceIndex';
@@ -165,7 +172,12 @@ export async function compactMemoryCommand(memory: MemoryStore) {
   }
 }
 
-export async function selectChatModelCommand(ollama: LlmProvider) {
+export async function selectChatModelCommand(ollama: LlmProvider, ensureMlx?: () => Promise<void>) {
+  const cfg = getConfig();
+  if (cfg.provider === 'mlx') {
+    await selectMlxChatModelCommand(ollama, ensureMlx);
+    return;
+  }
   const health = await ollama.health();
   if (!health.ok) {
     vscode.window.showErrorMessage(`Forge: can't reach Ollama (${health.error}). Run "ollama serve" and try again.`);
@@ -183,11 +195,75 @@ export async function selectChatModelCommand(ollama: LlmProvider) {
       description: m.details?.parameter_size ? `${m.details.parameter_size}${m.name === recommended ? '  ★ recommended' : ''}` : undefined,
       detail: humanSize(m.size),
     })),
-    { title: 'Forge: Select chat / agent model', placeHolder: 'Pick the Ollama model Forge should use for chat and the agent' }
+    { title: 'Forge: Select chat / agent model', placeHolder: 'Pick the Ollama model Forge should use for chat and the agent', ignoreFocusOut: true }
   );
   if (!picked) return;
   await setChatModel(picked.label);
   vscode.window.showInformationMessage(`Forge chat model set to ${picked.label}.`);
+}
+
+async function selectMlxChatModelCommand(_ollama: LlmProvider, ensureMlx?: () => Promise<void>) {
+  const offerNoModelsHelp = async (lib: string, extra: string[]) => {
+    const searched = searchedFoldersForResolve(lib, extra);
+    const choice = await vscode.window.showWarningMessage(
+      `Forge: no MLX models found locally. Searched: ${searched.join(', ')}`,
+      'Add a model folder…',
+      'Open Settings'
+    );
+    if (choice === 'Add a model folder…') await addMlxExtraModelFolder();
+    else if (choice === 'Open Settings') await vscode.commands.executeCommand('workbench.action.openSettings', 'forge.mlx.modelLibraryPath');
+  };
+
+  for (;;) {
+    const cfg = getConfig();
+    const lib = resolveModelLibraryPath(cfg.mlxModelLibraryPath);
+    const extra = (cfg.mlxExtraModelFolders || []).map(expandTilde);
+    const local = listLocalMlxModels(lib, extra);
+    if (local.length === 0) {
+      await offerNoModelsHelp(lib, extra);
+      continue;
+    }
+    const current = cfg.mlxModel || cfg.chatModel;
+    const items = buildMlxModelQuickPickItems(local, current) as (MlxModelQuickPickItem & vscode.QuickPickItem)[];
+    const picked = await vscode.window.showQuickPick(items, {
+      title: 'Forge: Select MLX chat / agent model',
+      placeHolder: 'Pick the local MLX model Forge should load (one model at a time)',
+      ignoreFocusOut: true,
+    });
+    if (!picked) return;
+    if (picked.action === 'addFolder') {
+      await addMlxExtraModelFolder();
+      continue;
+    }
+    if (picked.action === 'changeLibrary') {
+      await vscode.commands.executeCommand('workbench.action.openSettings', 'forge.mlx.modelLibraryPath');
+      continue;
+    }
+    if (!picked.modelId) return;
+    await setMlxChatModel(picked.modelId);
+    if (ensureMlx) {
+      try {
+        await ensureMlx();
+      } catch (e: any) {
+        vscode.window.showErrorMessage(`Forge: MLX model set to ${picked.modelId}, but the server could not restart: ${e?.message || e}`);
+        return;
+      }
+    }
+    vscode.window.showInformationMessage(`Forge: MLX model set to ${picked.modelId}. The MLX server will restart with it.`);
+    return;
+  }
+}
+
+async function addMlxExtraModelFolder(): Promise<void> {
+  const folders = await vscode.window.showOpenDialog({ canSelectFolders: true, canSelectFiles: false, canSelectMany: false, openLabel: 'Add MLX model folder' });
+  if (!folders?.length) return;
+  const folder = folders[0].fsPath;
+  const cfg = getConfig();
+  const extra = [...(cfg.mlxExtraModelFolders || [])];
+  if (!extra.includes(folder)) {
+    extra.push(folder);
+    await vscode.workspace.getConfiguration('forge').update('mlx.extraModelFolders', extra, vscode.ConfigurationTarget.Global);
+  }
 }
 
 export async function selectCompletionModelCommand(ollama: LlmProvider) {

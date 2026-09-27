@@ -16,7 +16,7 @@ import { WebFetchService } from '../websearch/fetchService';
 import { WebSearchKeyStore, SECRET_BACKED_PROVIDERS } from '../websearch/keyStore';
 import { McpManager } from '../mcp/mcpManager';
 import { MODES } from '../agent/modes';
-import { getConfig, setChatModel, setForgeSetting } from '../util/config';
+import { getConfig, setChatModel, setForgeSetting, setMlxChatModel } from '../util/config';
 import { genId } from '../util/ids';
 import { resolveWorkspacePath, toRelative } from '../util/paths';
 import { WorkspaceEntryIndex } from '../util/fileSearch';
@@ -127,7 +127,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     private readonly keyStore: WebSearchKeyStore,
     private readonly mcpManager: McpManager,
     private readonly workspaceRoot: vscode.Uri,
-    private readonly workspaceName: string
+    private readonly workspaceName: string,
+    private readonly ensureMlx?: () => Promise<void>
   ) {
     this.services = { ollama, pendingEdits, backgroundProcesses, workspaceIndex, chatMemoryIndex, rules, skills, hooks, memory, chatStore, webSearchService, webFetchService, mcpManager, workspaceRoot, workspaceName, hwSnapshot: () => this.hwSampler.latest() };
     this.entryIndex = new WorkspaceEntryIndex(workspaceRoot);
@@ -614,6 +615,22 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         this.post({ type: 'sessionSwitched', session: session.toSummaryState() });
         return;
       }
+      case 'setMlxModel': {
+        const id = (msg.model || '').trim();
+        if (!id) return;
+        await setMlxChatModel(id);
+        if (this.ensureMlx) {
+          try {
+            await this.ensureMlx();
+          } catch (err: any) {
+            this.post({ type: 'toast', level: 'error', text: `MLX model set to ${id}, but the server could not restart: ${err?.message || err}` });
+            return;
+          }
+        }
+        this.post({ type: 'toast', level: 'info', text: `MLX model set to ${id}. The MLX server will restart with it.` });
+        await this.sendInit();
+        return;
+      }
       case 'listBackgroundCommands': {
         this.post({ type: 'backgroundCommandsList', commands: this.backgroundProcesses.list() });
         return;
@@ -796,7 +813,15 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     const health = await this.ollama.health();
     let models: { name: string; paramSize?: string }[] = [];
     let chatModel = cfg.chatModel;
-    if (health.ok) {
+    if (cfg.provider === 'mlx') {
+      try {
+        const list = await this.ollama.listModels();
+        models = list.map((m) => ({ name: m.name, paramSize: m.details?.parameter_size }));
+        chatModel = cfg.mlxModel || cfg.chatModel;
+      } catch (err) {
+        logger.warn('listModels failed during init', String(err));
+      }
+    } else if (health.ok) {
       try {
         const list = await this.ollama.listModels();
         models = list.map((m) => ({ name: m.name, paramSize: m.details?.parameter_size }));
@@ -839,8 +864,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     const state: InitState = {
       connected: health.ok,
       connectionError: health.error,
+      provider: cfg.provider,
       models,
       chatModel,
+      mlxModel: cfg.mlxModel,
       completionModel: cfg.completionModel || chatModel,
       indexStatus: this.workspaceIndex.status(),
       pendingEdits: this.pendingEdits.listSerialized(),
