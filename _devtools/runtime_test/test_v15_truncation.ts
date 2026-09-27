@@ -149,6 +149,8 @@ async function main() {
     const ev: AgentEvent[] = [];
     await runAgentTurn([], 'go', deps(workspace(), m), (e) => ev.push(e), new vscode.CancellationTokenSource().token, 'fake', { mode: 'auto' });
     ok(m.seen.length === 4 && ev.some((e) => e.type === 'final'), `after 3 continuation requests it stops (4 model calls) even for a repeatedly-abandoned action (${m.seen.length})`);
+    const fin = (ev.find((e) => e.type === 'final') as any)?.text ?? '';
+    ok(/stopped: could not produce a valid action for write_file on x\.py after 3 attempts/.test(fin), 'incomplete-action cap ends with an explicit failure note, not a silent success');
   }
 
   // a truncated reply that nonetheless contains a complete action is just executed

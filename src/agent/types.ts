@@ -26,6 +26,8 @@ export interface ToolCall {
   args: Record<string, any>;
   /** Raw text the model produced, kept for transcript/debugging. */
   raw: string;
+  /** True when parseToolCall fixed only missing closing `}`/`]` at the end of otherwise valid JSON. */
+  jsonRepaired?: boolean;
 }
 
 /**

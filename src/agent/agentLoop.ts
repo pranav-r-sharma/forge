@@ -7,7 +7,7 @@ import { LlmProvider } from '../llm/provider';
 import { ChatMessage, OllamaCallMetrics } from '../ollama/types';
 import { AgentActivity, AgentEvent, ToolCall, ToolExecContext, ToolResult } from './types';
 import { buildSystemPrompt, buildTurnContextPrefix } from './systemPrompt';
-import { parseToolCall, looksLikeAbandonedToolCall, formatIncompleteActionNudge, extractAbandonedActionTarget } from './toolProtocol';
+import { parseToolCall, looksLikeAbandonedToolCall, formatIncompleteActionNudge, formatIncompleteActionCapFailure, extractAbandonedActionTarget } from './toolProtocol';
 import { parseStructuredResponse, STRUCTURED_RESPONSE_SCHEMA } from './structuredOutput';
 import { generatePlanFirst, renderPlanFirstForPrompt } from './planFirst';
 import { shouldCritique, critiqueEdit } from './selfCritique';
@@ -636,7 +636,8 @@ export async function runAgentTurn(
     // fragment must not be silently accepted as a final answer either (found via the t07-build-from-scratch
     // acceptance test — see PROGRESS.md — where this was 100% reproducible on a large new-file write).
     const abandonedAction = !call && !lengthTruncated && options.mode !== 'plan' && looksLikeAbandonedToolCall(fullText);
-    if (!call && options.mode !== 'plan' && (lengthTruncated || abandonedAction) && truncationNudges < 3) {
+    const incompleteReply = !call && options.mode !== 'plan' && (lengthTruncated || abandonedAction);
+    if (incompleteReply && truncationNudges < 3) {
       // What we have is an INCOMPLETE action or thought, not a final answer — treating it as one is how a run
       // silently "finishes" without doing the work. Keep the partial text in the transcript and ask the model to carry on with an action.
       truncationNudges++;
@@ -648,6 +649,17 @@ export async function runAgentTurn(
       }
       traceIter({ note: lengthTruncated ? 'truncated-reply-nudge' : 'abandoned-action-nudge' });
       continue;
+    }
+
+    if (incompleteReply && truncationNudges >= 3) {
+      const failureNote = formatIncompleteActionCapFailure(fullText, truncationNudges);
+      pushMsg({ role: 'assistant', content: fullText });
+      const finalText = `${displayText.trim()}\n\n[System] ${failureNote}`.trim();
+      traceIter({ note: 'incomplete-action-cap', final: true });
+      pendingActionTarget = undefined;
+      emit({ type: 'final', text: finalText });
+      emit({ type: 'done' });
+      return { messages, compactionCache };
     }
 
     if (!call) {
@@ -918,6 +930,7 @@ export async function runAgentTurn(
         toolMs: Date.now() - toolStartedAt,
         resultChars: result.content.length,
         redundantRead,
+        ...(call.jsonRepaired ? { note: 'json-closing-brace-repair' } : {}),
       });
     } catch {
       /* never let tracing break a turn */
