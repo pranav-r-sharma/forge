@@ -8,12 +8,17 @@ const path = require('path');
 const dir = path.join(__dirname, 'runtime_test');
 const filter = process.argv.slice(2).find((a) => !a.startsWith('--'));
 const timeoutS = Number((process.argv.find((a) => a.startsWith('--timeout=')) || '--timeout=180').split('=')[1]);
-const files = fs.readdirSync(dir).filter((f) => /^test.*\.ts$/.test(f) && (!filter || f.includes(filter))).sort();
+const benchDir = path.join(__dirname, 'bench');
+const tsFiles = fs.readdirSync(dir).filter((f) => /^test.*\.ts$/.test(f) && (!filter || f.includes(filter))).sort();
+// Python (standard-library) tests for the bench scripts live in _devtools/bench/test_*.py
+const pyFiles = (fs.existsSync(benchDir) ? fs.readdirSync(benchDir) : []).filter((f) => /^test_.*\.py$/.test(f) && (!filter || f.includes(filter))).sort().map((f) => path.join('..', 'bench', f));
+const files = [...tsFiles, ...pyFiles];
 const results = [];
 function runOne(f) {
   return new Promise((resolve) => {
     const t0 = Date.now();
-    const p = spawn(process.execPath, [path.join(__dirname, 'run-ts.js'), path.join(dir, f)], { cwd: dir, env: process.env });
+    const isPy = f.endsWith('.py');
+    const p = isPy ? spawn('python3', [path.join(dir, f)], { cwd: dir, env: process.env }) : spawn(process.execPath, [path.join(__dirname, 'run-ts.js'), path.join(dir, f)], { cwd: dir, env: process.env });
     let out = '';
     const timer = setTimeout(() => { out += '\n[runner] TIMEOUT\n'; p.kill('SIGKILL'); }, timeoutS * 1000);
     p.stdout.on('data', (d) => (out += d)); p.stderr.on('data', (d) => (out += d));
