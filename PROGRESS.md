@@ -36,7 +36,7 @@ Then 0.15.0 items (see "Suggested release slicing" in the plan) once Phase 0 num
 - Added Directive 6 / standing rule 6: **no sudo in anything that ships** (removed `powermetrics` from the product plan; GPU working-set limit is read, never changed). Audited the plan: only the `powermetrics` mention needed privileges.
 - Measured cold prefill cost vs prompt size on Ornith (6.6k→29 s, 13k→62 s, 26k→143 s, 52k→449 s) and wrote the KV/prompt-cache hot-warm-cold plan (§2.1c; owner idea).
 - Verified the RAM number is wrong: `os.freemem()` says 7.7 GB free (harness would show 24.3 GB used) while macOS reports 61% free.
-- Ornith context-limit probe (Ollama Q4_K_M, memory-gated): full **262,144-token context loads at 15.1 GB** (~35 KB/token); fill test in progress — see Open items.
+- Ornith context-limit probe (Ollama Q4_K_M, memory-gated), **stopped by the owner after the 64k step**: full 262,144-token context loads at 15.1 GB (~35 KB/token), no swap growth; cold prefill of 6.6k/13k/26k/52k tokens took 29/62/143/449 s (231/212/183/116 tok/s), decode 13.8→10.5 tok/s; free memory dipped to 28% at 52k though Ollama reported 8.5 GB. Results: `_devtools/bench/results/2026-09-26-m5-32gb-ornith-ollama-q4km-ctx-limit.json`. The 128k+ fill steps were NOT run.
 
 ## Next
 **Wait for the owner to say "start".** Then begin **P0-1**: create the `vscode` stub module under `_devtools/runtime_test/` (find what the tests import from `vscode`: `grep -h "vscode\." _devtools/runtime_test/*.ts | sort | uniq -c | sort -rn`), and run `npx ts-node _devtools/runtime_test/test_v14_indent_hardening.ts` with `NODE_PATH` set.
@@ -45,9 +45,8 @@ Then 0.15.0 items (see "Suggested release slicing" in the plan) once Phase 0 num
 - **MLX install approval:** may I create a project-local venv and `pip install` a pinned `mlx-lm` (third-party, not source-audited) and load the Ornith snapshot offline with remote code off? Python here is 3.14 — may lack MLX wheels; OK to use another Python for the venv? (Blocks P0-11.)
 - **Max stage:** which bigger Ornith-family model will run on the M5 Max? (Blocks only the Max-stage comparison.)
 - **Ollama 8-bit Ornith tag:** does one exist, and may I download it? (Optional arm O-Q8.)
-- Context-limit fill probe is still running in the background; results (32k done: 183 tok/s prefill, 12.4 tok/s decode; larger steps pending) must be copied into `_devtools/bench/results/` and the plan when it finishes.
 
 ## Files touched (this session)
 `v0.15.0 suggestions.md`, `CLAUDE.md`, `PROGRESS.md`, `_devtools/bench/*` (probe scripts).
 
-**Last updated:** 2026-09-26 21:20
+**Last updated:** 2026-09-26 21:32
