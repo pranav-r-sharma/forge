@@ -12,6 +12,11 @@ import type { ChatRequestOptions, GenerateRequestOptions, OllamaPsModel, OllamaT
  */
 export type ProviderId = 'ollama' | 'mlx' | 'openai-compatible';
 
+/** Any unknown/garbled setting value falls back to Ollama (the safe default) rather than breaking the extension. */
+export function parseProviderId(v: unknown): ProviderId {
+  return v === 'mlx' || v === 'openai-compatible' ? v : 'ollama';
+}
+
 export interface ProviderCapabilities {
   id: ProviderId;
   label: string;

@@ -94,6 +94,32 @@
           "default": "http://localhost:11434",
           "description": "Base URL of your local Ollama server."
         },
+        "forge.provider": {
+          "type": "string",
+          "enum": ["ollama", "mlx", "openai-compatible"],
+          "default": "ollama",
+          "enumDescriptions": [
+            "Ollama (llama.cpp/Metal).",
+            "MLX via mlx_lm.server (Apple's framework) - typically faster prompt reading on Apple silicon, with a prompt cache that makes long agent sessions much cheaper. Embeddings and Tab autocomplete stay on Ollama.",
+            "Any other OpenAI-compatible local server (e.g. LM Studio)."
+          ],
+          "description": "Which local model runtime the chat/agent uses. Embeddings (@codebase search) and Tab autocomplete use Ollama when the chosen runtime cannot provide them."
+        },
+        "forge.mlx.baseUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:8123",
+          "description": "Base URL of your mlx_lm.server (forge.provider = mlx). Keep it on 127.0.0.1 - the server has no authentication."
+        },
+        "forge.mlx.contextTokens": {
+          "type": "number",
+          "default": 32768,
+          "description": "Context window (tokens) to assume for MLX and other OpenAI-compatible runtimes. Unlike Ollama, the context size is fixed when the server starts, so Forge cannot request it per call - this only tells Forge when to compact the conversation and what to show in the context meter. Set it to what your server/model actually supports and your memory allows."
+        },
+        "forge.openaiCompat.baseUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:1234",
+          "description": "Base URL of a generic OpenAI-compatible server (forge.provider = openai-compatible), e.g. LM Studio."
+        },
         "forge.chatModel": {
           "type": "string",
           "default": "",

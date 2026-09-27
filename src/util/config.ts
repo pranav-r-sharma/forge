@@ -1,9 +1,14 @@
+import { parseProviderId } from '../llm/provider';
 import * as vscode from 'vscode';
 import { ForgeMode } from '../agent/modes';
 import { McpServerConfig } from '../mcp/mcpTypes';
 
 /** Strongly-typed accessor for the `forge.*` settings, re-read on every call so live edits apply immediately. */
 export interface ForgeConfig {
+  /** Which runtime chat/agent uses: 'ollama' (default), 'mlx' (mlx_lm.server), or 'openai-compatible'. See llm/factory.ts. */
+  provider: 'ollama' | 'mlx' | 'openai-compatible';
+  mlxBaseUrl: string;
+  openaiCompatBaseUrl: string;
   ollamaBaseUrl: string;
   chatModel: string;
   completionModel: string;
@@ -103,6 +108,9 @@ export interface ForgeConfig {
 export function getConfig(): ForgeConfig {
   const cfg = vscode.workspace.getConfiguration('forge');
   return {
+    provider: parseProviderId(cfg.get<string>('provider')),
+    mlxBaseUrl: (cfg.get<string>('mlx.baseUrl') || 'http://127.0.0.1:8123').replace(/\/+$/, ''),
+    openaiCompatBaseUrl: (cfg.get<string>('openaiCompat.baseUrl') || 'http://127.0.0.1:1234').replace(/\/+$/, ''),
     ollamaBaseUrl: (cfg.get<string>('ollamaBaseUrl') || 'http://localhost:11434').replace(/\/+$/, ''),
     chatModel: cfg.get<string>('chatModel') || '',
     completionModel: cfg.get<string>('completionModel') || '',
@@ -124,7 +132,9 @@ export function getConfig(): ForgeConfig {
     // 0 = let Ollama use its own (small, often silently-truncating) default.
     // Set this to your model's real max (check `ollama show <model>`) to stop
     // long agent sessions from quietly losing early context.
-    numCtx: cfg.get<number>('numCtx') ?? 32768,
+    // Ollama takes the window per request (forge.numCtx); MLX / OpenAI-compatible servers fix it at start-up, so for those it is the
+    // separately-configured forge.mlx.contextTokens (used for compaction thresholds and the context meter).
+    numCtx: parseProviderId(cfg.get<string>('provider')) === 'ollama' ? cfg.get<number>('numCtx') ?? 32768 : cfg.get<number>('mlx.contextTokens') ?? 32768,
     // -1 = never unload the model between messages (avoids paying a full
     // reload + KV-cache-rebuild cost every time you pause to think).
     // 0 = server default (~5 min idle unload).

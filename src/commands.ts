@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { pickBestCompletionModel, pickBestDefaultModel } from './ollama/client';
 import { LlmProvider } from './llm/provider';
+import { providerEndpoint } from './llm/factory';
 import { setChatModel, setCompletionModel, setModelForMode, getConfig } from './util/config';
 import { PendingEditManager } from './tools/editApply';
 import { openDiffForEdit } from './tools/diffContentProvider';
@@ -255,19 +256,20 @@ export async function setModelForModeCommand(ollama: LlmProvider) {
 
 export async function checkOllamaStatusCommand(ollama: LlmProvider) {
   const cfg = getConfig();
+  const ep = providerEndpoint(cfg);
   const health = await ollama.health();
   if (!health.ok) {
     const choice = await vscode.window.showErrorMessage(
-      `Forge can't reach Ollama at ${cfg.ollamaBaseUrl}: ${health.error}`,
+      `Forge can't reach ${ep.label} at ${ep.baseUrl}: ${health.error}`,
       'Open Settings',
       'View Logs'
     );
-    if (choice === 'Open Settings') vscode.commands.executeCommand('workbench.action.openSettings', 'forge.ollamaBaseUrl');
+    if (choice === 'Open Settings') vscode.commands.executeCommand('workbench.action.openSettings', ep.id === 'ollama' ? 'forge.ollamaBaseUrl' : ep.id === 'mlx' ? 'forge.mlx.baseUrl' : 'forge.openaiCompat.baseUrl');
     if (choice === 'View Logs') logger.show();
     return;
   }
   const models = await ollama.listModels();
-  vscode.window.showInformationMessage(`Forge: connected to Ollama at ${cfg.ollamaBaseUrl}. ${models.length} model(s) available.`);
+  vscode.window.showInformationMessage(`Forge: connected to ${ep.label} at ${ep.baseUrl}. ${models.length} model(s) available.`);
 }
 
 export async function indexWorkspaceCommand(index: WorkspaceIndex) {

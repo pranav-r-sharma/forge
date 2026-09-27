@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import * as os from 'os';
-import { OllamaClient } from './ollama/client';
+import { SwitchableProvider } from './llm/factory';
 import { getConfig } from './util/config';
 import { logger } from './util/logger';
 import { toRelative } from './util/paths';
@@ -61,7 +61,8 @@ export async function activate(context: vscode.ExtensionContext) {
     logger.warn('No workspace folder open — file tools, indexing, and the agent will be limited until you open a folder.');
   }
 
-  const ollama = new OllamaClient(() => getConfig().ollamaBaseUrl);
+  // The provider reads settings on every call, so switching forge.provider / a base URL applies immediately (no reload).
+  const ollama = new SwitchableProvider(() => getConfig());
   const pendingEdits = new PendingEditManager(workspaceRoot);
   const backgroundProcesses = new BackgroundProcessManager();
   activeBackgroundProcesses = backgroundProcesses;
