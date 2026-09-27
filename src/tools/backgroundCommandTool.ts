@@ -1,4 +1,5 @@
 import { ToolExecContext, ToolResult } from '../agent/types';
+import { requireStringArg } from './argErrors';
 
 /**
  * Companion to run_command's {"background": true} — see
@@ -22,10 +23,14 @@ export async function checkBackgroundCommandTool(args: Record<string, any>, ctx:
     return { ok: true, content: lines.join('\n') };
   }
 
-  const id: string = args.id ?? '';
-  if (!id || typeof id !== 'string') {
-    return { ok: false, content: 'Missing required arg "id" (the id returned when the background command was started). Use {"action": "list"} to see every id if you\'ve lost track of it.' };
-  }
+  const idCheck = requireStringArg(
+    'check_background_command',
+    'id',
+    args.id,
+    'Missing required arg "id" (the id returned when the background command was started). Use {"action": "list"} to see every id if you\'ve lost track of it.',
+  );
+  if (!idCheck.ok) return { ok: false, content: idCheck.content };
+  const id = idCheck.value;
 
   if (action === 'kill') {
     const result = ctx.killBackgroundCommand(id);

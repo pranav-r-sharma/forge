@@ -3,6 +3,7 @@ import { spawn } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import { ToolExecContext, ToolResult } from '../agent/types';
+import { requireStringArg, suggestCommandFromArgvArray } from './argErrors';
 import { resolveWorkspacePath } from '../util/paths';
 
 const MAX_OUTPUT_CHARS = 8000;
@@ -39,10 +40,15 @@ export function resolveCommandCwd(
 }
 
 export async function runCommandTool(args: Record<string, any>, ctx: ToolExecContext): Promise<ToolResult> {
-  const command: string = args.command ?? '';
-  if (!command || typeof command !== 'string') {
-    return { ok: false, content: 'Missing required arg "command" (a shell command string).' };
-  }
+  const commandCheck = requireStringArg(
+    'run_command',
+    'command',
+    args.command,
+    'Missing required arg "command" (a shell command string).',
+    (wrong) => (Array.isArray(wrong) ? suggestCommandFromArgvArray(wrong) : undefined),
+  );
+  if (!commandCheck.ok) return { ok: false, content: commandCheck.content };
+  const command = commandCheck.value;
 
   callCounter += 1;
   const callId = `cmd_${Date.now().toString(36)}_${callCounter}`;

@@ -345,6 +345,45 @@ function findBalancedJsonWithName(text: string): string | null {
   return null;
 }
 
+function normalizeForeignToolName(name: string): string {
+  return name.startsWith('functions.') ? name.slice('functions.'.length) : name;
+}
+
+function foreignFromHarmonyPayload(tool: string, payload: string): ForeignToolCall {
+  const args = parseJsonObject(payload.trim());
+  return { tool: normalizeForeignToolName(tool), args, format: 'harmony-commentary' };
+}
+
+/** Harmony `to=<tool>` on any channel; also bare/stripped `to=tool code{...}` shapes. */
+function tryDetectHarmonyForeign(text: string): ForeignToolCall | null {
+  const harmonyRe =
+    /<\|channel\|>\w+\s+to=(?:functions\.)?([\w.-]+)\b[^<]*(?:<\|constrain\|>[^<]*)?<\|message\|>([\s\S]*?)(?:<\|end\|>|(?=<\|start\|>)|$)/gi;
+  const harmony = harmonyRe.exec(text);
+  if (harmony) return foreignFromHarmonyPayload(harmony[1], harmony[2]);
+
+  const bareRe = /\bto=(?:functions\.)?([\w.-]+)\b(?:\s+(?:json|code))?\s*(\{)/i;
+  const bare = bareRe.exec(text);
+  if (bare) {
+    const braceStart = bare.index + bare[0].length - 1;
+    const end = findMatchingBrace(text, braceStart);
+    if (end === -1) {
+      return { tool: normalizeForeignToolName(bare[1]), args: null, format: 'harmony-commentary' };
+    }
+    const payload = text.slice(braceStart, end + 1);
+    return foreignFromHarmonyPayload(bare[1], payload);
+  }
+  return null;
+}
+
+function textsForHarmonyForeignDetection(raw: string): string[] {
+  const out = [raw];
+  const stripped = stripHarmonyControlTokens(raw);
+  if (stripped && stripped !== raw.trim()) out.push(stripped);
+  const garbled = stripped.replace(/^assistant\w*\s*/i, '').trim();
+  if (garbled && garbled !== stripped) out.push(garbled);
+  return out;
+}
+
 /**
  * Detects a tool invocation in a non-Forge format when there is no valid fenced forge_action.
  * Generic (Harmony, XML tool_call, OpenAI-style name/arguments, bare tool/args JSON).
@@ -352,14 +391,9 @@ function findBalancedJsonWithName(text: string): string | null {
 export function detectForeignToolCall(raw: string): ForeignToolCall | null {
   if (hasValidFencedForgeAction(raw)) return null;
 
-  const harmonyRe =
-    /<\|channel\|>commentary\s+to=(?:functions\.)?([\w.-]+)\b[^<]*(?:<\|constrain\|>[^<]*)?<\|message\|>([\s\S]*?)(?:<\|end\|>|(?=<\|start\|>)|$)/i;
-  const harmony = harmonyRe.exec(raw);
-  if (harmony) {
-    const tool = harmony[1];
-    const payload = harmony[2].trim();
-    const args = parseJsonObject(payload);
-    return { tool, args, format: 'harmony-commentary' };
+  for (const text of textsForHarmonyForeignDetection(raw)) {
+    const harmony = tryDetectHarmonyForeign(text);
+    if (harmony) return harmony;
   }
 
   const xmlRe = /<tool_call>\s*([\s\S]*?)\s*<\/tool_call>/i;
@@ -466,7 +500,11 @@ export function formatForeignToolCallNudge(
 
   const known = knownTools.includes(foreign.tool);
   if (!known) {
-    return `[System check] Not executed: you called ${foreign.tool} using a native tool-call format, which is not a Forge tool. Forge only runs actions written as a \`\`\`forge_action block. Available tools: ${knownTools.join(', ')}. Resend using a \`\`\`forge_action block with a known tool name.`;
+    const pathHint =
+      foreign.args && typeof foreign.args === 'object' && 'path' in foreign.args
+        ? ' To read a file use read_file with {"path": ...}; to change one use write_file.'
+        : '';
+    return `[System check] Not executed: you called ${foreign.tool} using a native tool-call format, which is not a Forge tool. Forge only runs actions written as a \`\`\`forge_action block. Available tools: ${knownTools.join(', ')}. Resend using a \`\`\`forge_action block with a known tool name.${pathHint}`;
   }
   const forgeArgs = foreign.args !== null ? JSON.stringify(foreign.args) : '{}';
   return `[System check] Not executed: you called ${foreign.tool} using a native tool-call format. Forge only runs actions written as a \`\`\`forge_action block. Resend exactly this:\n\`\`\`forge_action\n{"tool":"${foreign.tool}","args":${forgeArgs}}\n\`\`\``;

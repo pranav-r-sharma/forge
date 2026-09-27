@@ -22,7 +22,14 @@ import { logger } from '../util/logger';
 import { resolveWorkspacePath, toRelative } from '../util/paths';
 import { CompactionCache, PromptViewState, hardCapOversizedMessages, maybeCompact, pruneStaleReadsView, updateCharsPerToken, updatePromptView, DEFAULT_CHARS_PER_TOKEN } from './contextManager';
 import { LoopDetector, signatureForStep } from './loopDetector';
-import { evaluateClaimedCommands, findUnverifiedClaims } from './claimChecker';
+import {
+  evaluateClaimedCommands,
+  findUnverifiedClaims,
+  formatUnresolvedFailureNudge,
+  parseRunCommandExitCode,
+  unresolvedFailureMarker,
+  type UnresolvedRunFailure,
+} from './claimChecker';
 import { runVerifyCommand } from './verifyCheck';
 import { detectSuspiciousVerifyBypass } from './gamingDetection';
 import { BackgroundProcessManager } from '../tools/backgroundProcessManager';
@@ -510,6 +517,8 @@ export async function runAgentTurn(
 
   let hallucinationNudges = 0;
   let claimedCommandNudges = 0;
+  let unresolvedFailureNudges = 0;
+  let unresolvedRunFailure: UnresolvedRunFailure | undefined;
   let commandsExecutedThisTurn: string[] = [];
   let filesWrittenThisTurn: string[] = [];
   let truncationNudges = 0;
@@ -726,9 +735,17 @@ export async function runAgentTurn(
         traceIter({ note: 'claimed-command-nudge' });
         continue;
       }
+      if (unresolvedRunFailure && unresolvedFailureNudges < 1) {
+        unresolvedFailureNudges++;
+        pushAssistant(fullText);
+        pushMsg({ role: 'user', content: formatUnresolvedFailureNudge(unresolvedRunFailure) });
+        traceIter({ note: 'unresolved-failure-nudge' });
+        continue;
+      }
       const unverifiedAll = [
         ...unverified,
         ...(claimedCmdIssues ? claimedCmd.unverifiedMarkers : []),
+        ...(unresolvedRunFailure ? [unresolvedFailureMarker(unresolvedRunFailure)] : []),
       ];
       pushAssistant(fullText);
 
@@ -926,11 +943,25 @@ export async function runAgentTurn(
       const path = typeof call.args?.path === 'string' ? call.args.path : '';
       const text = [call.args?.content, call.args?.search, call.args?.replace].filter((v) => typeof v === 'string').join('\n');
       writesSinceLastVerify.push({ path, text });
-      if (path) filesWrittenThisTurn.push(path);
+      if (path) {
+        filesWrittenThisTurn.push(path);
+        if (unresolvedRunFailure && !unresolvedRunFailure.filesEditedAfter.includes(path)) {
+          unresolvedRunFailure.filesEditedAfter.push(path);
+        }
+      }
     } else if (resolvedSpec.name === 'run_command') {
       const cmd = typeof call.args?.command === 'string' ? call.args.command : '';
       if (cmd) commandsExecutedThisTurn.push(cmd);
-      if (result.ok) deps.hooks.run('after-command', { args: call.args }).catch(() => {});
+      if (result.ok) {
+        unresolvedRunFailure = undefined;
+        deps.hooks.run('after-command', { args: call.args }).catch(() => {});
+      } else if (cmd) {
+        unresolvedRunFailure = {
+          command: cmd,
+          exitCode: parseRunCommandExitCode(result.content),
+          filesEditedAfter: [],
+        };
+      }
     }
 
     // Optional self-critique pass (forge.selfCritique.enabled, off by

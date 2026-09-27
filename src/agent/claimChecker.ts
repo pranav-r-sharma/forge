@@ -240,6 +240,32 @@ export function findUnverifiedClaims(finalText: string, messages: ChatMessage[])
 }
 
 /** Parse run_command / write_file paths from a saved message transcript (tests, e2e fixtures). */
+export type UnresolvedRunFailure = {
+  command: string;
+  exitCode: number | null;
+  filesEditedAfter: string[];
+};
+
+/** Parse exit code from a run_command tool result body (undefined when the command never ran). */
+export function parseRunCommandExitCode(resultContent: string): number | null {
+  const m = /\(exit code: (\d+)\)/.exec(resultContent);
+  return m ? Number(m[1]) : null;
+}
+
+export function formatUnresolvedFailureNudge(failure: UnresolvedRunFailure): string {
+  const exitPart =
+    failure.exitCode !== null ? ` (exit ${failure.exitCode})` : '';
+  const editPart =
+    failure.filesEditedAfter.length > 0
+      ? `; you then edited: ${failure.filesEditedAfter.join(', ')}`
+      : '';
+  return `[System check] Your last command \`${failure.command}\` failed${exitPart} and has not been rerun successfully since${editPart}. Rerun it now and fix what fails, or explain why the failure is acceptable.`;
+}
+
+export function unresolvedFailureMarker(failure: UnresolvedRunFailure): string {
+  return `unresolved failed command: ${failure.command}`;
+}
+
 export function collectTurnToolFacts(messages: ChatMessage[]): {
   executedCommands: string[];
   filesWritten: string[];

@@ -1,8 +1,10 @@
 import { ToolExecContext, ToolResult } from '../agent/types';
+import { requireStringArg } from './argErrors';
 
 export async function rememberTool(args: Record<string, any>, ctx: ToolExecContext): Promise<ToolResult> {
-  const fact: string = args.fact ?? args.text ?? '';
-  if (!fact.trim()) return { ok: false, content: 'Missing required arg "fact".' };
+  const factCheck = requireStringArg('remember', 'fact', args.fact ?? args.text, 'Missing required arg "fact".');
+  if (!factCheck.ok) return { ok: false, content: factCheck.content };
+  const fact = factCheck.value;
   const result = await ctx.rememberFact(fact);
   if (!result.added) {
     return { ok: true, content: `Not added: ${result.reason || 'unknown reason'}` };
@@ -11,8 +13,9 @@ export async function rememberTool(args: Record<string, any>, ctx: ToolExecConte
 }
 
 export async function searchChatHistoryTool(args: Record<string, any>, ctx: ToolExecContext): Promise<ToolResult> {
-  const query: string = args.query ?? '';
-  if (!query) return { ok: false, content: 'Missing required arg "query".' };
+  const queryCheck = requireStringArg('search_chat_history', 'query', args.query, 'Missing required arg "query".');
+  if (!queryCheck.ok) return { ok: false, content: queryCheck.content };
+  const query = queryCheck.value;
   const k = clampK(args.k);
 
   const results = await ctx.chatMemorySearch(query, k);

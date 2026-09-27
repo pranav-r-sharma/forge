@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { ToolExecContext, ToolResult } from '../agent/types';
+import { requireStringArg } from './argErrors';
 import { isIgnoredDir, looksBinary, toRelative } from '../util/paths';
 
 const MAX_FILES_SCANNED = 3000;
@@ -7,8 +8,14 @@ const MAX_MATCHES = 60;
 const MAX_FILE_KB_FOR_SEARCH = 512;
 
 export async function searchCodeTool(args: Record<string, any>, ctx: ToolExecContext): Promise<ToolResult> {
-  const query: string = args.query ?? args.pattern ?? '';
-  if (!query) return { ok: false, content: 'Missing required arg "query".' };
+  const queryCheck = requireStringArg(
+    'search_code',
+    'query',
+    args.query ?? args.pattern,
+    'Missing required arg "query".',
+  );
+  if (!queryCheck.ok) return { ok: false, content: queryCheck.content };
+  const query = queryCheck.value;
   const globPattern: string = args.glob || '**/*';
 
   let regex: RegExp;
@@ -67,8 +74,9 @@ export async function searchCodeTool(args: Record<string, any>, ctx: ToolExecCon
 }
 
 export async function searchCodebaseTool(args: Record<string, any>, ctx: ToolExecContext): Promise<ToolResult> {
-  const query: string = args.query ?? '';
-  if (!query) return { ok: false, content: 'Missing required arg "query".' };
+  const queryCheck = requireStringArg('search_codebase', 'query', args.query, 'Missing required arg "query".');
+  if (!queryCheck.ok) return { ok: false, content: queryCheck.content };
+  const query = queryCheck.value;
   const k = clamp(args.k ? Number(args.k) : 8, 1, 20);
 
   const results = await ctx.codebaseSearch(query, k);

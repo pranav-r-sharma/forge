@@ -1,12 +1,14 @@
 import * as vscode from 'vscode';
 import { ToolExecContext, ToolResult } from '../agent/types';
+import { requireStringArg } from './argErrors';
 import { isIgnoredDir, looksBinary, resolveWorkspacePath, toRelative } from '../util/paths';
 
 const MAX_LIST_ENTRIES = 400;
 
 export async function readFileTool(args: Record<string, any>, ctx: ToolExecContext): Promise<ToolResult> {
-  const relPath: string = args.path ?? args.file ?? '';
-  if (!relPath) return { ok: false, content: 'Missing required arg "path".' };
+  const pathCheck = requireStringArg('read_file', 'path', args.path ?? args.file, 'Missing required arg "path".');
+  if (!pathCheck.ok) return { ok: false, content: pathCheck.content };
+  const relPath = pathCheck.value;
 
   let uri: vscode.Uri;
   try {
@@ -201,8 +203,9 @@ function applyReplaceAll(existing: string, search: string, replace: string, relP
 }
 
 export async function writeFileTool(args: Record<string, any>, ctx: ToolExecContext): Promise<ToolResult> {
-  const relPath: string = args.path ?? args.file ?? '';
-  if (!relPath) return { ok: false, content: 'Missing required arg "path".' };
+  const pathCheck = requireStringArg('write_file', 'path', args.path ?? args.file, 'Missing required arg "path".');
+  if (!pathCheck.ok) return { ok: false, content: pathCheck.content };
+  const relPath = pathCheck.value;
 
   let uri: vscode.Uri;
   try {

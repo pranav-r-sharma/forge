@@ -16,7 +16,9 @@ import {
   formatToolCallForHistory,
 } from '../../src/agent/toolProtocol';
 import { resolveModelResponse } from '../../src/agent/agentLoop';
+import { formatUnresolvedFailureNudge } from '../../src/agent/claimChecker';
 import { cleanCompletion } from '../../src/completion/fimPrompt';
+import { requireStringArg, suggestCommandFromArgvArray } from '../../src/tools/argErrors';
 
 let passed = 0;
 let failed = 0;
@@ -246,6 +248,48 @@ function assert(cond: any, msg: string) {
 
   const nudgeBadWrap = formatForeignToolCallNudge(detectForeignToolCall(badWrap)!, known, badWrap);
   assert(/not valid JSON/.test(nudgeBadWrap) && /near:/.test(nudgeBadWrap) && !/which is not a Forge tool/.test(nudgeBadWrap), 'unparseable forge_action wrapper gets JSON parse error nudge');
+}
+{
+  const t09Stripped =
+    'assistantanalysis to=repo_browser.open_file code{"path":"inventory/cli.py","line_start":1,"line_end":40}';
+  const foreign = detectForeignToolCall(t09Stripped);
+  assert(
+    foreign && foreign.tool === 'repo_browser.open_file' && foreign.args?.path === 'inventory/cli.py',
+    'detectForeignToolCall finds analysis-channel Harmony with code constrain on stripped text',
+  );
+  const known = ['read_file', 'write_file', 'run_command'];
+  const nudge = formatForeignToolCallNudge(foreign!, known);
+  assert(/repo_browser\.open_file/.test(nudge) && /read_file/.test(nudge) && /write_file/.test(nudge), 'unknown foreign tool with path hints read_file/write_file');
+  const analysisChannel =
+    '<|channel|>analysis to=repo_browser.open_file <|constrain|>code<|message|>{"path":"inventory/cli.py","line_start":1,"line_end":40}<|end|>';
+  const foreignRaw = detectForeignToolCall(analysisChannel);
+  assert(foreignRaw?.tool === 'repo_browser.open_file', 'Harmony foreign call on analysis channel is detected in raw text');
+}
+
+// ---- arg type errors + unresolved failure nudge ----
+{
+  const arr = ['bash', '-lc', "python3 -m py_compile $(git ls-files '*.py')"];
+  assert(
+    suggestCommandFromArgvArray(arr) === "python3 -m py_compile $(git ls-files '*.py')",
+    'suggestCommandFromArgvArray uses -lc payload',
+  );
+  const wrong = requireStringArg('run_command', 'command', arr, 'Missing required arg "command".', (w) =>
+    Array.isArray(w) ? suggestCommandFromArgvArray(w) : undefined,
+  );
+  assert(!wrong.ok && /must be a string, but you sent an array/.test(wrong.content), 'wrong-type command mentions array');
+  assert(/python3 -m py_compile/.test(wrong.content), 'wrong-type command suggests resend with shell string');
+}
+{
+  const nudge = formatUnresolvedFailureNudge({
+    command: 'python3 main.py demo',
+    exitCode: 2,
+    filesEditedAfter: ['inventory/cli.py'],
+  });
+  assert(
+    /Your last command `python3 main.py demo` failed \(exit 2\)/.test(nudge) &&
+      /you then edited: inventory\/cli\.py/.test(nudge),
+    'unresolved failure nudge names command, exit, and post-failure edits',
+  );
 }
 
 // ---- parseToolCall: invalid JSON in closed fence (t08 cycle 1, no brace auto-repair) ----
