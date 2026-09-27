@@ -7,12 +7,14 @@ Forge is a VS Code extension (TypeScript, **zero runtime npm dependencies**) tha
 ## Standing rules (from the owner — do not relax)
 
 1. **Ornith only for testing.** All testing, benchmarking and A/B use **Ornith-1.5-9B** and no other model. The only variables are runtime (Ollama vs MLX) and quantization. See "0.2c" in the plan.
-2. **Nothing new starts until the owner says "start".** Planning and documentation are fine; code changes and installs wait. (Owner said "start" is required; check `PROGRESS.md` → *Status* to see whether it has been given.)
-3. **Ask before installing anything** (`pip install`, `brew`, downloads). The MLX venv install needs explicit approval each time it is proposed.
+2. **Development STARTED 2026-09-26** (owner said "go start"). Work through the plan in `PROGRESS.md` in order, thoroughly: test constantly, monitor performance and efficiency, iterate. Efficiency is paramount.
+3. **Installs:** the owner approved installing **MLX** on 2026-09-26 — a **project-local venv** (`_devtools/mlx-venv`, gitignored) with a **pinned** `mlx-lm`, user-level only (no sudo), load the Ornith snapshot **offline** with `trust_remote_code` **off**. Ask before any *other* install/download (brew, another Python, more models).
 4. **Memory-safe testing on this Mac (M5, 32 GB).** One model loaded at a time; unload before the next; check free memory and swap before loading; abort on pressure. Never push to a crash. Record hardware in every result.
 5. **Work on branch `v0.15.0-work`.** Commits are allowed there (owner approved 2026-09-26). Do not commit to `master`/`main`. Never push or force-push without being asked.
 6. **No `sudo` in anything that ships.** Product code, setup steps and features must work for a normal user without administrator rights. `sudo` is allowed only for the developer's own investigation during development (e.g. cross-checking with `powermetrics`), and never in committed product code or docs a user follows. Read system limits; never change them.
-7. **Accuracy over completeness for measurements.** A missing number is fine; a wrong number is not. Report failures and skipped steps faithfully.
+7. **Context-limit timer (owner rule, 2026-09-26).** When about to reach the context limit (remaining budget under ~20% or the next step is big): finish/safely stop the step, update `PROGRESS.md`, commit, then **set a 45-minute timer, cease all activity, and resume from `PROGRESS.md` when it fires.** Say so to the user before pausing.
+8. **Final acceptance test:** create a test repo *inside this repo* (`_devtools/e2e/`), have the harness (on Ornith) write a multi-file program in it, monitor the run, and keep improving the harness until it works well.
+9. **Accuracy over completeness for measurements.** A missing number is fine; a wrong number is not. Report failures and skipped steps faithfully.
 
 ## Dev cycle — work so a usage-limit cutoff never loses progress
 

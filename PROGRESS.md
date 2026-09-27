@@ -2,7 +2,7 @@
 
 **Goal:** Make Forge a fast, thoroughly vetted, MLX-first coding harness for multi-file repos, verified on Ornith-1.5-9B only.
 
-**Status:** PLANNING COMPLETE — **waiting for the owner to say "start"** before any code change or install.
+**Status:** **DEVELOPMENT STARTED 2026-09-26.** Owner: "go start"; MLX install approved; efficiency is paramount; test/monitor/iterate; final acceptance test = harness writes a multi-file program in a test repo inside this repo.
 **Branch:** `v0.15.0-work` (commits allowed here). **Plan and reasons:** `v0.15.0 suggestions.md`.
 
 ## Plan (small steps; each a few minutes; split further if it runs long)
@@ -41,9 +41,14 @@ Then 0.15.0 items (see "Suggested release slicing" in the plan) once Phase 0 num
 ## Next
 **Wait for the owner to say "start".** Then begin **P0-1**: create the `vscode` stub module under `_devtools/runtime_test/` (find what the tests import from `vscode`: `grep -h "vscode\." _devtools/runtime_test/*.ts | sort | uniq -c | sort -rn`), and run `npx ts-node _devtools/runtime_test/test_v14_indent_hardening.ts` with `NODE_PATH` set.
 
+## Owner decisions (2026-09-26)
+- Start given. MLX install approved (project venv, pinned, offline, no remote code, no sudo).
+- **Max stage models:** "Ornith 1 30B" and "Qwen 3.8 27B" on the M5 Max (not tested on this 32 GB Mac; Directive 4 keeps testing here Ornith-9B only). Note: Qwen3.8-27B is one of the two models the parked Splash engine supports.
+- 45-minute pause rule when near the context limit (see CLAUDE.md rule 7).
+
 ## Open questions / blockers
-- **MLX install approval:** may I create a project-local venv and `pip install` a pinned `mlx-lm` (third-party, not source-audited) and load the Ornith snapshot offline with remote code off? Python here is 3.14 — may lack MLX wheels; OK to use another Python for the venv? (Blocks P0-11.)
-- **Max stage:** which bigger Ornith-family model will run on the M5 Max? (Blocks only the Max-stage comparison.)
+- ~~MLX install approval~~ — **approved.** Still to check: Python 3.14 may lack MLX wheels; if so ask before installing another Python.
+- ~~Max stage model~~ — answered (Ornith 30B-class + Qwen 3.8 27B). Exact model IDs/quantizations to confirm when we get to the Max stage.
 - **Ollama 8-bit Ornith tag:** does one exist, and may I download it? (Optional arm O-Q8.)
 
 ## Files touched (this session)
