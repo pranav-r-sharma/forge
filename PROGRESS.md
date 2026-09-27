@@ -70,7 +70,19 @@ Then 0.15.0 items (see "Suggested release slicing" in the plan) once Phase 0 num
 **Superseding owner decision (2026-09-27): MLX is the actual direction — switch to it now, no more benchmark runs for the moment.** Changed `forge.provider`'s packaged default in `package.json` from `"ollama"` to `"mlx"` (also updated the doc comment in `src/util/config.ts`). Also activated it for real, live usage: added `forge.provider: "mlx"`, `forge.mlx.model` (the 4-bit snapshot, per the C2 decision above), and `forge.mlx.pythonPath` (pointing at the existing, already-approved `_devtools/mlx-venv` — no new install) to the owner's real VS Code user settings (`~/Library/Application Support/Code/User/settings.json`, outside this repo). `npm run typecheck && npm test && npm run compile`: clean (37/37, 1,338 checks) — the one test that checks a "default" provider value (`test_v15_factory.ts`) tests `parseProviderId`'s own unset/garbled-input fallback (a separate, intentional safety net, unrelated to the packaged schema default), so it was correctly unaffected. **Known gap:** `~/.forge/mlx-venv` (the fallback path `resolvePython()` uses when `forge.mlx.pythonPath` is empty, for use in *other* workspaces) does not exist yet — reusing this repo's dev venv works today via the explicit path, but is coupled to this checkout; creating a dedicated `~/.forge/mlx-venv` would be a *new* install and needs the owner's go-ahead first (standing rule 3), not done here.
 
 ## Next
-**Owner to choose the next eval** after t08 loop stop (2 consecutive clean passes on gpt-oss Q8, cycles 2–3). Claimed-command checker landed (bridge task 2026-09-27): final answers that cite shell commands or universal compile claims get one `claimed-command-nudge` before accept; leftovers attach to `unverifiedClaims`.
+**t10 loop stop** (2/2 PASS cycles 1–2 on gpt-oss Q8). **t09** still failing cycle 2 (CLI `--db` vs `check.sh`); diagnose fixture vs model or run cycle 3 after fix. Owner picks next eval.
+
+## t09 / t10 — cycle 2 (gpt-oss Q8, 2026-09-27)
+
+- **t09:** FAIL 70 iters / 363.5 s, `checkExit` 2 — `python3 main.py add-book --db …` unrecognized (global `--db` not wired for subcommands). Tools: write_file 11, run_command 23, read_file 2; 8 tool failures; nudges: foreign-tool iter 20, claimed-command iter 31; no agentError. `t09-harder-build-gptossq8-cycle2.*`.
+- **t10:** PASS 43 iters / 354.1 s; list_dir 2, read_file 8, write_file 6, run_command 5; 2 tool failures; truncated-reply-nudge iter 7; no agentError. `t10-seeded-bugs-gptossq8-cycle2.*`.
+
+## t09-harder-build / t10-seeded-bugs — cycle 1 (gpt-oss Q8, 2026-09-27)
+
+- **Claim-checker:** `6e5c13b`, `2c3119d` (per-file command coverage; universal compile wording). Tests in `test_v15_claimed_commands.ts`.
+- **Fixtures:** `t09-harder-build` `81def7f` (7-file library loans), `t10-seeded-bugs` `3421254` (five planted bug kinds).
+- **t09 cycle 1:** FAIL 25 iters / 158 s — `inventory/cli.py` SyntaxError; harness gaps: Harmony `repo_browser.open_file` on analysis channel treated as final; final accepted after failed demo; imprecise array-arg errors. **Fix:** `ba01527` (Harmony on any channel; block final over unresolved failed command; precise arg-type errors). Results: `t09-harder-build-gptossq8-cycle1.*`.
+- **t10 cycle 1:** PASS 39 iters / 341 s — all five bugs fixed from code reading; truncation nudge once; 2 tool failures. Results: `t10-seeded-bugs-gptossq8-cycle1.*`. Log commit: `436ef44`.
 
 ## Claimed-command checker (2026-09-27)
 - `claimChecker.ts`: check (A) inline backtick shell commands vs `run_command` this turn; check (B) per-file `py_compile` coverage when universal file wording — cap 1 nudge/turn, trace `claimed-command-nudge`, markers on final. Tests: `test_v15_claimed_commands.ts` (+ t08 cycle2/3 fixtures). `npm test` 38/38, 1456 checks.
@@ -210,4 +222,4 @@ Three commits (`d912e59`, `720e092`, `fc20381`) close the harness gap found in t
 ## Files touched (this session, continued)
 `src/agent/toolProtocol.ts`, `src/agent/agentLoop.ts`, `src/tools/commandTool.ts`, `src/agent/types.ts`, `src/agent/approvalBroker.ts`, `_devtools/bench/run_task.ts`, `_devtools/runtime_test/test.ts`, `_devtools/runtime_test/test_v15_truncation.ts`, `_devtools/runtime_test/test_v15_command.ts`, `HANDOFF.md`, `_devtools/e2e/ITERATION_LOG.md` (new), `_devtools/e2e/results/t07-build-from-scratch-mlx4bit-cycle{1,2}.*` (new).
 
-**Last updated:** 2026-09-27 15:31 (t08 cycle 3 PASS — 2 consecutive clean passes, loop stops; Next = owner picks next eval)
+**Last updated:** 2026-09-27 16:30 (t09/t10 cycle 2 gpt-oss Q8; t10 2/2 pass)

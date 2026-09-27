@@ -60,3 +60,36 @@ One short entry per loop cycle. Full narrative for each cycle stays in `PROGRESS
 - **Findings:** **Model limitation (recurring, 2/2 cycles)** — final answer still claims all five files compile without ever running `py_compile` on `main.py` in the transcript. **Open gap:** no t08 run so far produced a code error, so the fix-an-error path was not exercised by this fixture.
 - **Evidence:** `_devtools/e2e/results/t08-five-file-build-gptossq8-cycle3.{json,trace.jsonl,messages.json}`
 - **Next:** owner to choose the next test (e.g. a harder multi-file task where errors are likely, or a task seeded with bugs)
+
+# Iteration log — t09-harder-build / t10-seeded-bugs (gpt-oss-20b MXFP4-Q8)
+
+**Claim-checker (2026-09-27):** commits `6e5c13b`, `2c3119d` — final answers citing shell commands or universal compile claims get one `claimed-command-nudge` before accept; leftovers attach to `unverifiedClaims`.
+
+**Tasks added:** `t09-harder-build` (`81def7f`), `t10-seeded-bugs` (`3421254`).
+
+## t09-harder-build — Cycle 1 — gpt-oss Q8 (MLX)
+
+- **Result:** FAIL — 25 iterations, 158 s wall, `checkExit` 1 (SyntaxError in `inventory/cli.py` unmatched `)`)
+- **Classification:** harness gaps (fixed `ba01527` before cycle 2)
+- **Findings:** Harmony call on analysis channel `to=repo_browser.open_file` accepted as final; final allowed over failed demo + later edit broke `cli.py`; vague "Missing required arg" for array command.
+- **Evidence:** `_devtools/e2e/results/t09-harder-build-gptossq8-cycle1.{json,trace.jsonl,messages.json}`
+- **Next:** cycle 2 after harness fixes
+
+## t10-seeded-bugs — Cycle 1 — gpt-oss Q8 (MLX)
+
+- **Result:** PASS — 39 iterations, 341 s wall, 0 check failures; model found and fixed all 5 planted bugs from reading code
+- **Findings:** one `truncated-reply-nudge` (long analysis, iter 7); array-command error self-corrected; 2 tool failures total
+- **Evidence:** `_devtools/e2e/results/t10-seeded-bugs-gptossq8-cycle1.{json,trace.jsonl,messages.json}`
+- **Next:** cycle 2 confirmation run
+
+## t09-harder-build — Cycle 2 — gpt-oss Q8 (MLX)
+
+- **Result:** FAIL — 70 iterations, 363.5 s wall, `checkExit` 2 (`check.sh`: `main.py` rejects `--db` on subcommands — global vs per-command argparse)
+- **Classification:** model/task (CLI `--db` placement); harness behaved (array-command errors self-corrected; `claimed-command-nudge` iter 31; `foreign-tool-call-nudge` iter 20)
+- **Evidence:** `_devtools/e2e/results/t09-harder-build-gptossq8-cycle2.{json,trace.jsonl,messages.json,log}`; workspace `--keep`: `/var/folders/6_/0y34b0x51zlcndfh0zqcxknm0000gn/T/forge-e2e-t09-harder-build-Az2Tn6`
+
+## t10-seeded-bugs — Cycle 2 — gpt-oss Q8 (MLX)
+
+- **Result:** PASS — 43 iterations, 354.1 s wall; 2 consecutive passes (cycles 1–2)
+- **Findings:** `truncated-reply-nudge` iter 7 (same as cycle 1); 2 tool failures; 0 agentError
+- **Evidence:** `_devtools/e2e/results/t10-seeded-bugs-gptossq8-cycle2.*`; workspace `--keep`: `.../forge-e2e-t10-seeded-bugs-FgdJuT`

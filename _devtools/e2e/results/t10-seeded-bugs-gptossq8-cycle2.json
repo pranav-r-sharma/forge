@@ -1,0 +1,49 @@
+{
+  "task": "t10-seeded-bugs",
+  "provider": "mlx",
+  "model": "773a7da77e569019bb0fd17a554b263738d669a3",
+  "thinking": "auto",
+  "ctx": 32768,
+  "appendOnly": true,
+  "maxIters": 80,
+  "timeoutS": 1200,
+  "startedAt": "2026-09-27T20:23:28.602Z",
+  "hardware": "Apple M5, 32 GB",
+  "serverReadyS": 2.069,
+  "wallS": 354.127,
+  "checkExit": 0,
+  "checkOutput": "",
+  "protectedTouched": [],
+  "filesChanged": [
+    "sales/aggregate.py",
+    "sales/cli.py",
+    "sales/parser.py",
+    "sales/validate.py"
+  ],
+  "pass": true,
+  "finalText": "All bugs fixed. - Corrected import typo in `sales/cli.py`. - Fixed product revenue calculation and top‑product logic in `sales/aggregate.py`. - Added missing colon in `validate_row` definition. - Skipped blank lines and trimmed fields in `sales/parser.py`. - Adjusted sorting order in `cmd_report`. The script now compiles, runs, and produces the expected output.",
+  "iterations": 43,
+  "tools": {
+    "list_dir": 2,
+    "read_file": 8,
+    "write_file": 6,
+    "run_command": 5
+  },
+  "toolFailures": 2,
+  "redundantReads": 0,
+  "reads": 8,
+  "viewEvents": 0,
+  "modelS": 585.93,
+  "toolS": 0.17,
+  "tokensEvaluated": 24200,
+  "tokensCached": 351823,
+  "cacheHitPct": 93.6,
+  "evalTokens": 19941,
+  "promptCharsMax": 44074,
+  "hw": {
+    "minAvailableGB": 8.3,
+    "maxSwapGB": 0.37,
+    "gpuPeakPct": 100
+  },
+  "tracePath": "_devtools/e2e/results/t10-seeded-bugs-gptossq8-cycle2.trace.jsonl"
+}
