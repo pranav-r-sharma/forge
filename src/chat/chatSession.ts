@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { TraceWriter, tracePathFor } from '../agent/traceLog';
 import { OllamaClient } from '../ollama/client';
 import { ChatMessage } from '../ollama/types';
 import { PendingEditManager } from '../tools/editApply';
@@ -79,6 +80,11 @@ export class ChatSession {
   uiHistory: UiTranscriptEntry[] = [];
   modelHistory: ChatMessage[] = [];
   busy = false;
+  private traceWriter: TraceWriter | undefined;
+  /** Lazily created per-session trace sink (.forge/traces/<id>.jsonl) — see agent/traceLog.ts. */
+  private getTraceWriter(): TraceWriter {
+    return (this.traceWriter ??= new TraceWriter(tracePathFor(this.services.workspaceRoot.fsPath, this.id), this.id));
+  }
   private createdAt: string;
 
   private cts: vscode.CancellationTokenSource | undefined;
@@ -586,6 +592,7 @@ export class ChatSession {
           webSearch: cfg.webSearchEnabled ? (q) => this.services.webSearchService.search(q) : undefined,
           webFetch: cfg.webSearchEnabled ? (url, offset, length) => this.services.webFetchService.fetch(url, offset, length) : undefined,
           mcpTools: this.services.mcpManager.listToolSpecs(),
+          trace: cfg.traceEnabled ? this.getTraceWriter() : undefined,
           taskLedger: {
             addTasks: (tasks, parentTaskId) => {
               // Cost-aware task planning: each entry is either a bare string

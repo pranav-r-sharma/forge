@@ -1,3 +1,5 @@
+import { ReadCoverage } from './readCoverage';
+import { TraceWriter, TraceInput, argsHash, describeArgsForTrace } from './traceLog';
 import * as vscode from 'vscode';
 import { OllamaClient, keepAliveOpt } from '../ollama/client';
 import { ChatMessage, OllamaCallMetrics } from '../ollama/types';
@@ -41,6 +43,8 @@ export interface AgentDeps {
   mcpTools?: DynamicToolSpec[];
   /** See ToolExecContext.taskLedger's doc comment (agent/types.ts) — backs the plan_tasks/update_task tools and the automatic spawn_subagent ledger instrumentation below. Threaded straight through into toolCtx unchanged, and reused as-is for every nested sub-agent turn (same session, same ledger — see the spawnSubAgent closure passing `deps` through verbatim). */
   taskLedger: ToolExecContext['taskLedger'];
+  /** Optional per-iteration trace sink (v0.15.0 §1.1). Tracing is best-effort and can never affect a turn. */
+  trace?: TraceWriter;
   workspaceRoot: vscode.Uri;
   workspaceName: string;
 }
@@ -436,6 +440,37 @@ export async function runAgentTurn(
 
   let hallucinationNudges = 0;
 
+  // ---- trace + read-coverage (v0.15.0 §1.1/§1.2): measurement only, guarded so it can never break a turn ----
+  const turnId = Date.now().toString(36);
+  const readCoverage = new ReadCoverage();
+  let iterState = { iter: 0, promptChars: 0, promptMsgs: 0, staleReadStubs: 0, compacted: false, modelMs: 0, metrics: undefined as OllamaCallMetrics | undefined };
+  const traceIter = (extra: Partial<TraceInput>) => {
+    if (!deps.trace) return;
+    try {
+      const m = iterState.metrics;
+      deps.trace.write({
+        turnId,
+        iter: iterState.iter,
+        depth: subAgentDepth,
+        model,
+        mode: options.mode,
+        promptChars: iterState.promptChars,
+        promptMsgs: iterState.promptMsgs,
+        staleReadStubs: iterState.staleReadStubs,
+        compacted: iterState.compacted,
+        modelMs: iterState.modelMs,
+        promptTokens: m?.promptTokens,
+        evalTokens: m?.evalTokens,
+        tokPerSec: m?.tokensPerSecond,
+        promptEvalMs: m?.promptEvalDurationMs,
+        loadMs: m?.loadDurationMs,
+        ...extra,
+      });
+    } catch {
+      /* tracing must never affect the turn */
+    }
+  };
+
   for (let iteration = 0; iteration < maxIterations; iteration++) {
     if (cancellation.isCancellationRequested) {
       emit({ type: 'aborted' });
@@ -443,6 +478,16 @@ export async function runAgentTurn(
     }
 
     const promptView = await buildPromptView();
+    iterState = {
+      iter: iteration,
+      promptChars: promptView.reduce((n, m) => n + m.content.length, 0),
+      promptMsgs: promptView.length,
+      staleReadStubs: promptView.filter((m) => m.role === 'user' && m.content.startsWith('[Tool "read_file" result — superseded]')).length,
+      compacted: promptView.some((m) => m.content.startsWith('[Earlier conversation summary')),
+      modelMs: 0,
+      metrics: undefined,
+    };
+    const modelStartedAt = Date.now();
 
     emit({ type: 'thought_start' });
     // Item "brief messages indicating what the AI agent/model is doing":
@@ -460,7 +505,10 @@ export async function runAgentTurn(
         keepAliveMinutes: keepAliveOpt(cfg.keepAliveMinutes),
         format: structuredOutputEnabled ? STRUCTURED_RESPONSE_SCHEMA : undefined,
         onToken: (token) => emit({ type: 'token', text: token }),
-        onMetrics: (metrics) => emit({ type: 'metrics', metrics }),
+        onMetrics: (metrics) => {
+          iterState.metrics = metrics;
+          emit({ type: 'metrics', metrics });
+        },
       });
     } catch (err: any) {
       // A user-initiated Stop shows up here as an AbortError — that's not a
@@ -474,6 +522,8 @@ export async function runAgentTurn(
       emit({ type: 'error', message: err?.message || String(err) });
       return { messages, compactionCache };
     }
+
+    iterState.modelMs = Date.now() - modelStartedAt;
 
     if (cancellation.isCancellationRequested) {
       emit({ type: 'aborted' });
@@ -500,6 +550,7 @@ export async function runAgentTurn(
         pushMsg({ role: 'assistant', content: fullText });
         const nudge = `[System check] You said you changed ${unverified.map((p) => `\`${p}\``).join(', ')}, but no write_file call for ${unverified.length === 1 ? 'that path' : 'those paths'} appears anywhere in this conversation. If you meant to make that change, call write_file now. If it's already done and this check is wrong, just continue — but don't simply repeat the same claim without acting or correcting it.`;
         pushMsg({ role: 'user', content: nudge });
+        traceIter({ note: 'unverified-claim-nudge' });
         continue;
       }
       pushMsg({ role: 'assistant', content: fullText });
@@ -523,6 +574,7 @@ export async function runAgentTurn(
           pushMsg({ role: 'user', content: nudge });
           sawFailedVerify = true;
           writesSinceLastVerify = [];
+          traceIter({ note: 'verify-failed' });
           if (checkLoop(loopDetector, '__verify__', { command: options.verifyCommand }, false, verify.output, emit)) {
             return { messages, compactionCache };
           }
@@ -536,6 +588,7 @@ export async function runAgentTurn(
         writesSinceLastVerify = [];
       }
 
+      traceIter({ final: true });
       emit({ type: 'final', text: displayText.trim(), unverifiedClaims: unverified.length > 0 ? unverified : undefined });
       emit({ type: 'done' });
       return { messages, compactionCache };
@@ -601,6 +654,7 @@ export async function runAgentTurn(
       const errMsg = `Unknown tool "${call.tool}". Available tools: ${[...Object.keys(TOOL_MAP), ...mcpToolMap.keys()].join(', ')}.`;
       emit({ type: 'tool_result', callId, ok: false, summary: errMsg });
       pushMsg({ role: 'user', content: `[Tool error]\n${errMsg}` });
+      traceIter({ tool: call.tool, ok: false, note: 'unknown-or-disallowed-tool' });
       if (checkLoop(loopDetector, call.tool, call.args, false, errMsg, emit)) return { messages, compactionCache };
       continue;
     }
@@ -618,6 +672,7 @@ export async function runAgentTurn(
       }`;
       emit({ type: 'tool_result', callId, ok: false, summary: errMsg });
       pushMsg({ role: 'user', content: `[Tool error]\n${errMsg}` });
+      traceIter({ tool: call.tool, ok: false, note: 'unknown-or-disallowed-tool' });
       if (checkLoop(loopDetector, call.tool, call.args, false, errMsg, emit)) return { messages, compactionCache };
       continue;
     }
@@ -633,11 +688,13 @@ export async function runAgentTurn(
         const msg = `Blocked by .forge/hooks/${hookEvent}${hookResult.message ? `: ${hookResult.message}` : '.'}`;
         emit({ type: 'tool_result', callId, ok: false, summary: msg });
         pushMsg({ role: 'user', content: `[Tool error]\n${msg}` });
+        traceIter({ tool: call.tool, ok: false, note: 'blocked-by-hook' });
         if (checkLoop(loopDetector, call.tool, call.args, false, msg, emit)) return { messages, compactionCache };
         continue;
       }
     }
 
+    const toolStartedAt = Date.now();
     let result;
     try {
       result = await raceToolCallWithCancellation(resolvedSpec.run(call.args, toolCtx), cancellation);
@@ -706,6 +763,31 @@ export async function runAgentTurn(
     });
 
     pushMsg({ role: 'user', content: `[Tool "${call.tool}" result]\n${resultContentForModel}` });
+
+    // Trace + redundant-read detection (measurement only).
+    try {
+      let redundantRead: boolean | undefined;
+      const argPath: unknown = call.args?.path ?? call.args?.file;
+      if (call.tool === 'read_file' && result.ok && typeof argPath === 'string') {
+        const num = (v: unknown) => (v === undefined || v === null || v === '' ? undefined : Number(v));
+        redundantRead = readCoverage.note({ path: argPath, startLine: num(call.args.start_line), endLine: num(call.args.end_line) }).redundant;
+      } else if (call.tool === 'write_file' && result.ok && typeof argPath === 'string') {
+        readCoverage.invalidate(argPath);
+      } else if (call.tool === 'run_command') {
+        readCoverage.clear(); // a command may have changed any file
+      }
+      traceIter({
+        tool: call.tool,
+        argsHash: argsHash(call.args),
+        ...describeArgsForTrace(call.tool, call.args),
+        ok: result.ok,
+        toolMs: Date.now() - toolStartedAt,
+        resultChars: result.content.length,
+        redundantRead,
+      });
+    } catch {
+      /* never let tracing break a turn */
+    }
 
     if (checkLoop(loopDetector, call.tool, call.args, result.ok, result.content, emit)) {
       return { messages, compactionCache };

@@ -39,6 +39,8 @@ export interface ForgeConfig {
    * checkLoop() in agentLoop.ts.
    */
   loopDetectionEnabled: boolean;
+  /** Write a per-iteration JSONL trace to .forge/traces/ (sizes/timings/tokens only, no content) — see agent/traceLog.ts. */
+  traceEnabled: boolean;
 
   /**
    * Opt-in structured-output tool calling (see agent/structuredOutput.ts):
@@ -133,6 +135,7 @@ export function getConfig(): ForgeConfig {
     maxSubAgentDepth: cfg.get<number>('maxSubAgentDepth') ?? 2,
     showStatusMessages: cfg.get<boolean>('showStatusMessages') ?? true,
     loopDetectionEnabled: cfg.get<boolean>('loopDetection.enabled') ?? true,
+    traceEnabled: cfg.get<boolean>('trace.enabled') ?? true,
     structuredOutputEnabled: cfg.get<boolean>('structuredOutput.enabled') ?? false,
     planFirstEnabled: cfg.get<boolean>('planFirst.enabled') ?? false,
     selfCritiqueEnabled: cfg.get<boolean>('selfCritique.enabled') ?? false,

@@ -64,6 +64,10 @@ export interface OllamaCallMetrics {
   tokensPerSecond?: number;
   totalDurationMs?: number;
   loadDurationMs?: number;
+  /** Time the runtime spent evaluating the prompt (prefill), ms — with promptTokens gives prefill speed. */
+  promptEvalDurationMs?: number;
+  /** Time spent generating, ms. */
+  evalDurationMs?: number;
 }
 
 export interface EmbeddingResponse {

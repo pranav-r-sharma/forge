@@ -204,6 +204,11 @@
           "default": true,
           "description": "Detect and stop likely infinite loops in Auto/Outcome mode (repeating the same tool call with the same result over and over). Turn this off if it's incorrectly triggering on legitimately repetitive work. check_background_command is always exempt from loop detection, regardless of this setting."
         },
+        "forge.trace.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Write a per-iteration trace of each agent turn to .forge/traces/<session>.jsonl: prompt size, tokens the model actually evaluated, tool name/time/result size, repeated reads. Stores sizes, timings and a short hash of tool arguments only - never file contents or command output. Used to measure and improve performance."
+        },
         "forge.webSearch.enabled": {
           "type": "boolean",
           "default": false,
