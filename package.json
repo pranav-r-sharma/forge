@@ -322,6 +322,7 @@
     "compile": "tsc -p ./",
     "watch": "tsc -w -p ./",
     "typecheck": "tsc --noEmit -p ./",
+    "test": "node _devtools/run-tests.js",
     "package": "npm run compile && vsce package --no-dependencies --allow-missing-repository"
   },
   "devDependencies": {

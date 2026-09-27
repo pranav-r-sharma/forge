@@ -35,12 +35,13 @@ Then 0.15.0 items (see "Suggested release slicing" in the plan) once Phase 0 num
 - Created branch `v0.15.0-work`; added `CLAUDE.md` (standing rules + dev cycle) and this file.
 - Added Directive 6 / standing rule 6: **no sudo in anything that ships** (removed `powermetrics` from the product plan; GPU working-set limit is read, never changed). Audited the plan: only the `powermetrics` mention needed privileges.
 - Measured cold prefill cost vs prompt size on Ornith (6.6k→29 s, 13k→62 s, 26k→143 s, 52k→449 s) and wrote the KV/prompt-cache hot-warm-cold plan (§2.1c; owner idea).
+- **P0-1/P0-2 DONE:** runnable test setup — `_devtools/stubs/vscode` (fs-backed stub with `__setConfig/__resetConfig`), `_devtools/run-ts.js` (type-strip runner), `_devtools/run-tests.js` + `npm test`. Baseline: **23/23 files, 782 checks pass**, typecheck 0 errors, `npm run compile` OK. Fixed 2 real type errors in `chatSession.ts` (`Thenable.catch`) that the old sandbox shim hid — `tsc` did not build on a normal machine before. Dev deps installed with `npm install --no-save` (typescript 5.4, @types/node 20, @types/vscode 1.85; declared in package.json already).
 - **MLX installed** (project venv `_devtools/mlx-venv`, pinned in `_devtools/mlx-requirements.txt`: mlx 0.32.2, mlx-lm 0.31.3; `qwen3_5` supported; offline, no remote code). Raw smoke on Ornith: **4-bit prefill 455 tok/s @2.5k and 445 @16k, decode 18.2/16.4 tok/s, peak 6.6/7.0 GB; 8-bit prefill 386/384, decode 11.1/9.9, peak 11.0/11.4 GB**. vs Ollama Q4_K_M: MLX-4bit is ~1.4× faster prefill at 2.5k, ~2.1× at ~13–16k (Ollama slows with length, MLX did not in this range), and ~1.3× faster decode. Single runs — repeat for medians. Results: `_devtools/bench/results/2026-09-26-m5-32gb-ornith-mlx-raw-smoke.json`.
 - Verified the RAM number is wrong: `os.freemem()` says 7.7 GB free (harness would show 24.3 GB used) while macOS reports 61% free.
 - Ornith context-limit probe (Ollama Q4_K_M, memory-gated), **stopped by the owner after the 64k step**: full 262,144-token context loads at 15.1 GB (~35 KB/token), no swap growth; cold prefill of 6.6k/13k/26k/52k tokens took 29/62/143/449 s (231/212/183/116 tok/s), decode 13.8→10.5 tok/s; free memory dipped to 28% at 52k though Ollama reported 8.5 GB. Results: `_devtools/bench/results/2026-09-26-m5-32gb-ornith-ollama-q4km-ctx-limit.json`. The 128k+ fill steps were NOT run.
 
 ## Next
-**Wait for the owner to say "start".** Then begin **P0-1**: create the `vscode` stub module under `_devtools/runtime_test/` (find what the tests import from `vscode`: `grep -h "vscode\." _devtools/runtime_test/*.ts | sort | uniq -c | sort -rn`), and run `npx ts-node _devtools/runtime_test/test_v14_indent_hardening.ts` with `NODE_PATH` set.
+**P0-3:** hardware readout, memory. Create `src/util/hwSampler.ts` (pure parsers + thin exec layer) that reads `sysctl -n hw.memsize`, `sysctl -n kern.memorystatus_level`, `sysctl -n vm.swapusage` and `vm_stat` (page size parsed from its header line). Write fixture-based tests in `_devtools/runtime_test/test_v15_hwsampler.ts` (16 KB-page fixture, malformed fixture → `n/a`). Run `npm test`, commit.
 
 ## Owner decisions (2026-09-26)
 - Start given. MLX install approved (project venv, pinned, offline, no remote code, no sudo).
@@ -55,4 +56,4 @@ Then 0.15.0 items (see "Suggested release slicing" in the plan) once Phase 0 num
 ## Files touched (this session)
 `v0.15.0 suggestions.md`, `CLAUDE.md`, `PROGRESS.md`, `_devtools/bench/*` (probe scripts).
 
-**Last updated:** 2026-09-26 21:50
+**Last updated:** 2026-09-26 22:05

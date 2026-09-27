@@ -1,0 +1,38 @@
+'use strict';
+// Runs every _devtools/runtime_test/test_*.ts (or those matching an optional substring) in its own Node process, in parallel-limited fashion,
+// and prints a per-file PASS/FAIL table plus totals. Exit code 1 if any file fails.
+// usage: node _devtools/run-tests.js [filter] [--timeout=SECONDS]
+const { spawn } = require('child_process');
+const fs = require('fs');
+const path = require('path');
+const dir = path.join(__dirname, 'runtime_test');
+const filter = process.argv.slice(2).find((a) => !a.startsWith('--'));
+const timeoutS = Number((process.argv.find((a) => a.startsWith('--timeout=')) || '--timeout=180').split('=')[1]);
+const files = fs.readdirSync(dir).filter((f) => /^test.*\.ts$/.test(f) && (!filter || f.includes(filter))).sort();
+const results = [];
+function runOne(f) {
+  return new Promise((resolve) => {
+    const t0 = Date.now();
+    const p = spawn(process.execPath, [path.join(__dirname, 'run-ts.js'), path.join(dir, f)], { cwd: dir, env: process.env });
+    let out = '';
+    const timer = setTimeout(() => { out += '\n[runner] TIMEOUT\n'; p.kill('SIGKILL'); }, timeoutS * 1000);
+    p.stdout.on('data', (d) => (out += d)); p.stderr.on('data', (d) => (out += d));
+    p.on('close', (code) => {
+      clearTimeout(timer);
+      const m = /(\d+) passed, (\d+) failed/.exec(out);
+      resolve({ file: f, code, secs: ((Date.now() - t0) / 1000).toFixed(1), passed: m ? +m[1] : null, failed: m ? +m[2] : null, out });
+    });
+  });
+}
+(async () => {
+  const queue = [...files]; const workers = Array.from({ length: 4 }, async () => { while (queue.length) { const f = queue.shift(); results.push(await runOne(f)); } });
+  await Promise.all(workers);
+  results.sort((a, b) => a.file.localeCompare(b.file));
+  let ok = 0, bad = 0, tp = 0, tf = 0;
+  for (const r of results) {
+    const pass = r.code === 0; pass ? ok++ : bad++; tp += r.passed || 0; tf += r.failed || 0;
+    console.log(`${pass ? 'PASS' : 'FAIL'}  ${r.file.padEnd(38)} ${String(r.passed ?? '?').padStart(4)} passed ${String(r.failed ?? '?').padStart(3)} failed  ${r.secs}s`);
+  }
+  console.log(`\n${ok}/${results.length} files passed; ${tp} checks passed, ${tf} failed.`);
+  if (bad) { for (const r of results.filter((x) => x.code !== 0)) { console.log(`\n--- ${r.file} (exit ${r.code}) — last lines ---\n` + r.out.trim().split('\n').slice(-8).join('\n')); } process.exit(1); }
+})();

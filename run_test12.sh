@@ -1,6 +1,4 @@
 #!/bin/bash
-cd /root/work/forge/_devtools/runtime_test
-export NODE_PATH="$(pwd)/node_modules"
-export TS_NODE_TRANSPILE_ONLY=true
-export TS_NODE_COMPILER_OPTIONS='{"ignoreDeprecations":"6.0"}'
-npx ts-node test_v12_indent.ts
+# Runs one test file (default: the 0.12.0 indentation test). Run the whole suite with `npm test`.
+cd "$(dirname "$0")"
+node _devtools/run-ts.js "_devtools/runtime_test/${1:-test_v12_indent.ts}"
