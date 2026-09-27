@@ -1,0 +1,41 @@
+{
+  "task": "t01-fix-bug",
+  "provider": "mlx",
+  "model": "773a7da77e569019bb0fd17a554b263738d669a3",
+  "thinking": "auto",
+  "ctx": 32768,
+  "appendOnly": true,
+  "maxIters": 15,
+  "timeoutS": 300,
+  "startedAt": "2026-09-27T19:19:44.655Z",
+  "hardware": "Apple M5, 32 GB",
+  "serverReadyS": 2.044,
+  "wallS": 13.562,
+  "checkExit": 1,
+  "checkOutput": "AssertionError: 13.5 != 31.5\n\n----------------------------------------------------------------------\nRan 4 tests in 0.000s\n\nFAILED (failures=2)",
+  "protectedTouched": [],
+  "filesChanged": [],
+  "pass": false,
+  "finalText": "[System] stopped: could not resend search_code as a forge_action block after 3 attempts",
+  "iterations": 5,
+  "tools": {
+    "run_command": 1
+  },
+  "toolFailures": 1,
+  "redundantReads": 0,
+  "reads": 0,
+  "viewEvents": 0,
+  "modelS": 13.51,
+  "toolS": 0.05,
+  "tokensEvaluated": 4325,
+  "tokensCached": 14876,
+  "cacheHitPct": 77.5,
+  "evalTokens": 288,
+  "promptCharsMax": 18885,
+  "hw": {
+    "minAvailableGB": 10.2,
+    "maxSwapGB": 0.37,
+    "gpuPeakPct": 100
+  },
+  "tracePath": "_devtools/e2e/results/smoke3-gptoss-q8-t01.trace.jsonl"
+}
