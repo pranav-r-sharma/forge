@@ -100,7 +100,16 @@ export async function listDirTool(args: Record<string, any>, ctx: ToolExecContex
 
 /** Result of applying one search/replace to a text: the new text plus the non-blocking advisories it produced, or a failure to report. */
 type ApplyResult =
-  | { ok: true; newText: string; fuzzyMatchAdvisory?: string; reindentAdvisory?: string; indentAdvisory?: string; info?: string }
+  | {
+      ok: true;
+      newText: string;
+      fuzzyMatchAdvisory?: string;
+      reindentAdvisory?: string;
+      indentAdvisory?: string;
+      info?: string;
+      /** Inclusive 1-based line range in the file that "search" matched (for no-change diagnostics). */
+      matchedLineRange?: { start: number; end: number };
+    }
   | { ok: false; content: string };
 
 /** Applies ONE exact-or-fuzzy search/replace to `existing`. This is the logic write_file always had for {search, replace}, extracted so several edits can share it. */
@@ -111,6 +120,7 @@ function applySearchReplace(existing: string, search: string, replace: string, r
   let fuzzyMatchAdvisory: string | undefined;
   const occurrences = countOccurrences(existing, search);
   let reindent: ReindentResult;
+  let matchedLineRange: { start: number; end: number } | undefined;
   if (occurrences === 0) {
     // Local models are weaker than frontier ones at reproducing a file's
     // exact whitespace/indentation byte-for-byte, and that's exactly the
@@ -133,6 +143,8 @@ function applySearchReplace(existing: string, search: string, replace: string, r
         reindent = reindentReplacement(existing, fuzzyMatches[0].startLine, true, replace);
       }
       newText = applyFuzzyMatch(existing, fuzzyMatches[0], reindent.text);
+      const m = fuzzyMatches[0];
+      matchedLineRange = { start: m.startLine + 1, end: m.endLine };
       fuzzyMatchAdvisory =
         'Note: "search" did not match this file\'s content byte-for-byte, but matched once the whitespace/indentation on each line was normalized, so the edit was applied at that location anyway. Double-check the resulting indentation in the diff before treating this as done — copy it from the surrounding lines if it looks off.';
     } else if (fuzzyMatches.length > 1) {
@@ -182,6 +194,7 @@ function applySearchReplace(existing: string, search: string, replace: string, r
       reindent = reindentReplacement(existing, matchStartLineIndex, matchStartsAtLineStart, replace, anchorIndentAlreadyPresent);
       newText = existing.replace(search, () => reindent.text);
     }
+    matchedLineRange = { start: matchStartLineIndex + 1, end: matchEndLine };
   }
   // Item "whitespace and indentation issues when doing targeted writes to
   // existing files": reindentReplacement() above already does the real
@@ -207,7 +220,7 @@ function applySearchReplace(existing: string, search: string, replace: string, r
       ? `Note: most of "replace"'s indentation didn't match this file's indent style, so it was automatically remapped — EXCEPT line(s) ${reindent.partialLines.join(', ')} within "replace", whose own indentation was too inconsistent to confidently reinterpret and were left exactly as you wrote them. Double-check those specific line(s) in the diff before treating this edit as done.`
       : 'Note: the indentation in "replace" didn\'t match this file\'s indent style, so it was automatically remapped (same relative nesting, this file\'s tabs/spaces and width) before writing — worth a glance at the diff to confirm it landed the way you intended.';
   }
-  return { ok: true, newText, fuzzyMatchAdvisory, reindentAdvisory, indentAdvisory };
+  return { ok: true, newText, fuzzyMatchAdvisory, reindentAdvisory, indentAdvisory, matchedLineRange };
 }
 
 /** Replaces EVERY exact occurrence of `search` (e.g. renaming a symbol within one file). Exact text only — no fuzzy matching, no re-indentation. */
@@ -218,6 +231,28 @@ function applyReplaceAll(existing: string, search: string, replace: string, relP
     return { ok: false, content: `The "search" text was not found in ${relPath}. With "all": true it must match the file's current text exactly (every occurrence is replaced, so no whitespace-tolerant matching is used).` };
   }
   return { ok: true, newText: existing.split(search).join(replace), info: `Replaced ${count} occurrence${count === 1 ? '' : 's'} of the search text.` };
+}
+
+function noChangeSearchReplaceResult(
+  relPath: string,
+  search: string,
+  replace: string,
+  matchedLineRange?: { start: number; end: number },
+): ToolResult {
+  if (search === replace) {
+    return {
+      ok: true,
+      content: `No changes — "search" and "replace" are identical, so there is nothing to change in ${relPath}.`,
+    };
+  }
+  const matched =
+    matchedLineRange !== undefined
+      ? `your "search" matched lines ${matchedLineRange.start}-${matchedLineRange.end}, but `
+      : '';
+  return {
+    ok: false,
+    content: `write_file made no change to ${relPath}: ${matched}after applying "replace" the file is byte-identical (the edit only differed in whitespace the tool could not apply). Resend with "content" for the whole file, or a search/replace whose lines differ in visible text.`,
+  };
 }
 
 export async function writeFileTool(args: Record<string, any>, ctx: ToolExecContext): Promise<ToolResult> {
@@ -256,6 +291,7 @@ export async function writeFileTool(args: Record<string, any>, ctx: ToolExecCont
   const MAX_EDITS_PER_CALL = 50;
   const hasEdits = Array.isArray(args.edits) && args.edits.length > 0;
   const extraNotes: string[] = [];
+  let srNoChange: { search: string; replace: string; matchedLineRange?: { start: number; end: number } } | undefined;
 
   if (hasEdits) {
     // Several edits to ONE file in one call (measured: renaming a symbol in 5 files took 16 single-edit calls and hit the step cap). Applied in order
@@ -278,6 +314,7 @@ export async function writeFileTool(args: Record<string, any>, ctx: ToolExecCont
         return { ok: false, content: `Edit ${i + 1} of ${edits.length} could not be applied, so NONE of the ${edits.length} edits were applied to ${relPath} (the file is unchanged). ${r.content}` };
       }
       text = r.newText;
+      srNoChange = { search: spec.search, replace: spec.replace, matchedLineRange: r.matchedLineRange };
       for (const note of [r.info, r.fuzzyMatchAdvisory, r.reindentAdvisory, r.indentAdvisory]) if (note) extraNotes.push(`[edit ${i + 1}] ${note}`);
     }
     newText = text;
@@ -295,6 +332,7 @@ export async function writeFileTool(args: Record<string, any>, ctx: ToolExecCont
     reindentAdvisory = r.reindentAdvisory;
     indentAdvisory = r.indentAdvisory;
     if (r.info) extraNotes.push(r.info);
+    srNoChange = { search: args.search, replace: args.replace, matchedLineRange: r.matchedLineRange };
   } else if (typeof args.content === 'string') {
     newText = args.content;
     kind = existing === undefined ? 'create' : 'modify';
@@ -306,6 +344,9 @@ export async function writeFileTool(args: Record<string, any>, ctx: ToolExecCont
   }
 
   if (existing !== undefined && newText === existing) {
+    if (srNoChange) {
+      return noChangeSearchReplaceResult(relPath, srNoChange.search, srNoChange.replace, srNoChange.matchedLineRange);
+    }
     return { ok: true, content: `No changes — ${relPath} already matches the requested content.` };
   }
 
@@ -358,23 +399,10 @@ function searchLinesNormalizedEqual(search: string, replace: string): boolean {
 
 /**
  * Whitespace-tolerant match with the same normalized line content as "search" but different
- * indentation in "replace" — apply the model's relative/absolute indents instead of re-mapping
- * onto the file (which would round-trip back to the old bytes and falsely report "No changes").
+ * indentation in "replace" — apply replace lines literally (the matched region is whole lines).
  */
-function buildFuzzyIndentationOnlyReplacement(existing: string, match: FuzzyLineMatch, replace: string): string {
-  const existingLines = existing.split('\n');
-  const replaceLines = replace.split('\n');
-  const anchorLine = existingLines[match.startLine] ?? '';
-  const baseIndent = (LEADING_WS_RE.exec(anchorLine) ?? [''])[0];
-  return replaceLines
-    .map((line, i) => {
-      if (line.trim() === '') return '';
-      const ws = (LEADING_WS_RE.exec(line) ?? [''])[0];
-      const content = line.slice(ws.length);
-      if (i === 0) return baseIndent + content;
-      return line;
-    })
-    .join('\n');
+function buildFuzzyIndentationOnlyReplacement(_existing: string, _match: FuzzyLineMatch, replace: string): string {
+  return replace;
 }
 
 function lineNumberAtIndex(text: string, index: number): number {

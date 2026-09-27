@@ -257,11 +257,11 @@ async function testIndentationOnlyEditWhenSearchMatchesAsSubstring() {
   const file = 'def f():\n        x = 1\n    y = 2\n';
   const { state, ctx } = fileCtx(file);
   const r = await writeFileTool(
-    { path: 'x.py', search: 'x = 1\n    y = 2', replace: 'x = 1\n        y = 2' },
+    { path: 'x.py', search: '        x = 1\n    y = 2', replace: '        x = 1\n        y = 2' },
     ctx,
   );
   ok(r.ok && !/No changes/.test(r.content), 'indentation-only replace applies instead of falsely reporting no change');
-  ok(state.text === 'def f():\n        x = 1\n        y = 2\n', 'body line gets the replace indentation verbatim after the anchored header');
+  ok(state.text === 'def f():\n        x = 1\n        y = 2\n', 'later-line indent change uses replace lines literally');
   const { execFileSync } = await import('child_process');
   let compiles = false;
   try {
@@ -271,6 +271,41 @@ async function testIndentationOnlyEditWhenSearchMatchesAsSubstring() {
     compiles = false;
   }
   ok(compiles, 'resulting file parses as valid Python');
+}
+
+async function testIndentOnlyFixesBadIndentOnFirstMatchedLineExact() {
+  const file = 'def f():\n        x = 1\n    y = 2\n';
+  const { state, ctx } = fileCtx(file);
+  const search = '        x = 1\n    y = 2';
+  const replace = '    x = 1\n    y = 2';
+  const r = await writeFileTool({ path: 'x.py', search, replace }, ctx);
+  ok(r.ok && !/No changes/.test(r.content), 'exact match: first-line indent fix is applied, not reported as no change');
+  ok(state.text === 'def f():\n    x = 1\n    y = 2\n', 'file gets the model replace indentation on every matched line');
+}
+
+async function testIndentOnlyFixesBadIndentOnFirstMatchedLineFuzzy() {
+  const file = 'def f():\n        x = 1\n    y = 2\n';
+  const { state, ctx } = fileCtx(file);
+  const search = 'x = 1\n    y = 2';
+  const replace = '    x = 1\n    y = 2';
+  const r = await writeFileTool({ path: 'x.py', search, replace }, ctx);
+  ok(r.ok && !/No changes/.test(r.content), 'fuzzy match: first-line indent fix is applied');
+  ok(state.text === 'def f():\n    x = 1\n    y = 2\n', 'fuzzy indent-only edit uses replace lines literally');
+}
+
+async function testSearchReplaceIdenticalMessage() {
+  const { ctx } = fileCtx('a = 1\n');
+  const r = await writeFileTool({ path: 'x.py', search: 'a = 1', replace: 'a = 1' }, ctx);
+  ok(r.ok && /"search" and "replace" are identical/.test(r.content), 'search === replace yields the explicit identical message');
+}
+
+async function testCycle5IdenticalFourLineBlockMessage() {
+  const block =
+    '    # temporary db in a temp dir\n    import tempfile, shutil\n    tmp = tempfile.mkdtemp()\n    tmp_db = Path(tmp) / "demo.json"';
+  const file = `def demo():\n${block}\n    pass\n`;
+  const { ctx } = fileCtx(file);
+  const r = await writeFileTool({ path: 'inventory/cli.py', search: block, replace: block }, ctx);
+  ok(r.ok && /"search" and "replace" are identical/.test(r.content), 'cycle-5 style identical 4-line block gets the identical message, not "already matches"');
 }
 
 async function testAmbiguousSearchNamesLineNumbers() {
@@ -291,6 +326,10 @@ async function main() {
   await testWriteResultCarriesEchoAndWarnings();
   await testReplayOfTheFailingRun();
   await testIndentationOnlyEditWhenSearchMatchesAsSubstring();
+  await testIndentOnlyFixesBadIndentOnFirstMatchedLineExact();
+  await testIndentOnlyFixesBadIndentOnFirstMatchedLineFuzzy();
+  await testSearchReplaceIdenticalMessage();
+  await testCycle5IdenticalFourLineBlockMessage();
   await testAmbiguousSearchNamesLineNumbers();
   await testMultiEdit();
   await testReplaceAll();
