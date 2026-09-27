@@ -1,0 +1,111 @@
+import * as fs from 'fs';
+import * as path from 'path';
+import { ChatMessage } from '../../src/ollama/types';
+import {
+  collectTurnToolFacts,
+  commandWasExecuted,
+  evaluateClaimedCommands,
+  extractClaimedCommands,
+  finalAnswerMakesUniversalFileClaim,
+  findPerFileCommandGaps,
+  findUnrunClaimedCommands,
+} from '../../src/agent/claimChecker';
+
+let passed = 0;
+let failed = 0;
+function ok(cond: boolean, label: string) {
+  if (cond) {
+    passed++;
+    console.log(`  ok: ${label}`);
+  } else {
+    failed++;
+    console.error(`  FAIL: ${label}`);
+  }
+}
+
+// ---------- claimed commands in final answers ----------
+{
+  const cmds = extractClaimedCommands('Ran `python3 -m py_compile main.py` and `npm test`.');
+  ok(cmds.includes('python3 -m py_compile main.py') && cmds.includes('npm test'), 'extractClaimedCommands finds shell-like backtick spans');
+  ok(!extractClaimedCommands('See `src/foo.py` for details.').length, 'extractClaimedCommands ignores non-shell backticks');
+
+  ok(commandWasExecuted('python3 -m py_compile', ['python3 -m py_compile tracker/models.py']), 'prefix match: py_compile template vs concrete run');
+  ok(commandWasExecuted('python3 main.py demo', ['python3 main.py demo']), 'exact command match');
+
+  const unrun = findUnrunClaimedCommands('I ran `python3 -m unittest` successfully.', ['python3 main.py demo']);
+  ok(unrun.length === 1 && unrun[0] === 'python3 -m unittest', 'findUnrunClaimedCommands flags a cited command that never ran');
+
+  ok(finalAnswerMakesUniversalFileClaim('All five files compile and run correctly.'), 'universal claim: five files');
+  ok(!finalAnswerMakesUniversalFileClaim('main.py works; tracker modules compile.'), 'no universal claim without trigger words');
+
+  const gaps = findPerFileCommandGaps(
+    [
+      'python3 -m py_compile tracker/models.py',
+      'python3 -m py_compile tracker/storage.py',
+      'python3 -m py_compile tracker/reports.py',
+      'python3 -m py_compile tracker/cli.py',
+    ],
+    ['tracker/models.py', 'tracker/storage.py', 'tracker/reports.py', 'tracker/cli.py', 'main.py'],
+  );
+  ok(
+    gaps.some((g) => g.uncovered.includes('main.py')),
+    'per-file gap: main.py never got py_compile while siblings did',
+  );
+}
+
+// ---------- t08 cycle 2/3 fixtures ----------
+{
+  const repoRoot = path.join(__dirname, '..', '..');
+  for (const cycle of ['cycle2', 'cycle3'] as const) {
+    const file = path.join(repoRoot, '_devtools', 'e2e', 'results', `t08-five-file-build-gptossq8-${cycle}.messages.json`);
+    const messages = JSON.parse(fs.readFileSync(file, 'utf8')) as ChatMessage[];
+    const final = messages.filter((m) => m.role === 'assistant').pop()?.content ?? '';
+    const { executedCommands, filesWritten } = collectTurnToolFacts(messages);
+    const check = evaluateClaimedCommands(final, executedCommands, filesWritten);
+    ok(
+      check.perFileGaps.some((g) => g.uncovered.includes('main.py')),
+      `t08 ${cycle}: per-file check names main.py`,
+    );
+    ok(check.unrunCommands.length === 0, `t08 ${cycle}: no falsely cited inline commands in final answer`);
+  }
+
+  const cycle3Path = path.join(repoRoot, '_devtools', 'e2e', 'results', 't08-five-file-build-gptossq8-cycle3.messages.json');
+  const cycle3 = JSON.parse(fs.readFileSync(cycle3Path, 'utf8')) as ChatMessage[];
+  const final3 = cycle3.filter((m) => m.role === 'assistant').pop()?.content ?? '';
+  const facts3 = collectTurnToolFacts(cycle3);
+  const msg3 = evaluateClaimedCommands(final3, facts3.executedCommands, facts3.filesWritten).nudgeMessage;
+  ok(msg3.includes('main.py'), 'cycle-3 nudge names main.py');
+  ok(msg3.includes('python3 -m py_compile'), 'cycle-3 nudge names the per-file command template');
+}
+
+// ---------- no nudge when everything ran ----------
+{
+  const executed = ['python3 -m py_compile a.py', 'python3 -m py_compile b.py'];
+  const written = ['a.py', 'b.py'];
+  const check = evaluateClaimedCommands('All two files compile — ran `python3 -m py_compile` on each.', executed, written);
+  ok(check.unrunCommands.length === 0 && check.perFileGaps.length === 0, 'no issues when every same-ext file got the per-file command');
+}
+
+// ---------- B silent without universal wording ----------
+{
+  const check = evaluateClaimedCommands(
+    'tracker/models.py compiles.',
+    ['python3 -m py_compile tracker/models.py'],
+    ['tracker/models.py', 'main.py'],
+  );
+  ok(check.perFileGaps.length === 0, 'per-file gaps not reported without universal claim wording');
+}
+
+// ---------- cap / markers ----------
+{
+  const check = evaluateClaimedCommands(
+    'All five files compile. Ran `python3 -m py_compile` on each.',
+    ['python3 -m py_compile tracker/a.py'],
+    ['tracker/a.py', 'main.py'],
+  );
+  ok(check.unverifiedMarkers.some((m) => m.includes('main.py')), 'leftover markers list uncovered files for the final event');
+}
+
+console.log(`\n${passed} passed, ${failed} failed.`);
+if (failed > 0) process.exit(1);
+console.log('All claimed-command checker tests passed.');

@@ -22,7 +22,7 @@ import { logger } from '../util/logger';
 import { resolveWorkspacePath, toRelative } from '../util/paths';
 import { CompactionCache, PromptViewState, hardCapOversizedMessages, maybeCompact, pruneStaleReadsView, updateCharsPerToken, updatePromptView, DEFAULT_CHARS_PER_TOKEN } from './contextManager';
 import { LoopDetector, signatureForStep } from './loopDetector';
-import { findUnverifiedClaims } from './claimChecker';
+import { evaluateClaimedCommands, findUnverifiedClaims } from './claimChecker';
 import { runVerifyCommand } from './verifyCheck';
 import { detectSuspiciousVerifyBypass } from './gamingDetection';
 import { BackgroundProcessManager } from '../tools/backgroundProcessManager';
@@ -509,6 +509,9 @@ export async function runAgentTurn(
   }
 
   let hallucinationNudges = 0;
+  let claimedCommandNudges = 0;
+  let commandsExecutedThisTurn: string[] = [];
+  let filesWrittenThisTurn: string[] = [];
   let truncationNudges = 0;
   let pendingActionTarget: PendingActionTarget | undefined;
   /** Consecutive failed run_command results (tests/build still failing) — drives forge.thinking='auto': the agent is stuck, so let the model think. */
@@ -713,6 +716,20 @@ export async function runAgentTurn(
         traceIter({ note: 'unverified-claim-nudge' });
         continue;
       }
+      const claimedCmd = evaluateClaimedCommands(displayText, commandsExecutedThisTurn, filesWrittenThisTurn);
+      const claimedCmdIssues =
+        claimedCmd.unrunCommands.length > 0 || claimedCmd.perFileGaps.length > 0;
+      if (claimedCmdIssues && claimedCommandNudges < 1) {
+        claimedCommandNudges++;
+        pushAssistant(fullText);
+        pushMsg({ role: 'user', content: claimedCmd.nudgeMessage });
+        traceIter({ note: 'claimed-command-nudge' });
+        continue;
+      }
+      const unverifiedAll = [
+        ...unverified,
+        ...(claimedCmdIssues ? claimedCmd.unverifiedMarkers : []),
+      ];
       pushAssistant(fullText);
 
       // "Definition of done": a plain-text final answer isn't the actual end
@@ -750,7 +767,11 @@ export async function runAgentTurn(
 
       traceIter({ final: true });
       pendingActionTarget = undefined;
-      emit({ type: 'final', text: displayText.trim(), unverifiedClaims: unverified.length > 0 ? unverified : undefined });
+      emit({
+        type: 'final',
+        text: displayText.trim(),
+        unverifiedClaims: unverifiedAll.length > 0 ? unverifiedAll : undefined,
+      });
       emit({ type: 'done' });
       return { messages, compactionCache };
     }
@@ -905,8 +926,11 @@ export async function runAgentTurn(
       const path = typeof call.args?.path === 'string' ? call.args.path : '';
       const text = [call.args?.content, call.args?.search, call.args?.replace].filter((v) => typeof v === 'string').join('\n');
       writesSinceLastVerify.push({ path, text });
-    } else if (resolvedSpec.name === 'run_command' && result.ok) {
-      deps.hooks.run('after-command', { args: call.args }).catch(() => {});
+      if (path) filesWrittenThisTurn.push(path);
+    } else if (resolvedSpec.name === 'run_command') {
+      const cmd = typeof call.args?.command === 'string' ? call.args.command : '';
+      if (cmd) commandsExecutedThisTurn.push(cmd);
+      if (result.ok) deps.hooks.run('after-command', { args: call.args }).catch(() => {});
     }
 
     // Optional self-critique pass (forge.selfCritique.enabled, off by
