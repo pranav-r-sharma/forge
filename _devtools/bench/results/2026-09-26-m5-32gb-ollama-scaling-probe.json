@@ -1,0 +1,160 @@
+{
+  "ollama": {
+    "version": "0.34.3"
+  },
+  "num_ctx": 4096,
+  "models": [
+    {
+      "model": "phi4-mini-reasoning",
+      "kind": "dense",
+      "params": "3.8B",
+      "quant": "Q4_K_M",
+      "free_before": 89,
+      "cold_load_s": 2.07,
+      "resident_gb": 3.75,
+      "resident_vram_gb": 3.75,
+      "free_after_load": 78,
+      "decode_tps": 25.62,
+      "prefill_tps": 66762.2,
+      "long_prompt_tokens": 2050,
+      "decode_runs": [
+        25.62,
+        26.07,
+        25.55
+      ],
+      "prefill_runs": [
+        736.6,
+        67116.3,
+        66762.2
+      ],
+      "min_free_pct_seen": 78
+    },
+    {
+      "model": "ornith:9b",
+      "kind": "dense",
+      "params": "9.0B",
+      "quant": "Q4_K_M",
+      "free_before": 89,
+      "cold_load_s": 2.81,
+      "resident_gb": 5.91,
+      "resident_vram_gb": 5.91,
+      "free_after_load": 72,
+      "decode_tps": 14.12,
+      "prefill_tps": 19174.5,
+      "long_prompt_tokens": 2050,
+      "decode_runs": [
+        14.12,
+        14.18,
+        13.94
+      ],
+      "prefill_runs": [
+        320.9,
+        19174.5,
+        19871.5
+      ],
+      "min_free_pct_seen": 72
+    },
+    {
+      "model": "phi4-reasoning",
+      "kind": "dense",
+      "params": "14.7B",
+      "quant": "Q4_K_M",
+      "free_before": 90,
+      "cold_load_s": 5.31,
+      "resident_gb": 12.09,
+      "resident_vram_gb": 12.09,
+      "free_after_load": 54,
+      "decode_tps": 7.15,
+      "prefill_tps": 13383.0,
+      "long_prompt_tokens": 2050,
+      "decode_runs": [
+        7.41,
+        6.76,
+        7.15
+      ],
+      "prefill_runs": [
+        152.0,
+        20579.6,
+        13383.0
+      ],
+      "min_free_pct_seen": 54
+    },
+    {
+      "model": "gpt-oss:20b",
+      "kind": "moe",
+      "params": "20.9B",
+      "quant": "MXFP4",
+      "free_before": 91,
+      "cold_load_s": 6.86,
+      "resident_gb": 12.73,
+      "resident_vram_gb": 12.73,
+      "free_after_load": 50,
+      "decode_tps": 20.76,
+      "prefill_tps": 20257.5,
+      "long_prompt_tokens": 2050,
+      "decode_runs": [
+        20.98,
+        20.73,
+        20.76
+      ],
+      "prefill_runs": [
+        449.4,
+        20257.5,
+        23440.4
+      ],
+      "min_free_pct_seen": 50
+    },
+    {
+      "model": "devstral:24b",
+      "kind": "dense",
+      "params": "23.6B",
+      "quant": "Q4_K_M",
+      "free_before": 89,
+      "cold_load_s": 7.09,
+      "resident_gb": 14.9,
+      "resident_vram_gb": 14.9,
+      "free_after_load": 44,
+      "decode_tps": 5.37,
+      "prefill_tps": 11940.3,
+      "long_prompt_tokens": 2051,
+      "decode_runs": [
+        5.37,
+        5.37,
+        5.3
+      ],
+      "prefill_runs": [
+        87.1,
+        11940.3,
+        14170.2
+      ],
+      "min_free_pct_seen": 44
+    },
+    {
+      "model": "qwen3-coder:30b",
+      "kind": "moe",
+      "params": "30.5B",
+      "quant": "Q4_K_M",
+      "free_before": 60,
+      "cold_load_s": 9.6,
+      "resident_gb": 18.86,
+      "resident_vram_gb": 18.86,
+      "free_after_load": 27,
+      "decode_tps": 31.76,
+      "prefill_tps": 63910.7,
+      "long_prompt_tokens": 2050,
+      "decode_runs": [
+        31.76,
+        31.88,
+        31.6
+      ],
+      "prefill_runs": [
+        427.1,
+        74757.5,
+        63910.7
+      ],
+      "min_free_pct_seen": 27
+    }
+  ],
+  "swap_start_mb": 1068.5,
+  "swap_end_mb": 1060.5
+}
