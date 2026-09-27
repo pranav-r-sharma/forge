@@ -93,7 +93,34 @@ Once resumed: reassess whether more read/search-tool work (ripgrep-class `search
 - ~~Max stage model~~ — answered (Ornith 30B-class + Qwen 3.8 27B). Exact model IDs/quantizations to confirm when we get to the Max stage.
 - **Ollama 8-bit Ornith tag:** does one exist, and may I download it? (Optional arm O-Q8.)
 
-## Files touched (this session)
-`v0.15.0 suggestions.md`, `CLAUDE.md`, `PROGRESS.md`, `_devtools/bench/*` (probe scripts).
+## Final acceptance test — run and root-caused, 2026-09-27 (not fixed — reporting only, per the owner's explicit ask)
 
-**Last updated:** 2026-09-27 (P0-15 complete; owner then chose MLX as the live default over Ollama — package.json + real user settings updated; no further benchmarking until asked)
+**Setup:** `t07-build-from-scratch` (new fixture, see entry above), MLX-4bit/Ornith-1.5-9B, `thinking=auto terse=true maxIters=40 timeoutS=600`, headless `run_task.ts --keep`. Two runs, same config, both closely observed via the trace + full message transcript (`_devtools/e2e/results/t07-build-from-scratch-mlx4bit-r{1,2}.json/.trace.jsonl/.messages.json`; kept workspaces under `$TMPDIR/forge-e2e-t07-build-from-scratch-*`).
+
+**Result: FAIL both runs, identically — 3 iterations, ~37.4s, only `contacts/__init__.py` (empty) ever written.** Not noise: r1 and r2 are byte-for-byte identical at the point of failure (727 eval tokens, `finishReason: "stop"`, same cut-off character in the model's output) — this is a deterministic harness bug at temp 0, not model flakiness.
+
+**Root cause (traced through `src/agent/agentLoop.ts` and `src/agent/toolProtocol.ts`):**
+1. Step 3 asks the model for the big first real file, `contacts/storage.py` (~90 lines). The model starts a normal ` ```forge_action ` JSON tool call, writes what would be a complete, correct file (readable in the transcript — real code, correctly JSON-escaped throughout, verified via `repr()`: 78 real `\n` escapes, only 1 literal newline byte).
+2. Right after the last line of the class body, the model emits a *closing* ` ``` ` — as if ending an ordinary markdown code block — **without ever closing the JSON `content` string, the `args` object, or the outer object**, then stops generating. `finishReason` is `"stop"` (the model's own end-of-turn choice), **not `"length"`** — this is not a token-budget cutoff, the model just loses track of being inside a JSON string once the payload gets long and reverts to its normal "end of code block" habit.
+3. `toolProtocol.ts`'s `parseToolCall` finds the two sets of triple-backticks and extracts the text between them as a JSON candidate, but it's syntactically invalid (unterminated string) → `JSON.parse` throws → caught → returns `null`. The brace-balanced fallback (`findBalancedJsonWithTool`) also returns nothing, because its own string-tracking never sees a closing quote either.
+4. `agentLoop.ts`'s existing safety net for exactly this shape of problem (the "cut off by output-length limit" continue-nudge, added in P0-14a) **only fires when `finishReason === 'length'`** (line ~597). Since this is `'stop'`, that check never triggers.
+5. `displayText` in the non-structured-output path is just `fullText` verbatim (`resolveModelResponse`, `agentLoop.ts:208-216` — it does **not** run `stripActionBlock` before using the text as a candidate final answer), so the raw, garbled, half-JSON blob is accepted as the model's final answer. No error, no retry, no message to the user — the run just silently "completes" at iteration 3 with `pass: false` and the real work never done.
+
+**Why this didn't show up in t01-t06:** those are all fix/extend tasks — the model's edits are small (`str_replace`-style patches), so there was never a single long enough `write_file` payload to trigger this. A from-scratch build is exactly the case that needs one or more large whole-new-file `write_file` calls, which is why this is the first task to surface it — this is direct evidence for why standing rule 8 (build-from-scratch, not fix-existing) was worth doing as its own test.
+
+**Secondary (minor) bug found in the runner while investigating:** `_devtools/bench/run_task.ts:169-174` writes the result JSON (`fs.writeFileSync(outFile, ...)`) *before* setting `result.workspace = ws` on the `--keep` path (line 174 runs after). So `--keep`'s preserved workspace path is never recorded in the output JSON — you have to know the `$TMPDIR/forge-e2e-<task>-*` naming convention and search for it by mtime, which is how I found the two kept workspaces here. Purely a dev-tooling/observability gap (this session's own run harness), not part of the shipped extension.
+
+**Not fixed — options for the owner, per the "don't silently implement fixes" ask:**
+1. **(Recommended)** Generalize the existing `finishReason === 'length'` continue-nudge (`agentLoop.ts:597`) to also fire whenever the reply contains an opening ` ```forge_action ` (or `json`) fence that fails to parse as a valid tool call, regardless of `finishReason` — i.e. treat "started an action block, never got valid JSON out of it" as an incomplete turn, the same way a length-cutoff already is. This is the narrowest change, directly symmetric with the fix already in place for the sibling bug, and doesn't touch the model/prompt at all.
+2. Have `tryParseToolJson` attempt a salvage pass on a candidate that looks like a truncated/unterminated JSON string (e.g. auto-close a dangling string + braces) before giving up. More forgiving, but risks silently accepting a *incomplete* file body as if it were the intended one (e.g. the file gets written missing its last few methods) rather than surfacing the problem — riskier than option 1.
+3. Prompt-level nudge telling the model to end a `write_file` reply immediately at the JSON's closing `}` with nothing after. Cheapest, but doesn't address the actual behavior (the model stops *before* reaching the closing `}`, not after) — likely insufficient alone.
+4. Broaden option 1 further: treat *any* reply containing an odd/dangling fenced-block marker as incomplete, not just ones that look like `forge_action` — a more general safety net, more code, more surface for false positives on legitimate prose that happens to contain a stray backtick.
+
+Also worth a decision, separately: whether to fix the `run_task.ts` `result.workspace` ordering bug (trivial, dev-tooling only, no user-facing effect) — flagged for completeness, not urgent.
+
+**Fixture status:** `t07-build-from-scratch` is a valid, well-specified task (validated 7/7 by `validate_tasks.py`, unambiguous spec) that is currently un-passable by the harness in its current form due to the bug above, independent of the model. Recommend keeping the fixture once a fix is chosen, to confirm it starts passing.
+
+## Files touched (this session)
+`v0.15.0 suggestions.md`, `CLAUDE.md`, `PROGRESS.md`, `_devtools/bench/*` (probe scripts), `_devtools/e2e/tasks/t07-build-from-scratch/*` (new fixture), `_devtools/e2e/results/t07-*` (two observed runs).
+
+**Last updated:** 2026-09-27 (final acceptance test run twice on MLX-4bit/Ornith-9B; found and root-caused a real, 2/2-reproducible silent-failure bug in the forge_action parser's handling of a mid-JSON stop-token on large `write_file` calls — reported above with options, not fixed, per the owner's instruction)
