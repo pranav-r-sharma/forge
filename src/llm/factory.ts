@@ -24,6 +24,11 @@ export function providerEndpoint(cfg: ProviderConfig): { id: ProviderId; label: 
 export interface SwitchableProviderDeps {
   /** What is resident in the MLX server, for ps() — supplied by the MLX lifecycle manager (P0-12). */
   getResident?: () => Promise<OllamaPsModel[]>;
+  /** Makes sure the managed MLX server is running for the current settings (starts/restarts it). Awaited before chat/model-listing on MLX; rejects with a user-readable error. */
+  ensureReady?: () => Promise<void>;
+  /** Current state of the managed MLX server, so health() can say "starting" instead of blocking or failing. */
+  mlxState?: () => 'stopped' | 'starting' | 'ready' | 'crashed' | 'stopping';
+  mlxLastError?: () => string | undefined;
 }
 
 /**
@@ -70,16 +75,35 @@ export class SwitchableProvider implements LlmProvider {
   get capabilities(): ProviderCapabilities {
     return this.active().capabilities;
   }
-  health() {
+  /** Before using the MLX runtime, make sure its (managed) server is up. A no-op for other runtimes or when nothing is managed. */
+  private async prepare(): Promise<void> {
+    if (providerEndpoint(this.getCfg()).id === 'mlx') await this.deps.ensureReady?.();
+  }
+  async health(): Promise<{ ok: boolean; error?: string }> {
+    if (providerEndpoint(this.getCfg()).id === 'mlx' && this.deps.ensureReady) {
+      // Never block a status-bar poll on a 30+ s model load: kick the start in the background and report what is happening.
+      const state = this.deps.mlxState?.();
+      if (state === 'starting') return { ok: false, error: 'the MLX server is starting (loading the model)…' };
+      if (state !== 'ready') {
+        void this.deps.ensureReady().catch(() => undefined);
+        if (state === 'crashed' || state === 'stopped' || state === undefined) {
+          const h = await this.active().health();
+          if (h.ok) return h;
+          return { ok: false, error: this.deps.mlxLastError?.() || h.error || 'the MLX server is not running' };
+        }
+      }
+    }
     return this.active().health();
   }
-  listModels(): Promise<OllamaTagInfo[]> {
+  async listModels(): Promise<OllamaTagInfo[]> {
+    await this.prepare();
     return this.active().listModels();
   }
   ps(): Promise<OllamaPsModel[]> {
     return this.active().ps();
   }
-  chat(opts: ChatRequestOptions): Promise<string> {
+  async chat(opts: ChatRequestOptions): Promise<string> {
+    await this.prepare();
     return this.active().chat(opts);
   }
   embed(model: string, input: string): Promise<number[] | undefined> {

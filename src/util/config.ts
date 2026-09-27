@@ -8,6 +8,15 @@ export interface ForgeConfig {
   /** Which runtime chat/agent uses: 'ollama' (default), 'mlx' (mlx_lm.server), or 'openai-compatible'. See llm/factory.ts. */
   provider: 'ollama' | 'mlx' | 'openai-compatible';
   mlxBaseUrl: string;
+  /** Local model folder or Hugging Face repo id (already downloaded) the managed MLX server loads. */
+  mlxModel: string;
+  /** Python with mlx-lm installed; empty = ~/.forge/mlx-venv if present, else python3. */
+  mlxPythonPath: string;
+  /** Start/stop the MLX server automatically (localhost URLs only). */
+  mlxAutoStart: boolean;
+  /** Cap for the server's in-memory prompt cache, GB (0 = the server's default). */
+  mlxPromptCacheGB: number;
+  mlxExtraArgs: string[];
   openaiCompatBaseUrl: string;
   ollamaBaseUrl: string;
   chatModel: string;
@@ -115,6 +124,11 @@ export function getConfig(): ForgeConfig {
   return {
     provider: parseProviderId(cfg.get<string>('provider')),
     mlxBaseUrl: (cfg.get<string>('mlx.baseUrl') || 'http://127.0.0.1:8123').replace(/\/+$/, ''),
+    mlxModel: (cfg.get<string>('mlx.model') || '').trim(),
+    mlxPythonPath: (cfg.get<string>('mlx.pythonPath') || '').trim(),
+    mlxAutoStart: cfg.get<boolean>('mlx.autoStart') ?? true,
+    mlxPromptCacheGB: cfg.get<number>('mlx.promptCacheGB') ?? 4,
+    mlxExtraArgs: (cfg.get<string[]>('mlx.extraArgs') || []).filter((a) => typeof a === 'string'),
     openaiCompatBaseUrl: (cfg.get<string>('openaiCompat.baseUrl') || 'http://127.0.0.1:1234').replace(/\/+$/, ''),
     ollamaBaseUrl: (cfg.get<string>('ollamaBaseUrl') || 'http://localhost:11434').replace(/\/+$/, ''),
     chatModel: cfg.get<string>('chatModel') || '',

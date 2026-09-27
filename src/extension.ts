@@ -1,6 +1,8 @@
 import * as vscode from 'vscode';
 import * as os from 'os';
 import { SwitchableProvider } from './llm/factory';
+import { MlxServerManager, makeEnsureMlx } from './llm/mlxServer';
+import { readMemorySample } from './util/hwSampler';
 import { getConfig } from './util/config';
 import { logger } from './util/logger';
 import { toRelative } from './util/paths';
@@ -47,6 +49,8 @@ import {
 
 /** Module-level so deactivate() (a separate top-level function, no closure over activate()'s locals) can reach it to kill any still-running background commands — see BackgroundProcessManager.disposeAll()'s doc comment. */
 let activeBackgroundProcesses: BackgroundProcessManager | undefined;
+/** The managed mlx_lm.server child process, if any — must not outlive the extension host (see deactivate()). */
+let activeMlxServer: MlxServerManager | undefined;
 /** Same reasoning as activeBackgroundProcesses — an MCP server is a real spawned child process too, and must not be left running orphaned after the extension host shuts down or reloads. */
 let activeMcpManager: McpManager | undefined;
 
@@ -62,7 +66,28 @@ export async function activate(context: vscode.ExtensionContext) {
   }
 
   // The provider reads settings on every call, so switching forge.provider / a base URL applies immediately (no reload).
-  const ollama = new SwitchableProvider(() => getConfig());
+  // MLX: Forge starts/stops/restarts a local mlx_lm.server itself when forge.provider = mlx (offline, loopback-only, memory-checked — see llm/mlxServer.ts).
+  const mlxServer = new MlxServerManager({
+    log: (l) => logger.info(`[mlx] ${l}`),
+    availableGB: async () => (await readMemorySample())?.availableGB,
+  });
+  activeMlxServer = mlxServer;
+  const ollama = new SwitchableProvider(() => getConfig(), {
+    getResident: async () => mlxServer.resident(),
+    ensureReady: makeEnsureMlx(() => getConfig(), mlxServer),
+    mlxState: () => mlxServer.state,
+    mlxLastError: () => mlxServer.lastError,
+  });
+  // Leaving MLX frees its memory: stop the managed server as soon as the provider setting changes away from it.
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      try {
+        if (e.affectsConfiguration('forge.provider') && getConfig().provider !== 'mlx') void mlxServer.stop();
+      } catch {
+        /* never let a settings event break the extension */
+      }
+    })
+  );
   const pendingEdits = new PendingEditManager(workspaceRoot);
   const backgroundProcesses = new BackgroundProcessManager();
   activeBackgroundProcesses = backgroundProcesses;
@@ -251,4 +276,5 @@ export function deactivate() {
   // the extension host shuts down or reloads, with no way left to reach them.
   activeBackgroundProcesses?.disposeAll();
   activeMcpManager?.disposeAll();
+  activeMlxServer?.dispose();
 }

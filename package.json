@@ -110,6 +110,33 @@
           "default": "http://127.0.0.1:8123",
           "description": "Base URL of your mlx_lm.server (forge.provider = mlx). Keep it on 127.0.0.1 - the server has no authentication."
         },
+        "forge.mlx.model": {
+          "type": "string",
+          "default": "",
+          "description": "The MLX model Forge's managed mlx_lm.server loads: a local model folder, or a Hugging Face repo id that is ALREADY downloaded (e.g. \"ornith-ai/Ornith-1.5-9B-MLX-4bit\"). Forge runs the server offline and never downloads models. Changing this restarts the server."
+        },
+        "forge.mlx.pythonPath": {
+          "type": "string",
+          "default": "",
+          "description": "Python interpreter that has mlx-lm installed. Empty = ~/.forge/mlx-venv/bin/python if it exists, otherwise python3."
+        },
+        "forge.mlx.autoStart": {
+          "type": "boolean",
+          "default": true,
+          "description": "Start (and stop) the MLX server automatically when forge.provider is mlx and forge.mlx.baseUrl points at this machine. Turn off if you run mlx_lm.server yourself - a healthy server already on the port is used as-is either way."
+        },
+        "forge.mlx.promptCacheGB": {
+          "type": "number",
+          "default": 4,
+          "minimum": 0,
+          "description": "Memory cap (GB) for the MLX server's prompt cache, which is what makes long agent sessions cheap (each step only processes its new text). 0 = the server's default (unbounded until memory pressure)."
+        },
+        "forge.mlx.extraArgs": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "Extra arguments for mlx_lm.server (e.g. [\"--prefill-step-size\", \"4096\"]). --host, --port, --model and --trust-remote-code are managed/refused by Forge."
+        },
         "forge.mlx.contextTokens": {
           "type": "number",
           "default": 32768,

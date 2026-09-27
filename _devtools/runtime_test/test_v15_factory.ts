@@ -16,6 +16,41 @@ function ok(cond: any, msg: string) {
 }
 const vs: any = vscode;
 
+async function testMlxReadyHooks() {
+  const ox = await startFakeOpenAI();
+  try {
+    const cfg: ProviderConfig = { provider: 'mlx', ollamaBaseUrl: 'http://127.0.0.1:1', mlxBaseUrl: ox.url, openaiCompatBaseUrl: ox.url };
+    const order: string[] = [];
+    let state: any = 'stopped';
+    let err: string | undefined;
+    let fail = false;
+    const p = new SwitchableProvider(() => cfg, {
+      ensureReady: async () => { order.push('ensure'); if (fail) throw new Error('MLX model missing'); state = 'ready'; },
+      mlxState: () => state, mlxLastError: () => err,
+    });
+    await p.chat({ model: 'x', messages: [{ role: 'user', content: 'hi' }] });
+    ok(order[0] === 'ensure' && ox.requests.some((r) => r.path === '/v1/chat/completions'), 'chat on MLX first awaits ensureReady(), then talks to the server');
+    order.length = 0; await p.listModels();
+    ok(order[0] === 'ensure', 'listModels() also ensures the server is up');
+    fail = true;
+    let msg = ''; try { await p.chat({ model: 'x', messages: [{ role: 'user', content: 'hi' }] }); } catch (e: any) { msg = e.message; }
+    ok(/MLX model missing/.test(msg), 'an ensureReady() failure surfaces as the chat error (a user-readable reason, not a connection error)');
+    fail = false;
+    state = 'starting'; order.length = 0;
+    const h = await p.health();
+    ok(!h.ok && /starting/.test(h.error || '') && order.length === 0, 'health() while the server is loading reports "starting" immediately — it never blocks a status-bar poll on a long model load');
+    state = 'crashed'; err = 'The MLX server exited unexpectedly (code 1).';
+    const dead = new SwitchableProvider(() => ({ ...cfg, mlxBaseUrl: 'http://127.0.0.1:1' }), { ensureReady: async () => {}, mlxState: () => state, mlxLastError: () => err });
+    const h2 = await dead.health();
+    ok(!h2.ok && /exited unexpectedly/.test(h2.error || ''), 'health() after a crash reports the manager\'s own error message');
+    cfg.provider = 'ollama'; order.length = 0;
+    await new SwitchableProvider(() => ({ ...cfg, ollamaBaseUrl: 'http://127.0.0.1:1' }), { ensureReady: async () => { order.push('ensure'); } }).health();
+    ok(order.length === 0, 'on Ollama, ensureReady() is never called');
+  } finally {
+    await ox.close();
+  }
+}
+
 async function main() {
   const ol = await startFakeOllama();
   const ox = await startFakeOpenAI();
@@ -88,6 +123,7 @@ async function main() {
     await ol.close();
     await ox.close();
   }
+  await testMlxReadyHooks();
   console.log(`\n${passed} passed, ${failed} failed.`);
   if (failed > 0) { console.log('Some v0.15.0 provider-selection tests FAILED.'); process.exit(1); }
   console.log('All v0.15.0 provider-selection tests passed.');

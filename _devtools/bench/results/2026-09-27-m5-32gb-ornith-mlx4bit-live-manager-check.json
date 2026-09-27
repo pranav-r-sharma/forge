@@ -1,0 +1,112 @@
+{
+  "snapshot": "a48173b246ac705be75c05bedf1a0666db522d53",
+  "port": 8125,
+  "checks": [
+    {
+      "name": "nothing running before",
+      "pass": true
+    },
+    {
+      "name": "ensure() starts the real server and reaches ready",
+      "pass": true,
+      "detail": {
+        "secs": 1.069
+      }
+    },
+    {
+      "name": "exactly one server process",
+      "pass": true,
+      "detail": [
+        "95892"
+      ]
+    },
+    {
+      "name": "resident() reports the loaded model with its real size",
+      "pass": true,
+      "detail": [
+        {
+          "name": "ornith-ai/Ornith-1.5-9B-MLX-4bit",
+          "model": "ornith-ai/Ornith-1.5-9B-MLX-4bit",
+          "size": 5038161163
+        }
+      ]
+    },
+    {
+      "name": "the server was started with the prompt-cache cap and loopback host",
+      "pass": true
+    },
+    {
+      "name": "a chat works through the managed server",
+      "pass": true,
+      "detail": {
+        "reply": "pong"
+      }
+    },
+    {
+      "name": "provider.ps() shows the managed model",
+      "pass": true
+    },
+    {
+      "name": "a second manager adopts the running server (no duplicate process)",
+      "pass": true
+    },
+    {
+      "name": "stopping the adopting manager does not kill the server it does not own",
+      "pass": true
+    },
+    {
+      "name": "a hard kill (SIGKILL) is detected as a crash",
+      "pass": true,
+      "detail": {
+        "state": "crashed",
+        "err": "The MLX server exited unexpectedly (code null, signal SIGKILL)."
+      }
+    },
+    {
+      "name": "the crashed process is gone",
+      "pass": true
+    },
+    {
+      "name": "ensure() recovers with a fresh server after the crash",
+      "pass": true,
+      "detail": {
+        "secs": 1.16
+      }
+    },
+    {
+      "name": "and it serves requests again",
+      "pass": true,
+      "detail": {
+        "reply2": "ok"
+      }
+    },
+    {
+      "name": "stop() leaves NO server process behind",
+      "pass": true,
+      "detail": {
+        "procs": []
+      }
+    },
+    {
+      "name": "and the port is closed",
+      "pass": true
+    }
+  ],
+  "logTail": [
+    "/Users/pranavsharma/Code Projects/Local LLM Tools/forge/_devtools/mlx-venv/lib/python3.14/site-packages/mlx_lm/server.py:1723: UserWarning: mlx_lm.server is not recommended for production as it only implements basic security checks.",
+    "  warnings.warn(",
+    "127.0.0.1 - - [26/Sep/2026 23:26:06] \"GET /health HTTP/1.1\" 200 -",
+    "[forge] MLX server is ready",
+    "127.0.0.1 - - [26/Sep/2026 23:26:07] \"POST /v1/chat/completions HTTP/1.1\" 200 -",
+    "127.0.0.1 - - [26/Sep/2026 23:26:07] \"GET /health HTTP/1.1\" 200 -",
+    "127.0.0.1 - - [26/Sep/2026 23:26:07] \"GET /health HTTP/1.1\" 200 -",
+    "[forge] The MLX server exited unexpectedly (code null, signal SIGKILL).",
+    "[forge] starting: /Users/pranavsharma/Code Projects/Local LLM Tools/forge/_devtools/mlx-venv/bin/python -m mlx_lm.server --model /Users/pranavsharma/.cache/huggingface/hub/models--ornith-ai--Ornith-1.5-9B-MLX-4bit/snapshots/a48173b246ac705be75c05bedf1a0666db522d53 --host 127.0.0.1 --port 8125 --log-level WARNING --prompt-cache-bytes 2147483648",
+    "Calling `python -m mlx_lm.server...` directly is deprecated. Use `mlx_lm.server...` or `python -m mlx_lm server ...` instead.",
+    "/Users/pranavsharma/Code Projects/Local LLM Tools/forge/_devtools/mlx-venv/lib/python3.14/site-packages/mlx_lm/server.py:1723: UserWarning: mlx_lm.server is not recommended for production as it only implements basic security checks.",
+    "  warnings.warn(",
+    "127.0.0.1 - - [26/Sep/2026 23:26:10] \"GET /health HTTP/1.1\" 200 -",
+    "[forge] MLX server is ready",
+    "127.0.0.1 - - [26/Sep/2026 23:26:10] \"POST /v1/chat/completions HTTP/1.1\" 200 -"
+  ]
+}
