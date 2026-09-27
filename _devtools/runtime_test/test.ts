@@ -7,7 +7,6 @@ import {
   looksLikeAbandonedToolCall,
   extractAbandonedActionTarget,
   formatIncompleteActionNudge,
-  tryRepairMissingJsonClosers,
 } from '../../src/agent/toolProtocol';
 import { cleanCompletion } from '../../src/completion/fimPrompt';
 
@@ -133,17 +132,18 @@ function assert(cond: any, msg: string) {
   assert(/Do not repeat your analysis; keep any reasoning to a couple of sentences/.test(specificPath), 'formatIncompleteActionNudge appends the short reasoning hint on specific path nudges');
 }
 
-// ---- parseToolCall: conservative closing-brace repair (t08 cycle 1) ----
+// ---- parseToolCall: invalid JSON in closed fence (t08 cycle 1, no brace auto-repair) ----
 {
   const t08Messages = path.join(__dirname, '../e2e/results/t08-five-file-build-mlx4bit-cycle1.messages.json');
   const raw = fs.readFileSync(t08Messages, 'utf8');
   const msgs = JSON.parse(raw) as { content: string }[];
   const body = msgs[4].content.match(/```forge_action\s*\n([\s\S]*?)```/)![1].trim();
   const wrapped = '```forge_action\n' + body + '\n```';
-  const r = parseToolCall(wrapped);
-  assert(r && r.tool === 'write_file' && r.args.path === 'tracker/models.py' && r.jsonRepaired === true, 't08 message-4 body (missing one closing brace) repairs to write_file tracker/models.py');
+  assert(parseToolCall(wrapped) === null, 't08 message-4 body (missing one closing brace) does not parse as a tool call');
+  const t08Nudge = formatIncompleteActionNudge(wrapped, false);
+  assert(/not valid JSON/.test(t08Nudge) && /write_file/.test(t08Nudge) && /tracker\/models\.py/.test(t08Nudge) && /near:/.test(t08Nudge) && !/reply was cut off/.test(t08Nudge), 't08 missing-brace body gets invalid-JSON nudge naming write_file on tracker/models.py');
   const broken = '{"tool":"write_file","args":{"path":"a.py","content":"line with \\"broken';
-  assert(tryRepairMissingJsonClosers(broken) === null && parseToolCall(broken) === null, 'a genuinely broken string is not repaired');
+  assert(parseToolCall(broken) === null, 'a genuinely broken string is not parsed as a tool call');
 }
 {
   const invalidClosed =

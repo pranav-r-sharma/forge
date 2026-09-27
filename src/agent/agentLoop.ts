@@ -930,7 +930,6 @@ export async function runAgentTurn(
         toolMs: Date.now() - toolStartedAt,
         resultChars: result.content.length,
         redundantRead,
-        ...(call.jsonRepaired ? { note: 'json-closing-brace-repair' } : {}),
       });
     } catch {
       /* never let tracing break a turn */

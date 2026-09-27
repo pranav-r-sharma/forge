@@ -76,20 +76,13 @@ function findMatchingBrace(text: string, start: number): number {
   return -1;
 }
 
-type ParsedToolJson = { tool: string; args: Record<string, any>; jsonRepaired?: boolean };
+type ParsedToolJson = { tool: string; args: Record<string, any> };
 
 function tryParseToolJson(text: string): ParsedToolJson | null {
   let candidate = text.trim();
   // Some models wrap the JSON again in a nested fence or prefix it with "Action:" etc.
   candidate = candidate.replace(/^[^{]*(\{[\s\S]*\})[^}]*$/, '$1');
-  const direct = parseToolJsonObject(candidate);
-  if (direct) return direct;
-  const repaired = tryRepairMissingJsonClosers(candidate);
-  if (repaired && repaired !== candidate) {
-    const parsed = parseToolJsonObject(repaired);
-    if (parsed) return { ...parsed, jsonRepaired: true };
-  }
-  return null;
+  return parseToolJsonObject(candidate);
 }
 
 function parseToolJsonObject(candidate: string): ParsedToolJson | null {
@@ -103,43 +96,6 @@ function parseToolJsonObject(candidate: string): ParsedToolJson | null {
     /* fall through */
   }
   return null;
-}
-
-/**
- * If every string literal is closed and the only defect is missing `}` / `]` at the end
- * (≤3 closers), append them in stack order. Never repairs broken strings or extra/missing
- * brackets in the middle.
- */
-export function tryRepairMissingJsonClosers(text: string): string | null {
-  const trimmed = text.trim();
-  const stack: ('{' | '[')[] = [];
-  let inString = false;
-  let escape = false;
-  for (let i = 0; i < trimmed.length; i++) {
-    const ch = trimmed[i];
-    if (inString) {
-      if (escape) escape = false;
-      else if (ch === '\\') escape = true;
-      else if (ch === '"') inString = false;
-      continue;
-    }
-    if (ch === '"') {
-      inString = true;
-    } else if (ch === '{') {
-      stack.push('{');
-    } else if (ch === '[') {
-      stack.push('[');
-    } else if (ch === '}') {
-      if (stack.length === 0 || stack[stack.length - 1] !== '{') return null;
-      stack.pop();
-    } else if (ch === ']') {
-      if (stack.length === 0 || stack[stack.length - 1] !== '[') return null;
-      stack.pop();
-    }
-  }
-  if (inString || stack.length === 0 || stack.length > 3) return null;
-  const suffix = stack.reverse().map((c) => (c === '{' ? '}' : ']')).join('');
-  return trimmed + suffix;
 }
 
 /** True when the last forge_action/json fence in `raw` has a closing ```. */
@@ -236,10 +192,7 @@ export function formatIncompleteActionNudge(raw: string, lengthTruncated: boolea
   const fenceClosed = isForgeActionFenceClosed(raw);
   const fenceBody = extractForgeActionFenceBody(raw);
 
-  const fenceBodyStrictFail =
-    fenceBody &&
-    parseToolJsonObject(fenceBody) === null &&
-    !(tryRepairMissingJsonClosers(fenceBody) && parseToolJsonObject(tryRepairMissingJsonClosers(fenceBody)!));
+  const fenceBodyStrictFail = fenceBody && parseToolJsonObject(fenceBody) === null;
   if (target && !lengthTruncated && fenceClosed && fenceBodyStrictFail) {
     const err = forgeActionJsonParseErrorDetail(fenceBody!);
     const pathPart = target.path ? ` on \`${target.path}\`` : '';
