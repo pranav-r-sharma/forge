@@ -21,7 +21,8 @@ import { getConfig } from '../util/config';
 import { logger } from '../util/logger';
 import { resolveWorkspacePath, toRelative } from '../util/paths';
 import { CompactionCache, PromptViewState, hardCapOversizedMessages, maybeCompact, pruneStaleReadsView, updateCharsPerToken, updatePromptView, DEFAULT_CHARS_PER_TOKEN } from './contextManager';
-import { LoopDetector, signatureForStep } from './loopDetector';
+import { LoopDetector, formatLoopWarningMessage, signatureForStep } from './loopDetector';
+import { unknownArgNotesForSpec } from '../tools/unknownToolArgs';
 import {
   evaluateClaimedCommands,
   extractTaskCommandForms,
@@ -981,6 +982,7 @@ export async function runAgentTurn(
           command: cmd,
           exitCode: parseRunCommandExitCode(result.content),
           filesEditedAfter: [],
+          outputSnippet: result.content.split(/\r?\n/).slice(0, 2).join('\n').trim().slice(0, 300),
         };
       }
     }
@@ -1010,7 +1012,11 @@ export async function runAgentTurn(
     // PendingEditManager.onDidChange to refresh the review cards, so no extra
     // event is needed here.
 
-    const resultContentForModel = critique ? `${result.content}\n\n[Self-critique] ${critique}` : result.content;
+    const unknownArgNote = unknownArgNotesForSpec(resolvedSpec, call.args as Record<string, unknown>);
+    const contentWithUnknownNote = unknownArgNote
+      ? `${unknownArgNote}\n${result.content}`
+      : result.content;
+    const resultContentForModel = critique ? `${contentWithUnknownNote}\n\n[Self-critique] ${critique}` : contentWithUnknownNote;
 
     emit({
       type: 'tool_result',
@@ -1054,7 +1060,13 @@ export async function runAgentTurn(
       /* never let tracing break a turn */
     }
 
-    if (checkLoop(loopDetector, call.tool, call.args, result.ok, result.content, emit)) {
+    if (
+      checkLoop(loopDetector, call.tool, call.args, result.ok, result.content, emit, {
+        pushLoopWarning: (msg) => pushMsg({ role: 'user', content: msg }),
+        traceNote: (note) => traceIter({ note }),
+        unresolvedRunFailure,
+      })
+    ) {
       return { messages, compactionCache };
     }
   }
@@ -1082,18 +1094,46 @@ export async function runAgentTurn(
  *   is turned off, for a task where the repetition genuinely is expected
  *   and the user would rather not be interrupted.
  */
+export interface CheckLoopHooks {
+  pushLoopWarning?: (message: string) => void;
+  traceNote?: (note: string) => void;
+  unresolvedRunFailure?: UnresolvedRunFailure;
+}
+
 export function checkLoop(
   detector: LoopDetector,
   tool: string,
   args: Record<string, any>,
   ok: boolean,
   resultContent: string,
-  emit: (event: AgentEvent) => void
+  emit: (event: AgentEvent) => void,
+  hooks?: CheckLoopHooks
 ): boolean {
   if (tool === 'check_background_command') return false;
   if (!getConfig().loopDetectionEnabled) return false;
-  const check = detector.record(signatureForStep(tool, args, ok, resultContent));
+  const signature = signatureForStep(tool, args, ok, resultContent);
+  const check = detector.record(signature);
   if (!check.looping) return false;
+  const occurrences = check.occurrences ?? 0;
+  if (!detector.hasWarnedForSignature(signature)) {
+    detector.markWarnedForSignature(signature);
+    const warn = formatLoopWarningMessage(
+      tool,
+      args,
+      occurrences,
+      resultContent,
+      hooks?.unresolvedRunFailure
+        ? {
+            command: hooks.unresolvedRunFailure.command,
+            exitCode: hooks.unresolvedRunFailure.exitCode ?? undefined,
+            snippet: hooks.unresolvedRunFailure.outputSnippet,
+          }
+        : undefined
+    );
+    hooks?.pushLoopWarning?.(warn);
+    hooks?.traceNote?.('loop-warning');
+    return false;
+  }
   emit({
     type: 'error',
     message: `Forge stopped: possible loop detected. ${check.reason} You can ask me to try a different approach, or continue if this was actually expected. (Loop detection can be turned off in Settings if this keeps happening for legitimately repetitive work.)`,

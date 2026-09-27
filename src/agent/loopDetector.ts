@@ -36,11 +36,21 @@ export class LoopDetector {
   private readonly consecutiveLimit: number;
   private readonly windowSize: number;
   private readonly windowLimit: number;
+  /** Signatures that already received a one-time loop warning (second trip stops). */
+  private warnedSignatures = new Set<string>();
 
   constructor(opts: LoopDetectorOptions = {}) {
     this.consecutiveLimit = opts.consecutiveLimit ?? 3;
     this.windowSize = opts.windowSize ?? 8;
     this.windowLimit = opts.windowLimit ?? 4;
+  }
+
+  hasWarnedForSignature(signature: string): boolean {
+    return this.warnedSignatures.has(signature);
+  }
+
+  markWarnedForSignature(signature: string): void {
+    this.warnedSignatures.add(signature);
   }
 
   /** Records one step's signature and reports whether the run now looks like a loop. */
@@ -72,7 +82,44 @@ export class LoopDetector {
 
   reset() {
     this.history = [];
+    this.warnedSignatures.clear();
   }
+}
+
+/** Human-readable target for a repeated tool call (path, command, etc.). */
+export function loopTargetForTool(tool: string, args: Record<string, any>): string {
+  if (tool === 'run_command' && typeof args.command === 'string') return args.command;
+  if (typeof args.path === 'string') return args.path;
+  if (typeof args.file === 'string') return args.file;
+  if (typeof args.query === 'string') return args.query;
+  if (typeof args.url === 'string') return args.url;
+  if (typeof args.command === 'string') return args.command;
+  return JSON.stringify(args);
+}
+
+/** First line of a tool result, trimmed for the loop-warning nudge. */
+export function firstLineOfToolResult(content: string): string {
+  const line = content.split(/\r?\n/).find((l) => l.trim().length > 0) ?? content;
+  return line.trim().slice(0, 200);
+}
+
+export function formatLoopWarningMessage(
+  tool: string,
+  args: Record<string, any>,
+  occurrences: number,
+  resultContent: string,
+  failingCommand?: { command: string; exitCode?: number; snippet?: string },
+): string {
+  const target = loopTargetForTool(tool, args);
+  const outcome = firstLineOfToolResult(resultContent);
+  let msg = `[System check] You have sent the same ${tool} on \`${target}\` ${occurrences} times; it changed nothing (${outcome}).`;
+  if (failingCommand) {
+    const code = failingCommand.exitCode !== undefined ? failingCommand.exitCode : '?';
+    const err = failingCommand.snippet ?? '';
+    msg += ` The command still failing is \`${failingCommand.command}\` (exit ${code}): ${err}`;
+  }
+  msg += ' Do something different: read the error, then change the code that causes it.';
+  return msg;
 }
 
 /** Builds a stable signature for one tool-call step, used as LoopDetector's input. Two calls with the same tool+args+outcome+result-shape collapse to the same signature. */

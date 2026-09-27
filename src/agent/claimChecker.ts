@@ -397,6 +397,8 @@ export type UnresolvedRunFailure = {
   command: string;
   exitCode: number | null;
   filesEditedAfter: string[];
+  /** First lines of the failed command's tool output (for loop-warning context). */
+  outputSnippet?: string;
 };
 
 /** Parse exit code from a run_command tool result body (undefined when the command never ran). */

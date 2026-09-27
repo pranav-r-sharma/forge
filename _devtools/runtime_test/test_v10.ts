@@ -180,10 +180,14 @@ function testCheckLoopOnByDefaultAndCatchesRepetition() {
   const events: any[] = [];
   const emit = (e: any) => events.push(e);
   let stopped = false;
+  let warnCount = 0;
   for (let i = 0; i < 6 && !stopped; i++) {
-    stopped = checkLoop(detector, 'read_file', { path: 'a.ts' }, true, 'same content every time', emit);
+    stopped = checkLoop(detector, 'read_file', { path: 'a.ts' }, true, 'same content every time', emit, {
+      pushLoopWarning: () => warnCount++,
+    });
   }
-  ok(stopped === true, 'loop detection is ON by default (unset forge.loopDetection.enabled) and still catches a genuinely repeated identical call');
+  ok(warnCount === 1, 'first loop trip emits one targeted warning instead of stopping immediately');
+  ok(stopped === true, 'loop detection is ON by default and still hard-stops after the warning is ignored');
   ok(events.some((e) => e.type === 'error' && /loop/i.test(e.message)), 'a loop-detected error event was emitted with an explanatory message');
   ok(events.some((e) => e.type === 'done'), 'a done event follows the loop-detected error, ending the turn');
 }
