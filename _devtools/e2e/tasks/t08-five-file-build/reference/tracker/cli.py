@@ -64,19 +64,27 @@ def cmd_demo(args):
         os.remove(path)
 
 
+def _add_db_arg(parser):
+    parser.add_argument("--db", default="expenses.json", help="JSON database path")
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Expense tracker")
-    parser.add_argument("--db", default="expenses.json", help="JSON database path")
     sub = parser.add_subparsers(dest="command", required=True)
 
     add_p = sub.add_parser("add", help="Add an expense")
+    _add_db_arg(add_p)
     add_p.add_argument("--amount", type=float, required=True)
     add_p.add_argument("--category", required=True)
     add_p.add_argument("--note", default="")
     add_p.add_argument("--date", required=True)
 
-    sub.add_parser("list", help="List expenses")
-    sub.add_parser("summary", help="Print totals by category")
+    list_p = sub.add_parser("list", help="List expenses")
+    _add_db_arg(list_p)
+
+    summary_p = sub.add_parser("summary", help="Print totals by category")
+    _add_db_arg(summary_p)
+
     sub.add_parser("demo", help="Run a sample session")
 
     args = parser.parse_args(argv)
