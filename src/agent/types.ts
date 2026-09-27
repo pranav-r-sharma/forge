@@ -98,8 +98,8 @@ export interface ToolExecContext {
   proposeEdit: (edit: Omit<PendingEdit, 'id'>) => Promise<{ id: string; applied: boolean }>;
   /** Reads the "effective" content of a file — the latest still-pending proposal if one exists, else disk. */
   readEffective: (uri: vscode.Uri) => Promise<string | undefined>;
-  /** Blocks until the user approves/denies a proposed shell command (or auto-approves per config). */
-  requestCommandApproval: (command: string, callId: string) => Promise<boolean>;
+  /** Blocks until the user approves/denies a proposed shell command (or auto-approves per config). `workspaceRootFsPath` lets the dangerous-command check catch a recursive delete of the workspace itself, not just `/` or `~`. */
+  requestCommandApproval: (command: string, callId: string, workspaceRootFsPath?: string) => Promise<boolean>;
   /**
    * Cost-aware task planning: blocks until the user approves/denies starting
    * a plan whose aggregate estimated cost crossed forge.taskLedger.expensivePlanReviewThreshold

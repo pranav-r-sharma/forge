@@ -16,10 +16,10 @@ export class ApprovalBroker {
     private getRequireApproval: () => boolean
   ) {}
 
-  requestCommandApproval(command: string, callId: string): Promise<boolean> {
+  requestCommandApproval(command: string, callId: string, workspaceRootFsPath?: string): Promise<boolean> {
     // The dangerous-command denylist always wins, even when requireApproval
     // is off (Auto mode) — see commandTool.ts for why.
-    if (!isDangerousCommand(command)) {
+    if (!isDangerousCommand(command, workspaceRootFsPath)) {
       if (!this.getRequireApproval()) return Promise.resolve(true);
       if (commandMatchesAutoApprove(command, this.getAutoApprovePatterns())) return Promise.resolve(true);
     }
@@ -30,7 +30,7 @@ export class ApprovalBroker {
         type: 'approval_request',
         kind: 'command',
         callId,
-        detail: isDangerousCommand(command) ? `${command}\n\n⚠ This command matches Forge's hard-coded dangerous-command list and always requires your approval, even in Auto mode.` : command,
+        detail: isDangerousCommand(command, workspaceRootFsPath) ? `${command}\n\n⚠ This command matches Forge's hard-coded dangerous-command list and always requires your approval, even in Auto mode.` : command,
       });
     });
   }

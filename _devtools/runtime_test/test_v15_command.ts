@@ -7,7 +7,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { resolveCommandCwd, runCommandTool } from '../../src/tools/commandTool';
+import { resolveCommandCwd, runCommandTool, isDangerousCommand } from '../../src/tools/commandTool';
 import { detectEnvironment, renderEnvironment } from '../../src/agent/environment';
 
 let passed = 0;
@@ -55,6 +55,18 @@ async function toolTests() {
   ok(!missing.ok && /does not exist under the workspace root/.test(missing.content) && !/ENOENT/.test(missing.content), 'REAL command with a missing cwd: a helpful error, and no command is run');
   const sub = await runCommandTool({ command: 'pwd', cwd: 'tests' }, ctx);
   ok(sub.ok && /tests\s*$/.test(sub.content.trim().split('\n')[2].trim()), 'a real subfolder still works');
+
+  // end-to-end plumbing check for the workspace-wipe guard: runCommandTool must actually pass its
+  // workspaceRoot.fsPath through to requestCommandApproval, not just isDangerousCommand in isolation.
+  let seenWorkspaceRootArg: string | undefined;
+  const denyingCtx: any = {
+    workspaceRoot: vscode.Uri.file(root), cancellation: new vscode.CancellationTokenSource().token,
+    requestCommandApproval: async (_cmd: string, _callId: string, wr?: string) => { seenWorkspaceRootArg = wr; return false; },
+    startBackgroundCommand: () => ({ ok: false, error: 'n/a' }),
+  };
+  const wipe = await runCommandTool({ command: `rm -rf "${root}"` }, denyingCtx);
+  ok(!wipe.ok && /did not approve/.test(wipe.content), 'runCommandTool actually blocks when approval is denied (real end-to-end path, not just the pure function)');
+  ok(seenWorkspaceRootArg === root, 'and it passed the real workspace root through to requestCommandApproval, so the guard has what it needs to fire');
 }
 
 function environmentWording() {
@@ -64,10 +76,31 @@ function environmentWording() {
   ok(/root folder by default/.test(text) && /never the project's own name/.test(text), 'and it says plainly that the root is the default and the project name is not a cwd');
 }
 
+// t07-build-from-scratch acceptance-test finding (see PROGRESS.md): a model stuck on a misdiagnosed test
+// failure ran `rm -rf "<absolute workspace path>"` to "start over" — the pre-existing dangerous-command
+// denylist only guarded `rm -rf /` and `rm -rf ~`, not the agent's own workspace root, so it went through
+// unguarded and every subsequent run_command call failed with no way to recover.
+function dangerousCommandTests() {
+  const root = ws();
+  ok(isDangerousCommand(`rm -rf "${root}"`, root), 'rm -rf on the exact workspace root is flagged, given workspace context');
+  ok(isDangerousCommand(`rm -fr "${root}"`, root), 'flags reversed (-fr) is also flagged');
+  ok(isDangerousCommand(`rm -r -f "${root}"`, root), 'separate short flags (-r -f) are also flagged');
+  ok(isDangerousCommand(`rm --recursive --force "${root}"`, root), 'long-form flags (--recursive --force) are also flagged');
+  ok(isDangerousCommand('rm -rf .', root), 'a bare "rm -rf ." (the current directory) is flagged too — same catastrophic outcome regardless of exactly what it resolves to');
+  ok(isDangerousCommand('rm -rf ./', root), 'and "./"');
+  ok(isDangerousCommand(`rm -rf "${path.dirname(root)}"`, root), 'rm -rf on an ANCESTOR of the workspace root is flagged (it would take the workspace down with it)');
+  ok(isDangerousCommand(`echo cleaning up && rm -rf "${root}"`, root), 'still caught when chained after other commands (&&)');
+  ok(!isDangerousCommand('rm -rf node_modules', root), 'rm -rf on an ordinary SUBfolder is NOT flagged — the agent is trusted to manage its own workspace contents');
+  ok(!isDangerousCommand(`rm -rf "${path.join(root, 'contacts')}"`, root), 'rm -rf on a subfolder by absolute path is also not flagged');
+  ok(!isDangerousCommand(`rm -rf "${root}"`), 'without workspace context (no third arg) the new check never fires — pure backward compatibility, never a new false positive');
+  ok(isDangerousCommand('rm -rf /'), "the pre-existing rm -rf / guard is unaffected (doesn't need workspace context)");
+}
+
 async function main() {
   pureTests();
   await toolTests();
   environmentWording();
+  dangerousCommandTests();
   console.log(`\n${passed} passed, ${failed} failed.`);
   if (failed > 0) { console.log('Some v0.15.0 command cwd tests FAILED.'); process.exit(1); }
   console.log('All v0.15.0 command cwd tests passed.');

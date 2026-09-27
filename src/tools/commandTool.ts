@@ -47,7 +47,7 @@ export async function runCommandTool(args: Record<string, any>, ctx: ToolExecCon
   callCounter += 1;
   const callId = `cmd_${Date.now().toString(36)}_${callCounter}`;
 
-  const approved = await ctx.requestCommandApproval(command, callId);
+  const approved = await ctx.requestCommandApproval(command, callId, ctx.workspaceRoot.fsPath);
   if (!approved) {
     return { ok: false, content: 'The user did not approve running this command. Ask before proceeding, or try a different approach.' };
   }
@@ -230,6 +230,50 @@ const DANGEROUS_COMMAND_PATTERNS: RegExp[] = [
   /diskutil\s+(erase|reformat|partitiondisk)/i,
 ];
 
-export function isDangerousCommand(command: string): boolean {
-  return DANGEROUS_COMMAND_PATTERNS.some((re) => re.test(command));
+export function isDangerousCommand(command: string, workspaceRootFsPath?: string): boolean {
+  return DANGEROUS_COMMAND_PATTERNS.some((re) => re.test(command)) || isWorkspaceWipe(command, workspaceRootFsPath);
+}
+
+/**
+ * True when `command` is an `rm -r -f`-style recursive delete whose target resolves to the agent's own
+ * workspace root, an ancestor of it, or the bare current directory (`.`/`./`). Found by the
+ * t07-build-from-scratch acceptance test (see PROGRESS.md): stuck on a self-misdiagnosed test failure,
+ * the model ran `rm -rf "<absolute workspace path>"` to "start over" — DANGEROUS_COMMAND_PATTERNS above
+ * only guards `rm -rf /` and `rm -rf ~` (wiping the whole disk/home), not this far more likely case of
+ * an agent deleting its own project directory, after which every subsequent run_command call fails with
+ * no way to recover. Deliberately narrow: only recursive-delete-of-the-workspace-root is caught, not
+ * every risky delete inside it, which the agent is trusted to manage like any other edit. `workspaceRootFsPath`
+ * is optional so this degrades to "not flagged" (never blocks) when no workspace context is available,
+ * rather than guessing.
+ */
+export function isWorkspaceWipe(command: string, workspaceRootFsPath?: string): boolean {
+  if (!workspaceRootFsPath) return false;
+  const root = path.resolve(workspaceRootFsPath);
+  return command.split(/&&|\|\||;|\|/).some((segment) => segmentWipesRoot(segment, root, workspaceRootFsPath));
+}
+
+function segmentWipesRoot(segment: string, root: string, workspaceRootFsPath: string): boolean {
+  const tokens = segment.match(/"[^"]*"|'[^']*'|\S+/g) ?? [];
+  const rmIdx = tokens.findIndex((t) => /(^|\/)rm$/.test(t));
+  if (rmIdx === -1) return false;
+  let hasR = false;
+  let hasF = false;
+  const targets: string[] = [];
+  for (const raw of tokens.slice(rmIdx + 1)) {
+    const tok = raw.replace(/^["']|["']$/g, '');
+    if (tok === '--recursive') { hasR = true; continue; }
+    if (tok === '--force') { hasF = true; continue; }
+    if (/^-[a-zA-Z]+$/.test(tok)) {
+      if (/[rR]/.test(tok)) hasR = true;
+      if (/f/.test(tok)) hasF = true;
+      continue;
+    }
+    targets.push(tok);
+  }
+  if (!hasR || !hasF || targets.length === 0) return false;
+  return targets.some((t) => {
+    if (t === '.' || t === './') return true;
+    const resolved = path.isAbsolute(t) ? path.resolve(t) : path.resolve(workspaceRootFsPath, t);
+    return resolved === root || root.startsWith(resolved + path.sep);
+  });
 }

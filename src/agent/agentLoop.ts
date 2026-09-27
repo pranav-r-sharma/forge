@@ -339,7 +339,7 @@ export async function runAgentTurn(
     cancellation,
     proposeEdit: async (edit) => deps.pendingEdits.propose(edit, requireApprovalForWrites),
     readEffective: (uri) => deps.pendingEdits.readEffective(uri),
-    requestCommandApproval: (command, callId) => deps.approvalBroker.requestCommandApproval(command, callId),
+    requestCommandApproval: (command, callId) => deps.approvalBroker.requestCommandApproval(command, callId, deps.workspaceRoot.fsPath),
     requestPlanApproval: (detail, callId) => deps.approvalBroker.requestPlanApproval(detail, callId),
     codebaseSearch: deps.codebaseSearch,
     rememberFact: deps.rememberFact,

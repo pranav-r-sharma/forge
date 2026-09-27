@@ -99,8 +99,18 @@ async function main() {
   const events: AgentEvent[] = [];
   const ledger = new TaskLedger();
   const root = vscode.Uri.file(ws);
+  // Headless: nobody is watching to click Approve/Deny on a dangerous-command prompt (e.g. an rm -rf of the
+  // workspace root, per commandTool.ts's isWorkspaceWipe), so without this the run would just hang forever
+  // instead of failing cleanly — auto-deny immediately, same outcome an unattended real run should have.
+  const approvalBroker: ApprovalBroker = new ApprovalBroker((e: AgentEvent) => {
+    events.push(e);
+    if (e.type === 'approval_request') {
+      console.log(`  [auto-deny] dangerous command blocked in headless mode: ${e.detail}`);
+      approvalBroker.resolve(e.callId, false);
+    }
+  }, () => [], () => false);
   const deps: any = {
-    ollama: llm, pendingEdits: new PendingEditManager(root), approvalBroker: new ApprovalBroker((e: AgentEvent) => events.push(e), () => [], () => false), hooks: new HookRunner(root),
+    ollama: llm, pendingEdits: new PendingEditManager(root), approvalBroker, hooks: new HookRunner(root),
     codebaseSearch: (q: string, k: number) => keywordCodebaseSearch(root, q, k), rememberFact: async () => ({ added: false }), chatMemorySearch: async () => [],
     backgroundProcesses: new BackgroundProcessManager(), mcpTools: [],
     taskLedger: { addTasks: (t: any[]) => t.map((x) => ledger.add(typeof x === 'string' ? x : x.description).id), updateTask: () => true, list: () => ledger.list() },
