@@ -13,6 +13,7 @@ import {
   findUnexercisedTaskForms,
   findUnrunClaimedCommands,
   isPerFileVerificationTemplate,
+  scriptOperandIsCheckTarget,
   templateHasOnlyFlagsAfterExecutable,
 } from '../../src/agent/claimChecker';
 import { detectNestedToolAction, formatNestedActionResend } from '../../src/tools/argErrors';
@@ -88,6 +89,36 @@ function ok(cond: boolean, label: string) {
     multiNode.some((g) => g.uncovered.includes('c.js') && !g.uncovered.includes('a.js')),
     'node --check a.js b.js: only paths present in the command count as covered',
   );
+
+  const sevenPy = ['main.py', 'a.py', 'b.py', 'c.py', 'd.py', 'e.py', 'f.py'];
+  ok(
+    findPerFileCommandGaps(['python3 main.py -h'], sevenPy).length === 0,
+    'python3 main.py -h: running script with -h is not a per-file check',
+  );
+  ok(
+    findPerFileCommandGaps(['python3 main.py demo'], sevenPy).length === 0,
+    'python3 main.py demo: running script with args is not a per-file check',
+  );
+  ok(
+    findPerFileCommandGaps(['node app.js --help'], ['app.js', 'a.js', 'b.js']).length === 0,
+    'node app.js --help: running app is not a per-file check',
+  );
+  const pyCompileGap = findPerFileCommandGaps(['python3 -m py_compile a.py'], ['a.py', 'b.py']);
+  ok(
+    pyCompileGap.some((g) => g.uncovered.includes('b.py')),
+    'python3 -m py_compile a.py: sibling .py still uncovered',
+  );
+  const nodeCheckGap = findPerFileCommandGaps(['node --check a.js'], ['a.js', 'b.js']);
+  ok(
+    nodeCheckGap.some((g) => g.template === 'node --check' && g.uncovered.includes('b.js')),
+    'node --check a.js: sibling .js still uncovered',
+  );
+  const bashCheckGap = findPerFileCommandGaps(['bash -n a.sh'], ['a.sh', 'b.sh']);
+  ok(
+    bashCheckGap.some((g) => g.uncovered.includes('b.sh')),
+    'bash -n a.sh: sibling .sh still uncovered',
+  );
+  ok(scriptOperandIsCheckTarget('python3 -u main.py'), 'python3 -u main.py script operand is a check target');
 }
 
 // ---------- t08 cycle 2/3 fixtures ----------

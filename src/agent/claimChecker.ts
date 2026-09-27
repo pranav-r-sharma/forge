@@ -119,9 +119,157 @@ const NON_CHECK_EXECUTABLES = new Set([
   'head',
   'tail',
   'wc',
+]);
+
+const INTERPRETER_EXECUTABLES = new Set([
+  'python',
+  'python3',
+  'node',
+  'ruby',
+  'perl',
+  'php',
   'bash',
   'sh',
+  'zsh',
+  'deno',
+  'bun',
+  'lua',
+  'rscript',
+  'ts-node',
+  'tsx',
 ]);
+
+/** Options after which there is no script operand (later positionals are per-file targets). */
+const INTERPRETER_MODULE_OR_CODE_OPTS = new Set([
+  '-m',
+  '-c',
+  '-e',
+  '--eval',
+  '-p',
+  '--print',
+]);
+
+export function isInterpreterExecutable(leafName: string): boolean {
+  const leaf = leafName.replace(/^\.\//, '').split('/').pop() ?? leafName;
+  const lower = leaf.toLowerCase();
+  if (INTERPRETER_EXECUTABLES.has(lower)) return true;
+  return /^python3\.\d+$/i.test(lower);
+}
+
+function pathsReferToSameFile(filePath: string, token: string): boolean {
+  const a = filePath.replace(/^\.\//, '');
+  const b = token.replace(/^\.\//, '');
+  return a === b || a.endsWith('/' + b) || b.endsWith('/' + a);
+}
+
+function writtenFileAppearsAsCommandToken(command: string, filePath: string): boolean {
+  for (const tok of tokenizeShellCommand(command)) {
+    if (pathsReferToSameFile(filePath, tok)) return true;
+  }
+  return false;
+}
+
+function interpreterOptionConsumesNextToken(optToken: string): boolean {
+  const opt = (optToken.includes('=') ? optToken.split('=')[0] : optToken)!.toLowerCase();
+  return INTERPRETER_MODULE_OR_CODE_OPTS.has(opt);
+}
+
+/** First positional after the interpreter when not in -m / -c / … mode; otherwise undefined. */
+export function getInterpreterScriptOperandToken(command: string): string | undefined {
+  const tokens = tokenizeShellCommand(normalizeCommandWhitespace(command));
+  if (tokens.length < 2) return undefined;
+  const exeLeaf = tokens[0]!.replace(/^\.\//, '').split('/').pop() ?? '';
+  if (!isInterpreterExecutable(exeLeaf)) return undefined;
+
+  let i = 1;
+  while (i < tokens.length) {
+    const t = tokens[i]!;
+    if (t.startsWith('-')) {
+      const opt = (t.includes('=') ? t.split('=')[0] : t)!.toLowerCase();
+      if (INTERPRETER_MODULE_OR_CODE_OPTS.has(opt)) return undefined;
+      i++;
+      if (interpreterOptionConsumesNextToken(t) && i < tokens.length && !tokens[i]!.startsWith('-') && !t.includes('=')) {
+        i++;
+      }
+      continue;
+    }
+    return t;
+  }
+  return undefined;
+}
+
+/**
+ * Whether an interpreter command's script operand counts as a per-file verification target.
+ * Running a program (e.g. `python3 main.py -h`, `node app.js --help`) is not a per-file check.
+ * Check-style runs count when an option precedes the script and it is the last token
+ * (e.g. `node --check a.js`, `bash -n a.sh`). Known edge: `python3 -u main.py` counts as a check.
+ */
+export function scriptOperandIsCheckTarget(command: string): boolean {
+  const tokens = tokenizeShellCommand(normalizeCommandWhitespace(command));
+  if (tokens.length < 2) return false;
+  const exeLeaf = tokens[0]!.replace(/^\.\//, '').split('/').pop() ?? '';
+  if (!isInterpreterExecutable(exeLeaf)) return false;
+
+  let i = 1;
+  let hadOption = false;
+  while (i < tokens.length) {
+    const t = tokens[i]!;
+    if (t.startsWith('-')) {
+      hadOption = true;
+      const opt = (t.includes('=') ? t.split('=')[0] : t)!.toLowerCase();
+      if (INTERPRETER_MODULE_OR_CODE_OPTS.has(opt)) return false;
+      i++;
+      if (interpreterOptionConsumesNextToken(t) && i < tokens.length && !tokens[i]!.startsWith('-') && !t.includes('=')) {
+        i++;
+      }
+      continue;
+    }
+    break;
+  }
+  if (i >= tokens.length) return false;
+  if (i < tokens.length - 1) return false;
+  return hadOption;
+}
+
+function interpreterScriptPathIndex(command: string): number | undefined {
+  const tokens = tokenizeShellCommand(normalizeCommandWhitespace(command));
+  if (tokens.length < 2) return undefined;
+  const exeLeaf = tokens[0]!.replace(/^\.\//, '').split('/').pop() ?? '';
+  if (!isInterpreterExecutable(exeLeaf)) return undefined;
+  let i = 1;
+  while (i < tokens.length) {
+    const t = tokens[i]!;
+    if (t.startsWith('-')) {
+      const opt = (t.includes('=') ? t.split('=')[0] : t)!.toLowerCase();
+      if (INTERPRETER_MODULE_OR_CODE_OPTS.has(opt)) return undefined;
+      i++;
+      if (interpreterOptionConsumesNextToken(t) && i < tokens.length && !tokens[i]!.startsWith('-') && !t.includes('=')) {
+        i++;
+      }
+      continue;
+    }
+    return i;
+  }
+  return undefined;
+}
+
+function writtenFileIsNonCheckScriptOperand(command: string, filePath: string): boolean {
+  const script = getInterpreterScriptOperandToken(command);
+  if (!script || !pathsReferToSameFile(filePath, script)) return false;
+  if (scriptOperandIsCheckTarget(command)) return false;
+
+  const scriptIdx = interpreterScriptPathIndex(command);
+  if (scriptIdx === undefined) return false;
+  const tokens = tokenizeShellCommand(normalizeCommandWhitespace(command));
+  if (scriptIdx >= tokens.length - 1) return true;
+
+  for (let j = scriptIdx + 1; j < tokens.length; j++) {
+    const f = tokens[j]!;
+    if (f.startsWith('-')) return true;
+    if (!/\.[A-Za-z0-9]{1,10}$/.test(f)) return true;
+  }
+  return false;
+}
 
 function baseExecutable(command: string): string {
   const first = normalizeCommandWhitespace(command).split(/\s+/)[0] ?? '';
@@ -205,9 +353,11 @@ export function findPerFileCommandGaps(
 
   for (const cmd of executedCommands) {
     const norm = normalizeCommandWhitespace(cmd);
-    const pathsInCmd = written.filter(
-      (file) => norm.includes(file) || norm.includes(file.replace(/^\.\//, '')),
-    );
+    const pathsInCmd = written.filter((file) => {
+      if (!writtenFileAppearsAsCommandToken(norm, file)) return false;
+      if (writtenFileIsNonCheckScriptOperand(norm, file)) return false;
+      return true;
+    });
     if (pathsInCmd.length === 0) continue;
     const template = perFileCommandTemplateStripPaths(norm, pathsInCmd);
     if (!template || !isPerFileVerificationTemplate(template)) continue;
