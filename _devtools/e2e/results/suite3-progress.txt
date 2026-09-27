@@ -1,0 +1,13 @@
+=== t04-rename-symbol
+[new r1] pass=True wall=45.532 iters=9 evalTok=951 cache=88.6% (47s incl. server)
+[new r2] pass=True wall=45.481 iters=9 evalTok=951 cache=88.6% (47s incl. server)
+
+config      pass   wall_s  iters  evalTok  tool_fail  cache%   (medians)
+new         2/2     45.5    9.0    951.0        0.0    88.6
+=== t06-multi-file-feature
+[new r1] pass=False wall=604.009 iters=16 evalTok=2205 cache=93.1% (606s incl. server)
+[new r2] pass=False wall=163.166 iters=22 evalTok=3328 cache=94.9% (165s incl. server)
+
+config      pass   wall_s  iters  evalTok  tool_fail  cache%   (medians)
+new         0/2    383.6   19.0   2766.5        4.5    94.0
+=== SUITE DONE
