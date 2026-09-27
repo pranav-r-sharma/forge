@@ -76,6 +76,8 @@ Owner asked to pause further benchmarking. Two real follow-ups exist but are NOT
 
 Once resumed: reassess whether more read/search-tool work (ripgrep-class `search_code` with context lines, outline/symbol reads — see plan §3.1/§3.2) is still worth doing now that the edit-loop waste is fixed, using the trace's redundant-read counter as evidence either way — do not build it speculatively. Phase 0 of the plan is complete; the next real step is picking a 0.15.0-release item from `v0.15.0 suggestions.md` ("Suggested release slicing") — itself an owner decision to present with options, not assume.
 
+- **Handed off (2026-09-27): the final acceptance test (CLAUDE.md standing rule 8) — build-from-scratch, not fix-existing.** Owner asked for this to go to a fresh agent/session rather than continue here. Wrote a fresh `HANDOFF.md` with the full task brief: run the harness (MLX-4bit, now the default) building a multi-file program from an empty repo (none of the existing `t01`-`t06` tasks do this — they all fix/extend existing code), watch closely, log lags/performance-drops/outright-failures, then report back and let the owner decide fixes — do not auto-implement. See `HANDOFF.md` for the full brief; this entry is just the pointer.
+
 ## Owner decisions (2026-09-26)
 - Start given. MLX install approved (project venv, pinned, offline, no remote code, no sudo).
 - **Max stage models:** "Ornith 1 30B" and "Qwen 3.8 27B" on the M5 Max (not tested on this 32 GB Mac; Directive 4 keeps testing here Ornith-9B only). Note: Qwen3.8-27B is one of the two models the parked Splash engine supports.
