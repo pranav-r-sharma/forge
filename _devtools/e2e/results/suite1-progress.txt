@@ -1,0 +1,55 @@
+=== t01-fix-bug
+[old r1] pass=True wall=69.839 iters=11 evalTok=1444 cache=84.6% (71s incl. server)
+[old r2] pass=True wall=68.776 iters=11 evalTok=1444 cache=84.6% (71s incl. server)
+[new r1] pass=True wall=33.571 iters=8 evalTok=657 cache=86.7% (35s incl. server)
+[new r2] pass=True wall=33.394 iters=8 evalTok=657 cache=86.7% (35s incl. server)
+
+config      pass   wall_s  iters  evalTok  tool_fail  cache%   (medians)
+old         2/2     69.3   11.0   1444.0        2.0    84.6
+new         2/2     33.5    8.0    657.0        1.0    86.7
+=== t02-locate
+[old r1] pass=True wall=13.084 iters=4 evalTok=200 cache=74% (15s incl. server)
+[old r2] pass=True wall=13.132 iters=4 evalTok=200 cache=74% (15s incl. server)
+[new r1] pass=True wall=14.117 iters=5 evalTok=207 cache=79.2% (16s incl. server)
+[new r2] pass=True wall=14.085 iters=5 evalTok=207 cache=79.2% (16s incl. server)
+
+config      pass   wall_s  iters  evalTok  tool_fail  cache%   (medians)
+old         2/2     13.1    4.0    200.0        0.0    74.0
+new         2/2     14.1    5.0    207.0        0.0    79.2
+=== t03-add-function
+[old r1] pass=True wall=112.755 iters=17 evalTok=2435 cache=90.5% (115s incl. server)
+[old r2] pass=False wall=279.152 iters=30 evalTok=5923 cache=91.1% (281s incl. server)
+[new r1] pass=True wall=106.829 iters=13 evalTok=2392 cache=92% (108s incl. server)
+[new r2] pass=True wall=392.261 iters=12 evalTok=9308 cache=92.7% (394s incl. server)
+
+config      pass   wall_s  iters  evalTok  tool_fail  cache%   (medians)
+old         1/2    196.0   23.5   4179.0        4.0    90.8
+new         2/2    249.5   12.5   5850.0        1.5    92.3
+=== t04-rename-symbol
+[old r1] pass=False wall=111.933 iters=30 evalTok=1885 cache=86.2% (114s incl. server)
+[old r2] pass=False wall=111.81 iters=30 evalTok=1885 cache=86.2% (113s incl. server)
+[new r1] pass=True wall=120.712 iters=28 evalTok=2572 cache=95.8% (122s incl. server)
+[new r2] pass=True wall=132.45 iters=30 evalTok=2555 cache=96.3% (134s incl. server)
+
+config      pass   wall_s  iters  evalTok  tool_fail  cache%   (medians)
+old         0/2    111.9   30.0   1885.0        0.0    86.2
+new         2/2    126.6   29.0   2563.5        2.5    96.0
+=== t05-large-file
+[old r1] pass=True wall=37.683 iters=7 evalTok=710 cache=81.7% (40s incl. server)
+[old r2] pass=True wall=36.306 iters=7 evalTok=710 cache=81.7% (38s incl. server)
+[new r1] pass=True wall=42.358 iters=9 evalTok=873 cache=88.6% (44s incl. server)
+[new r2] pass=True wall=42.567 iters=9 evalTok=873 cache=88.6% (44s incl. server)
+
+config      pass   wall_s  iters  evalTok  tool_fail  cache%   (medians)
+old         2/2     37.0    7.0    710.0        1.0    81.7
+new         2/2     42.5    9.0    873.0        5.0    88.6
+=== t06-multi-file-feature
+[old r1] pass=False wall=209.102 iters=30 evalTok=3913 cache=84.7% (211s incl. server)
+[old r2] pass=False wall=217.523 iters=29 evalTok=4468 cache=89.1% (219s incl. server)
+[new r1] pass=True wall=113.418 iters=19 evalTok=2451 cache=93.6% (115s incl. server)
+[new r2] pass=True wall=113.317 iters=19 evalTok=2451 cache=93.6% (115s incl. server)
+
+config      pass   wall_s  iters  evalTok  tool_fail  cache%   (medians)
+old         0/2    213.3   29.5   4190.5        8.5    86.9
+new         2/2    113.4   19.0   2451.0        5.0    93.6
+=== SUITE DONE

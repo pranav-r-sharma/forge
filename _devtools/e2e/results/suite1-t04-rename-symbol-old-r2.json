@@ -1,0 +1,50 @@
+{
+  "task": "t04-rename-symbol",
+  "provider": "mlx",
+  "model": "a48173b246ac705be75c05bedf1a0666db522d53",
+  "thinking": "off",
+  "ctx": 32768,
+  "appendOnly": false,
+  "maxIters": 30,
+  "timeoutS": 600,
+  "startedAt": "2026-09-27T04:26:37.612Z",
+  "hardware": "Apple M5, 32 GB",
+  "serverReadyS": 1.04,
+  "agentError": "Stopped after 30 steps without a final answer. You can ask me to continue.",
+  "wallS": 111.81,
+  "checkExit": 1,
+  "checkOutput": "\n\n----------------------------------------------------------------------\nRan 1 test in 0.000s\n\nFAILED (errors=1)",
+  "protectedTouched": [],
+  "filesChanged": [
+    "orders/cli.py",
+    "orders/invoice.py",
+    "orders/pricing.py",
+    "orders/report.py",
+    "tests/test_orders.py"
+  ],
+  "pass": false,
+  "finalText": "",
+  "iterations": 30,
+  "tools": {
+    "search_code": 3,
+    "read_file": 11,
+    "write_file": 16
+  },
+  "toolFailures": 0,
+  "redundantReads": 0,
+  "reads": 11,
+  "viewEvents": 0,
+  "modelS": 111.79,
+  "toolS": 0.01,
+  "tokensEvaluated": 22791,
+  "tokensCached": 142592,
+  "cacheHitPct": 86.2,
+  "evalTokens": 1885,
+  "promptCharsMax": 27793,
+  "hw": {
+    "minAvailableGB": 10.7,
+    "maxSwapGB": 0.75,
+    "gpuPeakPct": 100
+  },
+  "tracePath": "_devtools/e2e/results/suite1-t04-rename-symbol-old-r2.trace.jsonl"
+}

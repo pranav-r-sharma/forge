@@ -111,7 +111,7 @@ export function detectEnvironment(workspaceRoot: string, workspaceName: string, 
 /** The prompt section. Stable for a given machine+project, so it is safe in the cached system prompt. */
 export function renderEnvironment(f: EnvironmentFacts): string {
   const osName = f.platform === 'darwin' ? 'macOS' : f.platform === 'win32' ? 'Windows' : f.platform === 'linux' ? 'Linux' : f.platform;
-  const lines = [`## Environment (do not guess — this was detected)`, `- ${osName} (${f.arch}), shell: ${f.shell}. Commands run with the workspace "${f.workspaceName}" root as the working directory unless you pass a "cwd".`];
+  const lines = [`## Environment (do not guess — this was detected)`, `- ${osName} (${f.arch}), shell: ${f.shell}. Commands run from the project's root folder by default — pass "cwd" only to run inside a subfolder, as a path relative to that root (never the project's own name).`];
   if (f.projectKinds.length) lines.push(`- Project type: ${f.projectKinds.join(', ')}.`);
   if (f.available.length) lines.push(`- Installed: ${f.available.join(', ')}.`);
   const notes: string[] = [];

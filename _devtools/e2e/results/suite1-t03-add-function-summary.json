@@ -1,0 +1,201 @@
+{
+  "old": [
+    {
+      "task": "t03-add-function",
+      "provider": "mlx",
+      "model": "a48173b246ac705be75c05bedf1a0666db522d53",
+      "thinking": "off",
+      "ctx": 32768,
+      "appendOnly": false,
+      "maxIters": 30,
+      "timeoutS": 600,
+      "startedAt": "2026-09-27T04:09:46.204Z",
+      "hardware": "Apple M5, 32 GB",
+      "serverReadyS": 1.291,
+      "wallS": 112.755,
+      "checkExit": 0,
+      "checkOutput": "acceptance ok\nRan 4 tests in 0.000s\n\nOK",
+      "protectedTouched": [],
+      "filesChanged": [
+        "tests/test_strings.py",
+        "textutils/strings.py",
+        ".pytest_cache/.gitignore",
+        ".pytest_cache/CACHEDIR.TAG",
+        ".pytest_cache/README.md",
+        ".pytest_cache/v/cache/lastfailed",
+        ".pytest_cache/v/cache/nodeids"
+      ],
+      "pass": true,
+      "finalText": "Done. All 4 tests pass.\n\n## What changed\n\n**`textutils/strings.py`** \u2014 added `slugify(text)`:\n```python\ndef slugify(text):\n    \"\"\"Lowercase, collapse non-alphanumeric runs to hyphens, strip edge hyphens.\"\"\"\n    lowered = text.lower()\n    collapsed = re.sub(r\"[^a-z0-9]+\", \"-\", lowered)\n    stripped = collapsed.strip(\"-\")\n    return stripped\n```\n- Lowercases the text.\n- Uses `re.sub(r\"[^a-z0-9]+\", \"",
+      "iterations": 17,
+      "tools": {
+        "read_file": 5,
+        "write_file": 7,
+        "run_command": 4
+      },
+      "toolFailures": 2,
+      "redundantReads": 0,
+      "reads": 5,
+      "viewEvents": 0,
+      "modelS": 112.25,
+      "toolS": 0.51,
+      "tokensEvaluated": 8753,
+      "tokensCached": 83093,
+      "cacheHitPct": 90.5,
+      "evalTokens": 2435,
+      "promptCharsMax": 28672,
+      "hw": {
+        "minAvailableGB": 10.7,
+        "maxSwapGB": 0.75,
+        "gpuPeakPct": 100
+      },
+      "tracePath": "_devtools/e2e/results/suite1-t03-add-function-old-r1.trace.jsonl"
+    },
+    {
+      "task": "t03-add-function",
+      "provider": "mlx",
+      "model": "a48173b246ac705be75c05bedf1a0666db522d53",
+      "thinking": "off",
+      "ctx": 32768,
+      "appendOnly": false,
+      "maxIters": 30,
+      "timeoutS": 600,
+      "startedAt": "2026-09-27T04:11:40.825Z",
+      "hardware": "Apple M5, 32 GB",
+      "serverReadyS": 1.041,
+      "agentError": "Stopped after 30 steps without a final answer. You can ask me to continue.",
+      "wallS": 279.152,
+      "checkExit": 1,
+      "checkOutput": "Traceback (most recent call last):\n  File \"/Users/pranavsharma/Code Projects/Local LLM Tools/forge/_devtools/e2e/tasks/t03-add-function/acceptance.py\", line 4, in <module>\n    assert not bad, f\"slugify wrong: {bad}\"\n           ^^^^^^^\nAssertionError: slugify wrong: {'  Hello, World!  ': ('h-e-l-l-o-w-o-r-l-d', 'hello-world'), 'Already-slugged': ('a-l-r-e-a-d-y-s-l-u-g-g-e-d', 'already-slugged')}",
+      "protectedTouched": [],
+      "filesChanged": [
+        "tests/test_strings.py",
+        "textutils/strings.py",
+        ".pytest_cache/.gitignore",
+        ".pytest_cache/CACHEDIR.TAG",
+        ".pytest_cache/README.md",
+        ".pytest_cache/v/cache/lastfailed",
+        ".pytest_cache/v/cache/nodeids"
+      ],
+      "pass": false,
+      "finalText": "",
+      "iterations": 30,
+      "tools": {
+        "read_file": 6,
+        "write_file": 7,
+        "run_command": 17
+      },
+      "toolFailures": 6,
+      "redundantReads": 0,
+      "reads": 6,
+      "viewEvents": 0,
+      "modelS": 278.24,
+      "toolS": 0.9,
+      "tokensEvaluated": 22146,
+      "tokensCached": 227732,
+      "cacheHitPct": 91.1,
+      "evalTokens": 5923,
+      "promptCharsMax": 49304,
+      "hw": {
+        "minAvailableGB": 9.2,
+        "maxSwapGB": 0.75,
+        "gpuPeakPct": 100
+      },
+      "tracePath": "_devtools/e2e/results/suite1-t03-add-function-old-r2.trace.jsonl"
+    }
+  ],
+  "new": [
+    {
+      "task": "t03-add-function",
+      "provider": "mlx",
+      "model": "a48173b246ac705be75c05bedf1a0666db522d53",
+      "thinking": "auto",
+      "ctx": 32768,
+      "appendOnly": true,
+      "maxIters": 30,
+      "timeoutS": 600,
+      "startedAt": "2026-09-27T04:16:21.580Z",
+      "hardware": "Apple M5, 32 GB",
+      "serverReadyS": 1.051,
+      "wallS": 106.829,
+      "checkExit": 0,
+      "checkOutput": "acceptance ok\nRan 4 tests in 0.000s\n\nOK",
+      "protectedTouched": [],
+      "filesChanged": [
+        "tests/test_strings.py",
+        "textutils/strings.py"
+      ],
+      "pass": true,
+      "finalText": "Done. All 4 tests pass, including the new `slugify` tests.\n\n**What changed:**\n- Added `slugify(text)` to `textutils/strings.py` \u2014 lowercases the text, replaces every run of non-alphanumeric characters with a single hyphen, and strips leading/trailing hyphens.\n- Added a `test_slugify` case (6 assertions) to `tests/test_strings.py`, and updated the import line.\n\n**How it works:** each character beco",
+      "iterations": 13,
+      "tools": {
+        "read_file": 4,
+        "write_file": 6,
+        "run_command": 2
+      },
+      "toolFailures": 1,
+      "redundantReads": 0,
+      "reads": 4,
+      "viewEvents": 0,
+      "modelS": 106.73,
+      "toolS": 0.08,
+      "tokensEvaluated": 5847,
+      "tokensCached": 67390,
+      "cacheHitPct": 92,
+      "evalTokens": 2392,
+      "promptCharsMax": 30220,
+      "hw": {
+        "minAvailableGB": 10.6,
+        "maxSwapGB": 0.75,
+        "gpuPeakPct": 100
+      },
+      "tracePath": "_devtools/e2e/results/suite1-t03-add-function-new-r1.trace.jsonl"
+    },
+    {
+      "task": "t03-add-function",
+      "provider": "mlx",
+      "model": "a48173b246ac705be75c05bedf1a0666db522d53",
+      "thinking": "auto",
+      "ctx": 32768,
+      "appendOnly": true,
+      "maxIters": 30,
+      "timeoutS": 600,
+      "startedAt": "2026-09-27T04:18:10.056Z",
+      "hardware": "Apple M5, 32 GB",
+      "serverReadyS": 1.141,
+      "wallS": 392.261,
+      "checkExit": 0,
+      "checkOutput": "acceptance ok\nRan 4 tests in 0.000s\n\nOK",
+      "protectedTouched": [],
+      "filesChanged": [
+        "tests/test_strings.py",
+        "textutils/strings.py"
+      ],
+      "pass": true,
+      "finalText": "Done. All tests pass.\n\n**What changed:**\n- Added `slugify(text)` to `textutils/strings.py` \u2014 lowercases the text, replaces every run of non-alphanumeric characters with a single hyphen (tracked via a `prev_hyphen` flag), and strips leading/trailing hyphens with `strip(\"-\")`.\n- Added `slugify` to the import in `tests/test_strings.py` and added a `test_slugify` case with 6 assertions.\n\n**Test result",
+      "iterations": 12,
+      "tools": {
+        "read_file": 2,
+        "write_file": 5,
+        "run_command": 3
+      },
+      "toolFailures": 2,
+      "redundantReads": 0,
+      "reads": 2,
+      "viewEvents": 0,
+      "modelS": 392.15,
+      "toolS": 0.11,
+      "tokensEvaluated": 5787,
+      "tokensCached": 73837,
+      "cacheHitPct": 92.7,
+      "evalTokens": 9308,
+      "promptCharsMax": 42104,
+      "hw": {
+        "minAvailableGB": 9.7,
+        "maxSwapGB": 0.75,
+        "gpuPeakPct": 100
+      },
+      "tracePath": "_devtools/e2e/results/suite1-t03-add-function-new-r2.trace.jsonl"
+    }
+  ]
+}

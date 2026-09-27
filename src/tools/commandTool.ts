@@ -1,5 +1,7 @@
 import * as vscode from 'vscode';
 import { spawn } from 'child_process';
+import * as fs from 'fs';
+import * as path from 'path';
 import { ToolExecContext, ToolResult } from '../agent/types';
 import { resolveWorkspacePath } from '../util/paths';
 
@@ -8,6 +10,33 @@ const DEFAULT_TIMEOUT_MS = 60_000;
 const MAX_TIMEOUT_MS = 180_000;
 
 let callCounter = 0;
+
+export type CwdResolution = { ok: true; cwd: string; note?: string } | { ok: false; error: string };
+
+/**
+ * Resolves run_command's optional `cwd` against the workspace root and CHECKS it exists before spawning. Found by the full-suite run: a model passed
+ * the workspace's own NAME as `cwd` ("t05-large-file"), Node answered `spawn /bin/sh ENOENT` — which says nothing about a missing folder — and the
+ * model retried the identical call five times. Now: an existing folder is used; the workspace's own name is understood as the root (with a note);
+ * anything else gets an error that says what is wrong and lists the real folders. Throws only via resolveWorkspacePath (path escapes the workspace).
+ */
+export function resolveCommandCwd(
+  workspaceRootFsPath: string,
+  requested: unknown,
+  deps: { isDir?: (p: string) => boolean; list?: (p: string) => string[] } = {}
+): CwdResolution {
+  const isDir = deps.isDir ?? ((p: string) => { try { return fs.statSync(p).isDirectory(); } catch { return false; } });
+  const list = deps.list ?? ((p: string) => { try { return fs.readdirSync(p, { withFileTypes: true }).filter((d) => d.isDirectory() && !d.name.startsWith('.') && d.name !== 'node_modules' && d.name !== '__pycache__').map((d) => d.name).sort(); } catch { return []; } });
+  const raw = typeof requested === 'string' ? requested.trim() : '';
+  if (!raw || raw === '.' || raw === './') return { ok: true, cwd: workspaceRootFsPath };
+  const target = resolveWorkspacePath(vscode.Uri.file(workspaceRootFsPath), raw).fsPath;
+  if (isDir(target)) return { ok: true, cwd: target };
+  const rootName = path.basename(workspaceRootFsPath);
+  if (raw.replace(/\/+$/, '') === rootName) {
+    return { ok: true, cwd: workspaceRootFsPath, note: `Note: there is no folder "${rootName}" inside the workspace — that is the workspace itself, so the command ran in the workspace root. Commands run there by default; omit "cwd" unless you need a subfolder.` };
+  }
+  const dirs = list(workspaceRootFsPath).slice(0, 15);
+  return { ok: false, error: `The "cwd" folder "${raw}" does not exist under the workspace root. Commands run from the workspace root by default, so omit "cwd" unless you need a subfolder.${dirs.length ? ` Folders in the workspace root: ${dirs.map((d) => d + '/').join(', ')}.` : ''}` };
+}
 
 export async function runCommandTool(args: Record<string, any>, ctx: ToolExecContext): Promise<ToolResult> {
   const command: string = args.command ?? '';
@@ -24,8 +53,12 @@ export async function runCommandTool(args: Record<string, any>, ctx: ToolExecCon
   }
 
   let cwd: string;
+  let cwdNote: string | undefined;
   try {
-    cwd = resolveWorkspacePath(ctx.workspaceRoot, args.cwd || '.').fsPath;
+    const r = resolveCommandCwd(ctx.workspaceRoot.fsPath, args.cwd);
+    if (!r.ok) return { ok: false, content: r.error };
+    cwd = r.cwd;
+    cwdNote = r.note;
   } catch (err: any) {
     return { ok: false, content: err.message };
   }
@@ -139,7 +172,7 @@ export async function runCommandTool(args: Record<string, any>, ctx: ToolExecCon
       settled = true;
       cleanupTimers();
       cancelListener.dispose();
-      resolve({ ok: false, content: `Failed to run command: ${err.message}` });
+      resolve({ ok: false, content: `Failed to run command: ${err.message}${err.code === 'ENOENT' ? ` (the shell could not be started in ${cwd} — check that the folder exists)` : ''}` });
     });
 
     child.on('close', (code: number | null, signal: string | null) => {
@@ -159,7 +192,7 @@ export async function runCommandTool(args: Record<string, any>, ctx: ToolExecCon
       const header = `$ ${command}\n(exit code: ${code ?? 'unknown'}${signal ? `, signal: ${signal}` : ''})`;
       resolve({
         ok: code === 0,
-        content: `${header}\n${output.trim() || '(no output)'}${truncated}${killedNote}`,
+        content: `${header}\n${output.trim() || '(no output)'}${truncated}${killedNote}${cwdNote ? `\n\n${cwdNote}` : ''}`,
       });
     });
   });

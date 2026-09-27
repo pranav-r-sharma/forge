@@ -1,0 +1,50 @@
+{
+  "task": "t04-rename-symbol",
+  "provider": "mlx",
+  "model": "a48173b246ac705be75c05bedf1a0666db522d53",
+  "thinking": "auto",
+  "ctx": 32768,
+  "appendOnly": true,
+  "maxIters": 30,
+  "timeoutS": 600,
+  "startedAt": "2026-09-27T04:28:31.047Z",
+  "hardware": "Apple M5, 32 GB",
+  "serverReadyS": 1.062,
+  "wallS": 120.712,
+  "checkExit": 0,
+  "checkOutput": "----------------------------------------------------------------------\nRan 4 tests in 0.000s\n\nOK",
+  "protectedTouched": [],
+  "filesChanged": [
+    "orders/cli.py",
+    "orders/invoice.py",
+    "orders/pricing.py",
+    "orders/report.py",
+    "tests/test_orders.py"
+  ],
+  "pass": true,
+  "finalText": "All 4 tests pass. Done.\n\n## Summary\n\nRenamed `calc_tot` → `calculate_total` across the repo (behaviour unchanged):\n\n- **`orders/pricing.py`** — function definition\n- **`orders/cli.py`** — import + call\n- **`orders/invoice.py`** — import + call\n- **`orders/report.py`** — `pricing.calculate_total` call\n- **`tests/test_orders.py`** — import + both test method names + both assertions\n\nAll 4 tests pass",
+  "iterations": 28,
+  "tools": {
+    "search_code": 4,
+    "read_file": 6,
+    "write_file": 12,
+    "run_command": 5
+  },
+  "toolFailures": 3,
+  "redundantReads": 0,
+  "reads": 6,
+  "viewEvents": 0,
+  "modelS": 120.58,
+  "toolS": 0.11,
+  "tokensEvaluated": 7232,
+  "tokensCached": 165167,
+  "cacheHitPct": 95.8,
+  "evalTokens": 2572,
+  "promptCharsMax": 31493,
+  "hw": {
+    "minAvailableGB": 10.2,
+    "maxSwapGB": 0.75,
+    "gpuPeakPct": 100
+  },
+  "tracePath": "_devtools/e2e/results/suite1-t04-rename-symbol-new-r1.trace.jsonl"
+}

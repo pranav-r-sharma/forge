@@ -1,0 +1,46 @@
+{
+  "task": "t01-fix-bug",
+  "provider": "mlx",
+  "model": "a48173b246ac705be75c05bedf1a0666db522d53",
+  "thinking": "off",
+  "ctx": 32768,
+  "appendOnly": false,
+  "maxIters": 30,
+  "timeoutS": 600,
+  "startedAt": "2026-09-27T04:06:23.496Z",
+  "hardware": "Apple M5, 32 GB",
+  "serverReadyS": 1.303,
+  "wallS": 68.776,
+  "checkExit": 0,
+  "checkOutput": "----------------------------------------------------------------------\nRan 4 tests in 0.000s\n\nOK",
+  "protectedTouched": [],
+  "filesChanged": [
+    "shop/cart.py"
+  ],
+  "pass": true,
+  "finalText": "All 4 tests pass.\n\n## Summary\n\n**Bug:** In `shop/cart.py`, the `cart_total` function computed the line total with a hardcoded quantity of `1`:\n\n```python\nsubtotal += line_total(price, 1)  # BUG: ignores the quantity\n```\n\nThis meant quantities were never applied — e.g. `cart_total([(10.0, 2), (5.0, 3)])` returned `15.0` instead of the expected `35.0`.\n\n**Fix:** Changed the hardcoded `1` to the actu",
+  "iterations": 11,
+  "tools": {
+    "list_dir": 2,
+    "read_file": 3,
+    "write_file": 1,
+    "run_command": 4
+  },
+  "toolFailures": 2,
+  "redundantReads": 0,
+  "reads": 3,
+  "viewEvents": 0,
+  "modelS": 68.71,
+  "toolS": 0.06,
+  "tokensEvaluated": 7124,
+  "tokensCached": 39141,
+  "cacheHitPct": 84.6,
+  "evalTokens": 1444,
+  "promptCharsMax": 19756,
+  "hw": {
+    "minAvailableGB": 11.5,
+    "maxSwapGB": 0.75,
+    "gpuPeakPct": 100
+  },
+  "tracePath": "_devtools/e2e/results/suite1-t01-fix-bug-old-r2.trace.jsonl"
+}
