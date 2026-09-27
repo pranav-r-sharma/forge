@@ -223,3 +223,125 @@ export async function readGpuWiredLimitMB(exec: ExecFn = defaultExec, platform: 
     return undefined;
   }
 }
+
+// ---------------------------------------------------------------------------------------------------------------------------------------
+// Continuous sampler: ONE timer in the extension host (not one per webview), GPU smoothing, per-turn peak.
+// ---------------------------------------------------------------------------------------------------------------------------------------
+
+export interface SmoothedGpu extends GpuSample {
+  /** Mean utilization over the recent window (default ~4 s). Show THIS, not the raw instant — a single sample swings 0↔100 within a second. */
+  avgPct: number;
+  /** Highest instant seen since resetPeak() (e.g. since the current turn started). */
+  peakPct: number;
+}
+
+export interface HwSnapshot {
+  memory?: MemorySample;
+  gpus: SmoothedGpu[];
+  /** OS GPU wired-memory override in MB, if one is configured (read-only; undefined = system default). */
+  gpuWiredLimitMB?: number;
+  /** When the newest reading was taken; consumers can show its age instead of pretending it is live. */
+  sampledAtMs?: number;
+}
+
+/** Mean of the samples whose timestamp falls in (now − windowMs, now]. Undefined when the window is empty. Pure. */
+export function averageOverWindow(history: { t: number; v: number }[], now: number, windowMs: number): number | undefined {
+  const recent = history.filter((h) => h.t > now - windowMs && h.t <= now);
+  if (!recent.length) return undefined;
+  return recent.reduce((s, h) => s + h.v, 0) / recent.length;
+}
+
+export interface HwSamplerDeps {
+  exec?: ExecFn;
+  platform?: string;
+  now?: () => number;
+  /** Smoothing window for GPU utilization (ms). */
+  windowMs?: number;
+}
+
+export class HwSampler {
+  private snap: HwSnapshot = { gpus: [] };
+  private gpuHistory: { t: number; v: number }[][] = [];
+  private peaks: number[] = [];
+  private timer: ReturnType<typeof setTimeout> | undefined;
+  private running = false;
+  private intervalMs = 2000;
+  private onSample: ((s: HwSnapshot) => void) | undefined;
+  private inFlight: Promise<HwSnapshot> | undefined;
+  private wiredLimitRead = false;
+
+  constructor(private readonly deps: HwSamplerDeps = {}) {}
+
+  latest(): HwSnapshot {
+    return this.snap;
+  }
+
+  /** Starts the single sampling loop. Each tick waits for the previous one to finish (no overlapping exec storms); the timer never keeps Node alive. */
+  start(intervalMs = 2000, onSample?: (s: HwSnapshot) => void): void {
+    this.intervalMs = Math.max(250, intervalMs);
+    this.onSample = onSample;
+    if (this.running) return;
+    this.running = true;
+    const tick = async () => {
+      if (!this.running) return;
+      try {
+        const s = await this.sampleOnce();
+        if (this.running) this.onSample?.(s);
+      } catch {
+        /* sampleOnce never throws in practice; a failure just means no update this tick */
+      }
+      if (this.running) {
+        this.timer = setTimeout(tick, this.intervalMs);
+        (this.timer as any)?.unref?.();
+      }
+    };
+    void tick();
+  }
+
+  setIntervalMs(ms: number): void {
+    this.intervalMs = Math.max(250, ms);
+  }
+
+  stop(): void {
+    this.running = false;
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = undefined;
+  }
+
+  /** Forget peaks (call when a turn starts so "peak this turn" means this turn). */
+  resetPeak(): void {
+    this.peaks = this.peaks.map(() => 0);
+  }
+
+  /** Takes one reading now (coalesces concurrent callers onto the same in-flight read). Never throws. */
+  sampleOnce(): Promise<HwSnapshot> {
+    if (this.inFlight) return this.inFlight;
+    this.inFlight = this.doSample().finally(() => {
+      this.inFlight = undefined;
+    });
+    return this.inFlight;
+  }
+
+  private async doSample(): Promise<HwSnapshot> {
+    const exec = this.deps.exec ?? defaultExec;
+    const platform = this.deps.platform ?? process.platform;
+    const now = this.deps.now ?? Date.now;
+    const windowMs = this.deps.windowMs ?? 4000;
+    const [memory, gpuRaw] = await Promise.all([readMemorySample(exec, platform), readGpuSamples(exec, platform)]);
+    if (!this.wiredLimitRead) {
+      this.wiredLimitRead = true;
+      this.snap.gpuWiredLimitMB = await readGpuWiredLimitMB(exec, platform);
+    }
+    const t = now();
+    const gpus: SmoothedGpu[] = gpuRaw.map((g, i) => {
+      const hist = (this.gpuHistory[i] = this.gpuHistory[i] || []);
+      hist.push({ t, v: g.utilizationPct });
+      while (hist.length && hist[0].t <= t - windowMs * 4) hist.shift(); // bounded memory
+      this.peaks[i] = Math.max(this.peaks[i] || 0, g.utilizationPct);
+      return { ...g, avgPct: Math.round(averageOverWindow(hist, t, windowMs) ?? g.utilizationPct), peakPct: this.peaks[i] };
+    });
+    // A source that failed this tick clears its value (→ "n/a") instead of showing a stale one as if it were live.
+    this.snap = { memory, gpus, gpuWiredLimitMB: this.snap.gpuWiredLimitMB, sampledAtMs: t };
+    return this.snap;
+  }
+}

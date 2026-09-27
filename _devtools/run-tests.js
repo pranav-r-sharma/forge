@@ -20,7 +20,11 @@ function runOne(f) {
     p.on('close', (code) => {
       clearTimeout(timer);
       const m = /(\d+) passed, (\d+) failed/.exec(out);
-      resolve({ file: f, code, secs: ((Date.now() - t0) / 1000).toFixed(1), passed: m ? +m[1] : null, failed: m ? +m[2] : null, out });
+      // A file only counts as passing if it exits 0 AND printed its own completion line. Node exits 0 silently if the event loop empties
+      // mid-await (e.g. an unref'd timer), which would otherwise look like a pass with checks never run.
+      const complete = /All .*passed\./i.test(out) || (!!m && m[2] === '0');
+      const noNotOk = !/^NOT OK/m.test(out);
+      resolve({ file: f, code: code === 0 && complete && noNotOk ? 0 : code === 0 ? 'INCOMPLETE' : code, secs: ((Date.now() - t0) / 1000).toFixed(1), passed: m ? +m[1] : null, failed: m ? +m[2] : null, out });
     });
   });
 }
@@ -31,7 +35,7 @@ function runOne(f) {
   let ok = 0, bad = 0, tp = 0, tf = 0;
   for (const r of results) {
     const pass = r.code === 0; pass ? ok++ : bad++; tp += r.passed || 0; tf += r.failed || 0;
-    console.log(`${pass ? 'PASS' : 'FAIL'}  ${r.file.padEnd(38)} ${String(r.passed ?? '?').padStart(4)} passed ${String(r.failed ?? '?').padStart(3)} failed  ${r.secs}s`);
+    console.log(`${pass ? 'PASS' : r.code === 'INCOMPLETE' ? 'INCOMPLETE' : 'FAIL'}  ${r.file.padEnd(38)} ${String(r.passed ?? '?').padStart(4)} passed ${String(r.failed ?? '?').padStart(3)} failed  ${r.secs}s`);
   }
   console.log(`\n${ok}/${results.length} files passed; ${tp} checks passed, ${tf} failed.`);
   if (bad) { for (const r of results.filter((x) => x.code !== 0)) { console.log(`\n--- ${r.file} (exit ${r.code}) — last lines ---\n` + r.out.trim().split('\n').slice(-8).join('\n')); } process.exit(1); }

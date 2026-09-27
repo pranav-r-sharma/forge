@@ -6,7 +6,7 @@
 // ============================================================================
 import * as fs from 'fs';
 import * as path from 'path';
-import { parseVmStat, parseSwapUsage, parsePressureLevel, computeMemory, readMemorySample, parseIoregAccelerator, readGpuSamples, readGpuWiredLimitMB, ExecFn } from '../../src/util/hwSampler';
+import { parseVmStat, parseSwapUsage, parsePressureLevel, computeMemory, readMemorySample, parseIoregAccelerator, readGpuSamples, readGpuWiredLimitMB, averageOverWindow, HwSampler, ExecFn } from '../../src/util/hwSampler';
 
 let passed = 0;
 let failed = 0;
@@ -125,6 +125,65 @@ async function testGpuReadWithFakes() {
   ok((await readGpuWiredLimitMB(async () => '20480\n', 'darwin')) === 20480, 'a configured wired limit is read (read-only — Forge never sets it)');
 }
 
+function testSmoothing() {
+  const h = [{ t: 1000, v: 100 }, { t: 2000, v: 0 }, { t: 3000, v: 50 }, { t: 9000, v: 10 }];
+  ok(averageOverWindow(h, 3000, 4000) === 50, 'mean over the window (1000 falls outside a 4 s window ending at 3000? no — (−1000,3000] includes all three → 50)');
+  ok(averageOverWindow(h, 9000, 4000) === 10, 'old samples outside the window are ignored');
+  ok(averageOverWindow(h, 20000, 4000) === undefined, 'an empty window → undefined, not 0');
+  ok(averageOverWindow([], 5, 10) === undefined, 'no history → undefined');
+}
+
+async function testSampler() {
+  let t = 100000;
+  let util = 90;
+  let calls = 0;
+  const ioregFor = (u: number) => REAL_IOREG.replace('"Device Utilization %"=3', `"Device Utilization %"=${u}`);
+  const exec: ExecFn = async (cmd, args) => {
+    calls++;
+    const key = `${cmd} ${args.join(' ')}`;
+    if (key === 'sysctl -n hw.memsize') return String(32 * GB);
+    if (cmd === 'vm_stat') return REAL_VM;
+    if (key === 'sysctl -n vm.swapusage') return 'total = 2048.00M  used = 100.00M  free = 1948.00M';
+    if (key === 'sysctl -n kern.memorystatus_vm_pressure_level') return '1';
+    if (key === 'sysctl -n kern.memorystatus_level') return '80';
+    if (key === 'sysctl -n iogpu.wired_limit_mb') return '0';
+    if (cmd === 'ioreg') return ioregFor(util);
+    return undefined;
+  };
+  const s = new HwSampler({ exec, platform: 'darwin', now: () => t, windowMs: 4000 });
+  const a = await s.sampleOnce();
+  ok(a.memory?.source === 'darwin' && a.gpus.length === 1 && a.gpus[0].utilizationPct === 90, 'first sample has memory and the GPU instant');
+  ok(a.gpus[0].avgPct === 90 && a.gpus[0].peakPct === 90, 'first sample: average = instant, peak = instant');
+  t += 1000; util = 10; const b = await s.sampleOnce();
+  ok(b.gpus[0].utilizationPct === 10 && b.gpus[0].avgPct === 50, `the displayed average smooths a 90→10 swing (got avg ${b.gpus[0].avgPct}, instant ${b.gpus[0].utilizationPct})`);
+  ok(b.gpus[0].peakPct === 90, 'peak remembers the highest instant');
+  s.resetPeak(); t += 1000; util = 20; const c = await s.sampleOnce();
+  ok(c.gpus[0].peakPct === 20, `resetPeak() starts a fresh per-turn peak (got ${c.gpus[0].peakPct})`);
+  t += 10000; util = 30; const d = await s.sampleOnce();
+  ok(d.gpus[0].avgPct === 30, 'after the window passes, old samples no longer influence the average');
+  ok(d.gpuWiredLimitMB === undefined, 'system-default wired limit stays undefined');
+  const before = calls;
+  const [p, q] = await Promise.all([s.sampleOnce(), s.sampleOnce()]);
+  ok(p === q, 'concurrent sampleOnce() callers share one in-flight read');
+  ok(calls - before <= 8, `and did not double the exec load (${calls - before} execs for one shared read)`);
+
+  // failed source clears to n/a rather than showing a stale value as live
+  let broken = false;
+  const flaky: ExecFn = async (cmd, args, tm) => (broken && cmd === 'ioreg' ? undefined : exec(cmd, args, tm));
+  const f = new HwSampler({ exec: flaky, platform: 'darwin', now: () => t });
+  await f.sampleOnce(); broken = true; const after = await f.sampleOnce();
+  ok(after.gpus.length === 0 && !!after.memory, 'GPU source failing → no GPU shown (n/a), memory unaffected; stale value not carried');
+
+  // start/stop loop delivers samples and stops cleanly
+  const loop = new HwSampler({ exec, platform: 'darwin' });
+  const keepAlive = setInterval(() => {}, 1000); // the sampler's own timer is unref'd (correct in VS Code) — keep THIS process alive while we wait
+  let n = 0;
+  await new Promise<void>((resolve) => { loop.start(250, () => { n++; if (n >= 2) { loop.stop(); resolve(); } }); });
+  const stoppedAt = n; await new Promise((r) => setTimeout(r, 700));
+  clearInterval(keepAlive);
+  ok(n >= 2 && n === stoppedAt, `start() delivers repeated samples and stop() halts them (got ${n}, still ${stoppedAt} after stop)`);
+}
+
 async function testLiveMac() {
   if (process.platform !== 'darwin') { ok(true, '(skipped live check: not macOS)'); return; }
   const s = await readMemorySample();
@@ -149,6 +208,8 @@ async function main() {
   await testReadMemorySampleWithFakes();
   testGpuParsing();
   await testGpuReadWithFakes();
+  testSmoothing();
+  await testSampler();
   await testLiveMac();
   console.log(`\n${passed} passed, ${failed} failed.`);
   if (failed > 0) { console.log('Some v0.15.0 hwSampler tests FAILED.'); process.exit(1); }
