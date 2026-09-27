@@ -470,6 +470,7 @@ export async function runAgentTurn(
         compacted: iterState.compacted,
         modelMs: iterState.modelMs,
         promptTokens: m?.promptTokens,
+        cachedTokens: m?.cachedTokens,
         evalTokens: m?.evalTokens,
         tokPerSec: m?.tokensPerSecond,
         promptEvalMs: m?.promptEvalDurationMs,

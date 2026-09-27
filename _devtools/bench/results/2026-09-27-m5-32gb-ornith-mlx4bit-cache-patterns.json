@@ -1,0 +1,122 @@
+{
+  "snapshot": "a48173b246ac705be75c05bedf1a0666db522d53",
+  "rows": [
+    {
+      "label": "A1 cold (sys + one big user msg)",
+      "total": 5142,
+      "cached": 0,
+      "evaluated": 5142,
+      "ttftMs": 6600,
+      "wallMs": 6871,
+      "hitPct": 0
+    },
+    {
+      "label": "A2 EXACT repeat of A1",
+      "total": 5142,
+      "cached": 5141,
+      "evaluated": 1,
+      "ttftMs": 179,
+      "wallMs": 457,
+      "hitPct": 100
+    },
+    {
+      "label": "B1 cold [sys, U(big), A(ok), U(q1)]",
+      "total": 5158,
+      "cached": 15,
+      "evaluated": 5143,
+      "ttftMs": 6353,
+      "wallMs": 6628,
+      "hitPct": 0
+    },
+    {
+      "label": "B2 same prefix, DIFFERENT last user msg",
+      "total": 5160,
+      "cached": 15,
+      "evaluated": 5145,
+      "ttftMs": 6347,
+      "wallMs": 6623,
+      "hitPct": 0
+    },
+    {
+      "label": "B3 same prefix, third question",
+      "total": 5160,
+      "cached": 15,
+      "evaluated": 5145,
+      "ttftMs": 6352,
+      "wallMs": 6641,
+      "hitPct": 0
+    },
+    {
+      "label": "C1 append-only step 1 (msgs=2)",
+      "total": 5142,
+      "cached": 15,
+      "evaluated": 5127,
+      "ttftMs": 6357,
+      "wallMs": 6637,
+      "hitPct": 0
+    },
+    {
+      "label": "C2 append-only step 2 (msgs=4)",
+      "total": 5518,
+      "cached": 5150,
+      "evaluated": 368,
+      "ttftMs": 713,
+      "wallMs": 996,
+      "hitPct": 93
+    },
+    {
+      "label": "C3 append-only step 3 (msgs=6)",
+      "total": 5894,
+      "cached": 5526,
+      "evaluated": 368,
+      "ttftMs": 716,
+      "wallMs": 997,
+      "hitPct": 94
+    },
+    {
+      "label": "C4 append-only step 4 (msgs=8)",
+      "total": 6270,
+      "cached": 5902,
+      "evaluated": 368,
+      "ttftMs": 718,
+      "wallMs": 1001,
+      "hitPct": 94
+    },
+    {
+      "label": "D1 cold",
+      "total": 5142,
+      "cached": 15,
+      "evaluated": 5127,
+      "ttftMs": 6362,
+      "wallMs": 6643,
+      "hitPct": 0
+    },
+    {
+      "label": "D2 assistant message differs from what was generated",
+      "total": 5164,
+      "cached": 5141,
+      "evaluated": 23,
+      "ttftMs": 340,
+      "wallMs": 619,
+      "hitPct": 100
+    },
+    {
+      "label": "E1 cold: [sys,U,A,U(big file),A,U(file2)]",
+      "total": 6303,
+      "cached": 15,
+      "evaluated": 6288,
+      "ttftMs": 7810,
+      "wallMs": 7892,
+      "hitPct": 0
+    },
+    {
+      "label": "E2 the big OLD tool result replaced by a stub (context pruning)",
+      "total": 1211,
+      "cached": 15,
+      "evaluated": 1196,
+      "ttftMs": 1617,
+      "wallMs": 1657,
+      "hitPct": 1
+    }
+  ]
+}

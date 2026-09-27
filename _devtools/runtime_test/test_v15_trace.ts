@@ -129,7 +129,7 @@ function scripted(replies: string[]) {
     chat: async (opts: any) => {
       const reply = replies[Math.min(i, replies.length - 1)];
       i++;
-      opts.onMetrics?.({ model: 'fake', promptTokens: 100 + i, evalTokens: 10, tokensPerSecond: 20, promptEvalDurationMs: 50, loadDurationMs: 0, totalDurationMs: 100 });
+      opts.onMetrics?.({ model: 'fake', promptTokens: 100 + i, cachedTokens: 900, evalTokens: 10, tokensPerSecond: 20, promptEvalDurationMs: 50, loadDurationMs: 0, totalDurationMs: 100 });
       return reply;
     },
   };
@@ -163,6 +163,7 @@ async function testAgentLoopTrace() {
   ok(rec[4].redundantRead === false, 'after a write to the file, re-reading it is NOT redundant (coverage invalidated)');
   ok(rec.every((r) => r.sessionId === 'sessX' && r.depth === 0 && r.mode === 'auto' && r.model === 'fake'), 'session, depth, mode and model recorded on every record');
   ok(rec[0].promptTokens === 101 && rec[0].evalTokens === 10 && rec[0].tokPerSec === 20 && rec[0].promptEvalMs === 50, `model metrics from the runtime are captured (got ${JSON.stringify({ p: rec[0].promptTokens, e: rec[0].evalTokens, t: rec[0].tokPerSec, pe: rec[0].promptEvalMs })})`);
+  ok(rec[0].cachedTokens === 900, 'server-reported cached prompt tokens are captured in the trace');
   ok(rec.every((r) => typeof r.modelMs === 'number' && r.modelMs >= 0 && r.promptChars > 0 && r.promptMsgs >= 2), 'model time and prompt size recorded every iteration');
   ok(rec.slice(0, 5).every((r) => typeof r.toolMs === 'number' && typeof r.resultChars === 'number' && r.ok === true), 'tool time, result size and ok recorded for every tool call');
   ok(rec[0].argsHash === rec[1].argsHash && rec[0].argsHash !== rec[2].argsHash, 'identical calls share an args hash; a different range does not');

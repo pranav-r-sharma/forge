@@ -32,6 +32,8 @@ export interface TraceRecord {
   modelMs: number;
   /** Prompt tokens the runtime reports it actually EVALUATED (a cache hit makes this smaller than what was sent). */
   promptTokens?: number;
+  /** Prompt tokens the runtime served from its prompt cache (MLX server: usage.prompt_tokens_details.cached_tokens). With promptTokens gives the TRUE cache-hit rate. */
+  cachedTokens?: number;
   evalTokens?: number;
   tokPerSec?: number;
   promptEvalMs?: number;

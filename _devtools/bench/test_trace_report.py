@@ -32,6 +32,10 @@ ok(s["prefill_tok_per_s"] == 500.0, "prefill speed = tokens / prompt-eval second
 ok(s["model_s"] == 4.0 and s["tool_s"] == 0.05 and abs(s["model_share_pct"] - 98.8) < 0.05, "model vs tool time split")
 ok(s["stale_read_stubs_max"] == 3 and s["compactions"] == 1, "stale stubs and compactions")
 ok(s["hw_min_available_gb"] == 18.0 and s["hw_max_swap_gb"] == 0.9 and s["hw_max_gpu_peak_pct"] == 100 and s["hw_worst_pressure"] == "warn", "hardware low-points and worst pressure")
+cr = [rec(0, cachedTokens=900, promptTokens=100), rec(1, cachedTokens=0, promptTokens=1000), rec(2, promptTokens=50)]
+sc = tr.summarize(cr)
+ok(sc["tokens_cached"] == 900 and sc["cache_hit_pct"] == round(100 * 900 / 2000, 1), f"server-reported cache hit rate (only records that report it): {sc['cache_hit_pct']}%")
+ok(tr.summarize([rec(0)])["cache_hit_pct"] is None, "no cachedTokens reported (e.g. Ollama) → cache_hit_pct is None, not 0")
 ok("cache saved" in tr.render(s) and "redundant 1 (50.0%)" in tr.render(s), "rendered report mentions the key numbers")
 ok(tr.summarize([]) == {"iterations": 0} and tr.render({"iterations": 0}) == "empty trace", "empty trace handled")
 s2 = tr.summarize([{"iter": 0, "turnId": "x"}])

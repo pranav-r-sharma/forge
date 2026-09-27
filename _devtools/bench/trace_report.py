@@ -37,6 +37,9 @@ def summarize(recs, cpt=3.0):
     model_ms, tool_ms = _sum(recs, "modelMs"), _sum(recs, "toolMs")
     prompt_recs = [r for r in recs if isinstance(r.get("promptTokens"), (int, float)) and isinstance(r.get("promptChars"), (int, float))]
     sent_est = sum(r["promptChars"] / cpt for r in prompt_recs)
+    cache_recs = [r for r in recs if isinstance(r.get("cachedTokens"), (int, float)) and isinstance(r.get("promptTokens"), (int, float))]
+    cached_total = sum(r["cachedTokens"] for r in cache_recs)
+    prompt_total = sum(r["cachedTokens"] + r["promptTokens"] for r in cache_recs)
     evaluated = sum(r["promptTokens"] for r in prompt_recs)
     pe_recs = [r for r in recs if isinstance(r.get("promptTokens"), (int, float)) and isinstance(r.get("promptEvalMs"), (int, float)) and r["promptEvalMs"] > 0]
     pe_ms = sum(r["promptEvalMs"] for r in pe_recs)
@@ -61,6 +64,8 @@ def summarize(recs, cpt=3.0):
         "prompt_chars_max": max((r.get("promptChars", 0) for r in recs), default=0),
         "tokens_evaluated": int(evaluated),
         "tokens_sent_estimate": int(sent_est),
+        "cache_hit_pct": round(100 * cached_total / prompt_total, 1) if prompt_total > 0 else None,
+        "tokens_cached": int(cached_total),
         "cache_saved_pct_estimate": round(max(0.0, 100 * (1 - evaluated / sent_est)), 1) if sent_est > 0 else None,
         "prefill_tok_per_s": round(1000 * pe_tok / pe_ms, 1) if pe_ms > 0 else None,
         "model_s": round(model_ms / 1000, 2),
@@ -84,6 +89,8 @@ def render(s):
     a("tools: " + ", ".join(f"{k}×{v}" for k, v in s["tools"].items()))
     a(f"reads {s['reads']} · redundant {s['redundant_reads']} ({s['redundant_read_pct']}%) · redundant chars {s['redundant_read_chars']:,} of {s['read_chars']:,}")
     a(f"prompt chars first→last→max: {s['prompt_chars_first']:,} → {s['prompt_chars_last']:,} → {s['prompt_chars_max']:,} · stale-read stubs (max) {s['stale_read_stubs_max']} · compactions {s['compactions']}")
+    if s.get("cache_hit_pct") is not None:
+        a(f"prompt cache (server-reported): {s['tokens_cached']:,} tokens cached · hit rate {s['cache_hit_pct']}% of all prompt tokens")
     if s["tokens_sent_estimate"]:
         a(f"tokens evaluated {s['tokens_evaluated']:,} vs ~{s['tokens_sent_estimate']:,} sent (estimate) → cache saved ~{s['cache_saved_pct_estimate']}%")
     if s["prefill_tok_per_s"]:
