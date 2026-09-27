@@ -1,0 +1,46 @@
+{
+  "task": "t05-large-file",
+  "provider": "ollama",
+  "model": "ornith:9b",
+  "thinking": "auto",
+  "ctx": 32768,
+  "appendOnly": true,
+  "maxIters": 30,
+  "timeoutS": 400,
+  "startedAt": "2026-09-27T06:17:18.336Z",
+  "hardware": "Apple M5, 32 GB",
+  "serverReadyS": 0,
+  "wallS": 28.92,
+  "checkExit": 0,
+  "checkOutput": "----------------------------------------------------------------------\nRan 3 tests in 0.000s\n\nOK",
+  "protectedTouched": [],
+  "filesChanged": [
+    "pricing/rules.py"
+  ],
+  "pass": true,
+  "finalText": "Fixed. The bug was `TAX_RATE * 10` on line 565 — multiplying the 0.08 rate by 10 made the tax 80% instead of 8%. Changed to `amount * (1 + TAX_RATE)`. All 3 tests pass.",
+  "iterations": 7,
+  "tools": {
+    "read_file": 2,
+    "search_code": 2,
+    "write_file": 1,
+    "run_command": 1
+  },
+  "toolFailures": 0,
+  "redundantReads": 0,
+  "reads": 2,
+  "viewEvents": 0,
+  "modelS": 28.83,
+  "toolS": 0.09,
+  "tokensEvaluated": 30211,
+  "tokensCached": 0,
+  "cacheHitPct": 0,
+  "evalTokens": 556,
+  "promptCharsMax": 19445,
+  "hw": {
+    "minAvailableGB": 7.1,
+    "maxSwapGB": 0.83,
+    "gpuPeakPct": 99
+  },
+  "tracePath": "_devtools/e2e/results/p15-t05-large-file-ollama-r2.trace.jsonl"
+}

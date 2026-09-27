@@ -1,0 +1,67 @@
+=== t01-fix-bug
+[t01-fix-bug ollama r1] pass/wall/iters/tok/cache = True 26.934 6 358 0
+[t01-fix-bug ollama r2] pass/wall/iters/tok/cache = True 18.342 6 358 0
+[t01-fix-bug ollama r3] pass/wall/iters/tok/cache = True 18.185 6 358 0
+[t01-fix-bug mlx4 r1] pass/wall/iters/tok/cache = PARSE_FAIL:     'OSError: [Errno 48] Address already in use'
+  ]
+}
+[t01-fix-bug mlx4 r2] pass/wall/iters/tok/cache = PARSE_FAIL:     'OSError: [Errno 48] Address already in use'
+  ]
+}
+[t01-fix-bug mlx4 r3] pass/wall/iters/tok/cache = PARSE_FAIL:     'OSError: [Errno 48] Address already in use'
+  ]
+}
+[t01-fix-bug mlx8 r1] pass/wall/iters/tok/cache = PARSE_FAIL:     'OSError: [Errno 48] Address already in use'
+  ]
+}
+[t01-fix-bug mlx8 r2] pass/wall/iters/tok/cache = PARSE_FAIL:     'OSError: [Errno 48] Address already in use'
+  ]
+}
+[t01-fix-bug mlx8 r3] pass/wall/iters/tok/cache = PARSE_FAIL:     'OSError: [Errno 48] Address already in use'
+  ]
+}
+=== t04-rename-symbol
+[t04-rename-symbol ollama r1] pass/wall/iters/tok/cache = False 63.478 9 1141 0
+[t04-rename-symbol ollama r2] pass/wall/iters/tok/cache = False 55.9 9 1141 0
+[t04-rename-symbol ollama r3] pass/wall/iters/tok/cache = False 55.912 9 1141 0
+[t04-rename-symbol mlx4 r1] pass/wall/iters/tok/cache = PARSE_FAIL:     'OSError: [Errno 48] Address already in use'
+  ]
+}
+[t04-rename-symbol mlx4 r2] pass/wall/iters/tok/cache = PARSE_FAIL:     'OSError: [Errno 48] Address already in use'
+  ]
+}
+[t04-rename-symbol mlx4 r3] pass/wall/iters/tok/cache = PARSE_FAIL:     'OSError: [Errno 48] Address already in use'
+  ]
+}
+[t04-rename-symbol mlx8 r1] pass/wall/iters/tok/cache = PARSE_FAIL:     'OSError: [Errno 48] Address already in use'
+  ]
+}
+[t04-rename-symbol mlx8 r2] pass/wall/iters/tok/cache = PARSE_FAIL:     'OSError: [Errno 48] Address already in use'
+  ]
+}
+[t04-rename-symbol mlx8 r3] pass/wall/iters/tok/cache = PARSE_FAIL:     'OSError: [Errno 48] Address already in use'
+  ]
+}
+=== t05-large-file
+[t05-large-file ollama r1] pass/wall/iters/tok/cache = True 36.589 7 556 0
+[t05-large-file ollama r2] pass/wall/iters/tok/cache = True 28.92 7 556 0
+[t05-large-file ollama r3] pass/wall/iters/tok/cache = True 28.712 7 556 0
+[t05-large-file mlx4 r1] pass/wall/iters/tok/cache = PARSE_FAIL:     'OSError: [Errno 48] Address already in use'
+  ]
+}
+[t05-large-file mlx4 r2] pass/wall/iters/tok/cache = PARSE_FAIL:     'OSError: [Errno 48] Address already in use'
+  ]
+}
+[t05-large-file mlx4 r3] pass/wall/iters/tok/cache = PARSE_FAIL:     'OSError: [Errno 48] Address already in use'
+  ]
+}
+[t05-large-file mlx8 r1] pass/wall/iters/tok/cache = PARSE_FAIL:     at process.processTicksAndRejections (node:internal/process/task_queues:104:5) {
+  logTail: []
+}
+[t05-large-file mlx8 r2] pass/wall/iters/tok/cache = PARSE_FAIL:     at MlxServerManager.doEnsure (/Users/pranavsharma/Code Projects/Local LLM Tools/forge/src/llm/mlxServer.ts:195:19) {
+  logTail: []
+}
+[t05-large-file mlx8 r3] pass/wall/iters/tok/cache = PARSE_FAIL:     at process.processTicksAndRejections (node:internal/process/task_queues:104:5) {
+  logTail: []
+}
+=== SUITE DONE

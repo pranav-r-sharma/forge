@@ -1,0 +1,46 @@
+{
+  "task": "t01-fix-bug",
+  "provider": "ollama",
+  "model": "ornith:9b",
+  "thinking": "auto",
+  "ctx": 32768,
+  "appendOnly": true,
+  "maxIters": 30,
+  "timeoutS": 400,
+  "startedAt": "2026-09-27T05:24:54.071Z",
+  "hardware": "Apple M5, 32 GB",
+  "serverReadyS": 0,
+  "wallS": 18.342,
+  "checkExit": 0,
+  "checkOutput": "----------------------------------------------------------------------\nRan 4 tests in 0.000s\n\nOK",
+  "protectedTouched": [],
+  "filesChanged": [
+    "shop/cart.py"
+  ],
+  "pass": true,
+  "finalText": "Fixed. The bug was in `shop/cart.py` line 14: `line_total(price, 1)` was ignoring the `quantity` variable and always using `1`. Changed it to `line_total(price, quantity)`. All 4 tests now pass.",
+  "iterations": 6,
+  "tools": {
+    "list_dir": 1,
+    "read_file": 2,
+    "write_file": 1,
+    "run_command": 1
+  },
+  "toolFailures": 0,
+  "redundantReads": 0,
+  "reads": 2,
+  "viewEvents": 0,
+  "modelS": 18.27,
+  "toolS": 0.06,
+  "tokensEvaluated": 24076,
+  "tokensCached": 0,
+  "cacheHitPct": 0,
+  "evalTokens": 358,
+  "promptCharsMax": 18220,
+  "hw": {
+    "minAvailableGB": 8.4,
+    "maxSwapGB": 0.75,
+    "gpuPeakPct": 99
+  },
+  "tracePath": "_devtools/e2e/results/p15-t01-fix-bug-ollama-r2.trace.jsonl"
+}
