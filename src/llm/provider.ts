@@ -55,6 +55,40 @@ export interface LlmProvider {
   generate(opts: GenerateRequestOptions): Promise<string>;
 }
 
+/** MLX via `mlx_lm.server` (OpenAI-compatible). Verified against the installed mlx-lm 0.31.3 server source, not assumed. */
+export const MLX_CAPABILITIES: ProviderCapabilities = {
+  id: 'mlx',
+  label: 'MLX (mlx_lm.server)',
+  nativeTools: true, // server parses the model's tool-call format into `tool_calls` (Forge does not use it yet — plan §6.2)
+  structuredOutput: false,
+  fim: false, // no `suffix` on /v1/completions
+  embeddings: false, // no /v1/embeddings endpoint
+  thinkingControl: true, // chat_template_kwargs.enable_thinking (Ornith's template honors it)
+  promptCache: 'memory', // the server keeps a prompt cache across requests; disk persistence is via mlx_lm.cache_prompt / library, not this server
+  exactTokenUsage: true,
+  reportsTimings: false, // no prefill timing in the response — the client approximates it with time-to-first-token
+  contextWindow: 'server', // fixed by server start-up flags / model, not per request
+  listsLoadedModels: false,
+  keepAlive: false,
+};
+
+/** A generic OpenAI-compatible server (LM Studio, vLLM, …): conservative — capabilities are only claimed when the API guarantees them. */
+export const OPENAI_COMPAT_CAPABILITIES: ProviderCapabilities = {
+  id: 'openai-compatible',
+  label: 'OpenAI-compatible server',
+  nativeTools: false,
+  structuredOutput: false,
+  fim: false,
+  embeddings: false,
+  thinkingControl: false,
+  promptCache: 'unknown',
+  exactTokenUsage: true,
+  reportsTimings: false,
+  contextWindow: 'server',
+  listsLoadedModels: false,
+  keepAlive: false,
+};
+
 export const OLLAMA_CAPABILITIES: ProviderCapabilities = {
   id: 'ollama',
   label: 'Ollama',

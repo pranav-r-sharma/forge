@@ -19,7 +19,7 @@ async function main() {
     const asProvider: LlmProvider = client; // compile-time proof the class satisfies the interface
     ok(asProvider.capabilities === OLLAMA_CAPABILITIES && client.capabilities.id === 'ollama', 'OllamaClient exposes the Ollama capability set');
     ok(client.capabilities.contextWindow === 'per-request' && client.capabilities.keepAlive && client.capabilities.listsLoadedModels && client.capabilities.fim && client.capabilities.embeddings, 'Ollama capabilities describe per-request context, keep-alive, loaded-model listing, FIM and embeddings');
-    await runProviderContract(client, 'ollama', ok, { model: 'm1', slowModel: 'slow-model', failingModel: 'boom', noEmbedModel: 'no-embed' });
+    await runProviderContract(client, 'ollama', ok, { model: 'm1', slow: { model: 'slow-model' }, failing: { model: 'boom' }, noEmbedModel: 'no-embed' });
 
     // Wire-level checks: existing request shape is unchanged (options carried through exactly as before).
     fake.requests.length = 0;

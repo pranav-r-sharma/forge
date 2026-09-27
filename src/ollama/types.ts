@@ -68,6 +68,12 @@ export interface OllamaCallMetrics {
   promptEvalDurationMs?: number;
   /** Time spent generating, ms. */
   evalDurationMs?: number;
+  /** Prompt tokens served from the runtime's prompt cache (not re-evaluated), when the runtime reports it (MLX server: usage.prompt_tokens_details.cached_tokens). */
+  cachedTokens?: number;
+  /** Full prompt size in tokens (evaluated + cached), when known. `promptTokens` above is always the number EVALUATED. */
+  promptTotalTokens?: number;
+  /** True when timings are client-side approximations (e.g. prompt-eval time = time to first token) rather than the runtime's own figures. */
+  timingsApproximate?: boolean;
 }
 
 export interface EmbeddingResponse {
@@ -96,6 +102,8 @@ export interface ChatRequestOptions {
   onToken?: (token: string) => void;
   /** Optional: cap output length via num_predict. */
   maxTokens?: number;
+  /** Turn the model's "thinking" phase on/off where the runtime supports it (chat-template `enable_thinking`). Omitted = the model's default. Ignored by runtimes without thinking control. */
+  thinking?: boolean;
   /** Extra stop sequences appended to the model request. */
   stop?: string[];
   /** Context window size to request from Ollama (options.num_ctx). Omitted = server default. */

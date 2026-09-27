@@ -1,0 +1,146 @@
+{
+  "snapshot": "a48173b246ac705be75c05bedf1a0666db522d53",
+  "port": 8123,
+  "checks": [
+    {
+      "name": "server becomes healthy",
+      "pass": true,
+      "detail": {
+        "secs": 37.075
+      }
+    },
+    {
+      "name": "listModels() returns the cached Ornith MLX repos",
+      "pass": true,
+      "detail": [
+        "/Users/pranavsharma/.cache/huggingface/hub/models--ornith-ai--Ornith-1.5-9B-MLX-4bit/snapshots/a48173b246ac705be75c05bedf1a0666db522d53"
+      ]
+    },
+    {
+      "name": "a real chat reply arrives, thinking off",
+      "pass": true,
+      "detail": {
+        "reply": "pong"
+      }
+    },
+    {
+      "name": "real usage/metrics are populated",
+      "pass": true,
+      "detail": {
+        "model": "x",
+        "promptTokens": 20,
+        "promptTotalTokens": 20,
+        "cachedTokens": 0,
+        "evalTokens": 2,
+        "tokensPerSecond": 25.5,
+        "totalDurationMs": 708,
+        "promptEvalDurationMs": 669,
+        "evalDurationMs": 39,
+        "timingsApproximate": true
+      }
+    },
+    {
+      "name": "with thinking on, the visible reply is separate from the reasoning",
+      "pass": true,
+      "detail": {
+        "reply": "\n\n4",
+        "evalTokens": 44
+      }
+    },
+    {
+      "name": "cold request evaluates the whole prompt (little/no cache)",
+      "pass": true,
+      "detail": {
+        "total": 4717,
+        "cached": 0,
+        "ttftMs": 6165
+      }
+    },
+    {
+      "name": "second request with the same prefix is served mostly from the prompt cache",
+      "pass": false,
+      "detail": {
+        "total": 4718,
+        "cached": 12,
+        "evaluated": 4706,
+        "ttftMs": 5808
+      }
+    },
+    {
+      "name": "…and its time-to-first-token drops sharply",
+      "pass": false,
+      "detail": {
+        "cold": 6165,
+        "warm": 5808
+      }
+    },
+    {
+      "name": "third request also reuses the cache",
+      "pass": false,
+      "detail": {
+        "cached": 12,
+        "total": 4716
+      }
+    },
+    {
+      "name": "abort mid-generation rejects with AbortError",
+      "pass": true,
+      "detail": {
+        "ms": 1516
+      }
+    },
+    {
+      "name": "server is still healthy after an aborted request",
+      "pass": true
+    },
+    {
+      "name": "a new request works after the abort",
+      "pass": true,
+      "detail": {
+        "reply": "ok"
+      }
+    }
+  ],
+  "cache": {
+    "first": {
+      "model": "x",
+      "promptTokens": 4717,
+      "promptTotalTokens": 4717,
+      "cachedTokens": 0,
+      "evalTokens": 6,
+      "tokensPerSecond": 25,
+      "totalDurationMs": 6365,
+      "promptEvalDurationMs": 6165,
+      "evalDurationMs": 200,
+      "timingsApproximate": true,
+      "wallMs": 6365
+    },
+    "second": {
+      "model": "x",
+      "promptTokens": 4706,
+      "promptTotalTokens": 4718,
+      "cachedTokens": 12,
+      "evalTokens": 6,
+      "tokensPerSecond": 25.2,
+      "totalDurationMs": 6006,
+      "promptEvalDurationMs": 5808,
+      "evalDurationMs": 198,
+      "timingsApproximate": true,
+      "wallMs": 6007
+    },
+    "third": {
+      "model": "x",
+      "promptTokens": 4704,
+      "promptTotalTokens": 4716,
+      "cachedTokens": 12,
+      "evalTokens": 6,
+      "tokensPerSecond": 25.2,
+      "totalDurationMs": 6053,
+      "promptEvalDurationMs": 5855,
+      "evalDurationMs": 198,
+      "timingsApproximate": true,
+      "wallMs": 6053
+    }
+  },
+  "serverLogTail": "^^^^^^^^^\n  File \"/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/socketserver.py\", line 845, in write\n    self._sock.sendall(b)\n    ~~~~~~~~~~~~~~~~~~^^^\nBrokenPipeError: [Errno 32] Broken pipe\n----------------------------------------\n127.0.0.1 - - [26/Sep/2026 21:53:05] \"GET /health HTTP/1.1\" 200 -\n127.0.0.1 - - [26/Sep/2026 21:53:05] \"POST /v1/chat/completions HTTP/1.1\" 200 -\n"
+}

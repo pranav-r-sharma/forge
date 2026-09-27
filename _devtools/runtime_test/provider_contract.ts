@@ -5,12 +5,12 @@ import type { LlmProvider } from '../../src/llm/provider';
 export interface ContractOptions {
   /** A model name the fake server treats as normal. */
   model: string;
-  /** A model name whose stream is slow enough to abort mid-way. */
-  slowModel: string;
-  /** A model name that makes the server return an HTTP error for chat. */
-  failingModel: string;
-  /** A model name for which embeddings fail. */
-  noEmbedModel: string;
+  /** How to make the fake server return a slow stream (model name and/or message content). */
+  slow: { model?: string; content?: string };
+  /** How to make the fake server return an HTTP 500 for chat. */
+  failing: { model?: string; content?: string };
+  /** A model name for which embeddings fail (only used when the provider supports embeddings). */
+  noEmbedModel?: string;
 }
 
 export async function runProviderContract(p: LlmProvider, label: string, ok: (c: any, m: string) => void, o: ContractOptions): Promise<void> {
@@ -38,20 +38,24 @@ export async function runProviderContract(p: LlmProvider, label: string, ok: (c:
   ok(gen === 'foobar' || gen === 'Hello world' || gen.length > 0, `[${label}] generate() returns text`);
 
   const emb = await p.embed(o.model, 'hello');
-  ok(Array.isArray(emb) && emb.length === 3, `[${label}] embed() returns a vector`);
-  let embThrew = false;
-  let badEmb: any = 'unset';
-  try { badEmb = await p.embed(o.noEmbedModel, 'hello'); } catch { embThrew = true; }
-  ok(!embThrew && badEmb === undefined, `[${label}] embed() failure resolves undefined and never throws`);
+  if (c.embeddings) {
+    ok(Array.isArray(emb) && emb.length === 3, `[${label}] embed() returns a vector`);
+    let embThrew = false;
+    let badEmb: any = 'unset';
+    try { badEmb = await p.embed(o.noEmbedModel || 'no-embed', 'hello'); } catch { embThrew = true; }
+    ok(!embThrew && badEmb === undefined, `[${label}] embed() failure resolves undefined and never throws`);
+  } else {
+    ok(emb === undefined, `[${label}] a provider without embeddings resolves embed() to undefined (and says so in capabilities)`);
+  }
 
   let errMsg = '';
-  try { await p.chat({ model: o.failingModel, messages: [{ role: 'user', content: 'x' }] }); } catch (e: any) { errMsg = String(e?.message || e); }
+  try { await p.chat({ model: o.failing.model ?? o.model, messages: [{ role: 'user', content: o.failing.content ?? 'x' }] }); } catch (e: any) { errMsg = String(e?.message || e); }
   ok(/500|exploded|failed/i.test(errMsg), `[${label}] a server error surfaces as a thrown error with a useful message (got ${JSON.stringify(errMsg)})`);
 
   const ac = new AbortController();
   const seen: string[] = [];
   const t0 = Date.now();
-  const pending = p.chat({ model: o.slowModel, messages: [{ role: 'user', content: 'x' }], signal: ac.signal, onToken: (t) => { seen.push(t); if (seen.length === 3) ac.abort(); } });
+  const pending = p.chat({ model: o.slow.model ?? o.model, messages: [{ role: 'user', content: o.slow.content ?? 'x' }], signal: ac.signal, onToken: (t) => { seen.push(t); if (seen.length === 3) ac.abort(); } });
   let aborted = false;
   try { await pending; } catch (e: any) { aborted = e?.name === 'AbortError'; }
   ok(aborted && Date.now() - t0 < 2500, `[${label}] abort mid-stream rejects with AbortError promptly, not after the whole slow stream (${Date.now() - t0} ms)`);
