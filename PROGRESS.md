@@ -24,6 +24,8 @@ Phase 0 (first). Section numbers refer to `v0.15.0 suggestions.md`.
 13. **P0-13** Headless bench runner + `--json` events; first 10–15 eval tasks on a fixture repo. (§0.3, §8.2)
 14. **P0-14** Baseline report on Ornith: O-Q4 vs M-4 vs M-8 × harness arms A / B1 / B2. (§0.2c, §0.3)
 15. **P0-15** Truncation detection + real-token counting (§2.1b) — needed before trusting any long-context result.
+16. **P0-16** KV/prompt-cache experiments on Ornith: in-session reuse (Ollama, then MLX), MLX save/load + identical-output check, hybrid-trim behavior, KV quantization, disk speed. Needs the MLX venv (approval). (§2.1c)
+17. **P0-17** Keep the prompt append-only (stop rewriting the prefix each step) and re-measure cache hit rate — likely the biggest single speed win. (§2.1, §2.1c)
 
 Then 0.15.0 items (see "Suggested release slicing" in the plan) once Phase 0 numbers exist.
 
@@ -32,6 +34,7 @@ Then 0.15.0 items (see "Suggested release slicing" in the plan) once Phase 0 num
 - Measured (Ollama 0.34.3, this Mac M5 32 GB): speed vs model size for 6 models (kept as scaling reference; **closed — Ornith only from now on**). Results are in the plan §0.2b.
 - Created branch `v0.15.0-work`; added `CLAUDE.md` (standing rules + dev cycle) and this file.
 - Added Directive 6 / standing rule 6: **no sudo in anything that ships** (removed `powermetrics` from the product plan; GPU working-set limit is read, never changed). Audited the plan: only the `powermetrics` mention needed privileges.
+- Measured cold prefill cost vs prompt size on Ornith (6.6k→29 s, 13k→62 s, 26k→143 s, 52k→449 s) and wrote the KV/prompt-cache hot-warm-cold plan (§2.1c; owner idea).
 - Verified the RAM number is wrong: `os.freemem()` says 7.7 GB free (harness would show 24.3 GB used) while macOS reports 61% free.
 - Ornith context-limit probe (Ollama Q4_K_M, memory-gated): full **262,144-token context loads at 15.1 GB** (~35 KB/token); fill test in progress — see Open items.
 
@@ -47,4 +50,4 @@ Then 0.15.0 items (see "Suggested release slicing" in the plan) once Phase 0 num
 ## Files touched (this session)
 `v0.15.0 suggestions.md`, `CLAUDE.md`, `PROGRESS.md`, `_devtools/bench/*` (probe scripts).
 
-**Last updated:** 2026-09-26 21:12
+**Last updated:** 2026-09-26 21:20
