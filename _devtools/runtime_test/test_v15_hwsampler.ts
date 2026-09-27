@@ -6,7 +6,7 @@
 // ============================================================================
 import * as fs from 'fs';
 import * as path from 'path';
-import { parseVmStat, parseSwapUsage, parsePressureLevel, computeMemory, readMemorySample, ExecFn } from '../../src/util/hwSampler';
+import { parseVmStat, parseSwapUsage, parsePressureLevel, computeMemory, readMemorySample, parseIoregAccelerator, readGpuSamples, readGpuWiredLimitMB, ExecFn } from '../../src/util/hwSampler';
 
 let passed = 0;
 let failed = 0;
@@ -97,6 +97,34 @@ async function testReadMemorySampleWithFakes() {
   ok(nonDarwin && nonDarwin.source === 'approximate' && nonDarwin.totalGB > 0, 'non-macOS uses the labelled approximation');
 }
 
+const REAL_IOREG = fs.readFileSync(path.join(__dirname, 'fixtures/hw/ioreg_accelerator_apple_silicon.txt'), 'utf8');
+
+function testGpuParsing() {
+  const g = parseIoregAccelerator(REAL_IOREG, 123);
+  ok(g.length === 1, `one accelerator parsed from a real Apple-silicon capture (got ${g.length})`);
+  ok(g[0].utilizationPct === 3 && g[0].rendererPct === 3 && g[0].tilerPct === 2, `device/renderer/tiler utilization read (got ${JSON.stringify(g[0])})`);
+  ok(g[0].name === 'Apple M5' && g[0].cores === 10, 'GPU model and core count read');
+  ok(near(g[0].inUseGB, 329596928 / GB, 0.01) && near(g[0].allocatedGB, 1179123712 / GB, 0.01), 'in-use and allocated system memory converted bytes → GB');
+  ok(g[0].tsMs === 123, 'timestamp carried through');
+  ok(parseIoregAccelerator('').length === 0 && parseIoregAccelerator(undefined as any).length === 0, 'empty input → [] (n/a), no throw');
+  ok(parseIoregAccelerator('+-o Foo\n  "PerformanceStatistics" = {"Alloc system memory"=5}\n').length === 0, 'a node with no utilization figure is skipped rather than reported as 0%');
+  const two = REAL_IOREG + '\n' + REAL_IOREG.replace('"Device Utilization %"=3', '"Device Utilization %"=57').replace('AGXAcceleratorG17G  <class', 'AGXOther  <class');
+  const tg = parseIoregAccelerator(two);
+  ok(tg.length === 2 && tg[1].utilizationPct === 57, 'multiple accelerators (e.g. Intel Mac with iGPU + dGPU) are each reported');
+  ok(parseIoregAccelerator(REAL_IOREG.replace('"Device Utilization %"=3', '"Device Utilization %"=250'))[0].utilizationPct === 100, 'an out-of-range percentage is clamped to 100, not shown as 250%');
+}
+
+async function testGpuReadWithFakes() {
+  const good: ExecFn = async (cmd) => (cmd === 'ioreg' ? REAL_IOREG : cmd === 'sysctl' ? '0\n' : undefined);
+  const s = await readGpuSamples(good, 'darwin');
+  ok(s.length === 1 && s[0].utilizationPct === 3, 'readGpuSamples returns the parsed sample');
+  ok((await readGpuSamples(async () => undefined, 'darwin')).length === 0, 'ioreg failing → [] (n/a)');
+  ok((await readGpuSamples(async () => { throw new Error('x'); }, 'darwin')).length === 0, 'a throwing exec → [] and no exception');
+  ok((await readGpuSamples(good, 'linux')).length === 0, 'non-macOS → [] (the caller may fall back to nvidia-smi separately)');
+  ok((await readGpuWiredLimitMB(good, 'darwin')) === undefined, 'wired limit 0 (system default) → undefined, not "0 MB"');
+  ok((await readGpuWiredLimitMB(async () => '20480\n', 'darwin')) === 20480, 'a configured wired limit is read (read-only — Forge never sets it)');
+}
+
 async function testLiveMac() {
   if (process.platform !== 'darwin') { ok(true, '(skipped live check: not macOS)'); return; }
   const s = await readMemorySample();
@@ -106,6 +134,8 @@ async function testLiveMac() {
   ok(s.usedGB > 0.5 && s.usedGB < s.totalGB, `LIVE: used is sane (${s.usedGB} of ${s.totalGB} GB)`);
   ok(near(s.usedGB + s.availableGB, s.totalGB, 0.11), 'LIVE: used + available ≈ total');
   ok(['normal', 'warn', 'critical'].includes(s.pressure), `LIVE: macOS pressure state is read (${s.pressure})`);
+  const gpu = await readGpuSamples();
+  ok(gpu.length >= 1 && gpu[0].utilizationPct >= 0 && gpu[0].utilizationPct <= 100, `LIVE: GPU utilization read without sudo (${gpu[0] ? gpu[0].utilizationPct + '%, ' + gpu[0].name : 'none'})`);
   const os = require('os');
   const naive = (os.totalmem() - os.freemem()) / GB;
   console.log(`   (info) naive os.freemem() "used" = ${naive.toFixed(1)} GB vs accurate used = ${s.usedGB} GB`);
@@ -117,6 +147,8 @@ async function main() {
   testComputeMemory();
   testSwapAndPressure();
   await testReadMemorySampleWithFakes();
+  testGpuParsing();
+  await testGpuReadWithFakes();
   await testLiveMac();
   console.log(`\n${passed} passed, ${failed} failed.`);
   if (failed > 0) { console.log('Some v0.15.0 hwSampler tests FAILED.'); process.exit(1); }

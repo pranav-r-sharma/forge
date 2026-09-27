@@ -1,0 +1,5 @@
++-o AGXAcceleratorG17G  <class AGXAcceleratorG17G, id 0x1000004cb, registered, matched, active, busy 0 (2643 ms), retain 42>
+      "PerformanceStatistics" = {"In use system memory (driver)"=0,"Alloc system memory"=1179123712,"Tiler Utilization %"=2,"recoveryCount"=0,"lastRecoveryTime"=0,"Renderer Utilization %"=3,"TiledSceneBytes"=688128,"Device Utilization %"=3,"SplitSceneCount"=0,"Allocated PB Size"=41418752,"In use system memory"=329596928}
+      "model" = "Apple M5"
+      "gpu-core-count" = 10
+      "IOClass" = "AGXAcceleratorG17G"

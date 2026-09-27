@@ -148,3 +148,78 @@ export async function readMemorySample(rawExec: ExecFn = defaultExec, platform: 
     wiredGB: 0, compressedGB: 0, pressure: 'unknown', source: 'approximate', tsMs,
   };
 }
+
+// ---------------------------------------------------------------------------------------------------------------------------------------
+// GPU (Apple silicon and Intel/AMD Macs): unprivileged, from IOKit via `ioreg` — no sudo, no powermetrics.
+// ---------------------------------------------------------------------------------------------------------------------------------------
+
+export interface GpuSample {
+  name?: string;
+  cores?: number;
+  /** "Device Utilization %" — overall GPU busy %, an instantaneous sample (jumpy: smooth over a few seconds before displaying). */
+  utilizationPct: number;
+  rendererPct?: number;
+  tilerPct?: number;
+  /** GPU-visible system memory currently in use, GB. On Apple silicon this is the SAME unified memory as RAM, not a separate VRAM pool. */
+  inUseGB?: number;
+  allocatedGB?: number;
+  tsMs: number;
+}
+
+/** Parses `ioreg -r -d 1 -w0 -c IOAccelerator`. Returns one sample per accelerator that exposes a PerformanceStatistics dictionary; [] if none/unparseable. */
+export function parseIoregAccelerator(text: string, tsMs: number = Date.now()): GpuSample[] {
+  const out: GpuSample[] = [];
+  if (!text) return out;
+  for (const block of text.split(/^(?=\+-o )/m)) {
+    const stats = /"PerformanceStatistics"\s*=\s*\{([^}]*)\}/.exec(block);
+    if (!stats) continue;
+    const num = (key: string): number | undefined => {
+      const m = new RegExp('"' + key.replace(/[.*+?^${}()|[\]\\%]/g, '\\$&') + '"\\s*=\\s*(\\d+)').exec(stats[1]);
+      return m ? Number(m[1]) : undefined;
+    };
+    const dev = num('Device Utilization %');
+    if (dev === undefined) continue; // no utilization figure → nothing trustworthy to report for this node
+    const clamp = (n: number | undefined) => (n === undefined ? undefined : Math.max(0, Math.min(100, n)));
+    const inUse = num('In use system memory');
+    const alloc = num('Alloc system memory');
+    const name = /"model"\s*=\s*"([^"]+)"/.exec(block);
+    const cores = /"gpu-core-count"\s*=\s*(\d+)/.exec(block);
+    out.push({
+      name: name ? name[1] : undefined,
+      cores: cores ? Number(cores[1]) : undefined,
+      utilizationPct: clamp(dev)!,
+      rendererPct: clamp(num('Renderer Utilization %')),
+      tilerPct: clamp(num('Tiler Utilization %')),
+      inUseGB: inUse === undefined ? undefined : round2(inUse / GB),
+      allocatedGB: alloc === undefined ? undefined : round2(alloc / GB),
+      tsMs,
+    });
+  }
+  return out;
+}
+
+/** One GPU reading (macOS only). [] if unavailable — the caller shows "n/a", never a made-up percentage. */
+export async function readGpuSamples(exec: ExecFn = defaultExec, platform: string = process.platform, timeoutMs = 1500): Promise<GpuSample[]> {
+  if (platform !== 'darwin') return [];
+  try {
+    const text = await exec('ioreg', ['-r', '-d', '1', '-w0', '-c', 'IOAccelerator'], timeoutMs);
+    return text ? parseIoregAccelerator(text) : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * The OS's GPU wired-memory override in MB, or undefined when it is the system default (sysctl reports 0). READ ONLY — raising it needs
+ * sudo, which Forge never uses (owner Directive 6). Metal's actual recommended working set (~78% of RAM on a 32 GB M5) comes from the
+ * MLX/Metal device info, not from sysctl; see the MLX provider (P0-11/12).
+ */
+export async function readGpuWiredLimitMB(exec: ExecFn = defaultExec, platform: string = process.platform, timeoutMs = 1500): Promise<number | undefined> {
+  if (platform !== 'darwin') return undefined;
+  try {
+    const n = Number(((await exec('sysctl', ['-n', 'iogpu.wired_limit_mb'], timeoutMs)) || '').trim());
+    return Number.isFinite(n) && n > 0 ? n : undefined;
+  } catch {
+    return undefined;
+  }
+}
