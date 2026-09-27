@@ -307,10 +307,12 @@ export async function runAgentTurn(
     messages.push(msg);
     emit({ type: 'history_snapshot', messages: [...messages] });
   };
-  const pushAssistant = (raw: string, acceptedCall?: ToolCall) =>
+  const pushAssistant = (raw: string, executedCall?: ToolCall) =>
     pushMsg({
       role: 'assistant',
-      content: acceptedCall ? formatToolCallForHistory(acceptedCall) : assistantContentForHistory(raw),
+      content: executedCall
+        ? formatToolCallForHistory({ tool: executedCall.tool, args: executedCall.args })
+        : assistantContentForHistory(raw),
     });
   const allowedTools = new Set(toolsAllowedInMode(options.mode));
   // Native MCP tool connection: merged in alongside the built-in tool map at
@@ -826,7 +828,10 @@ export async function runAgentTurn(
 
     // Keep the model's own transcript of what it did, so it has memory of
     // prior tool calls across iterations.
-    pushAssistant(fullText, nativeAcceptedFormat ? call : undefined);
+    pushAssistant(
+      fullText,
+      call && (nativeAcceptedFormat || containsHarmonyControls(fullText)) ? call : undefined,
+    );
 
     if (nativeAcceptedFormat) {
       traceIter({ note: `native-tool-call-accepted:${nativeAcceptedFormat}` });

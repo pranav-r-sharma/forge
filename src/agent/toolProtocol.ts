@@ -225,9 +225,9 @@ export function containsHarmonyControls(raw: string): boolean {
   return HARMONY_MARKER.test(raw);
 }
 
-/** Removes Harmony control tokens from text shown or stored as the answer. */
+/** Removes Harmony control tokens from text shown or stored as the answer. Does not alter other whitespace. */
 export function stripHarmonyControlTokens(text: string): string {
-  return text.replace(/<\|[^|]+\|>/g, '').replace(/\s+/g, ' ').trim();
+  return text.replace(/<\|[^|]+\|>/g, '').trim();
 }
 
 export type PreprocessedModelReply = {

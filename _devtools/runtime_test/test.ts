@@ -183,6 +183,7 @@ function assert(cond: any, msg: string) {
   const pre = preprocessHarmonyReply(harmonyFinal);
   assert(pre.reasoning === 'secret thoughts' && pre.displayText === 'The answer is 42', 'final channel is display text without analysis');
   assert(stripHarmonyControlTokens(pre.displayText) === 'The answer is 42', 'stripHarmonyControlTokens leaves clean answer text');
+  assert(stripHarmonyControlTokens('  line one\n    line two  ') === 'line one\n    line two', 'stripHarmonyControlTokens preserves internal whitespace, trims ends only');
   assert(detectForeignToolCall(harmonyFinal) === null, 'analysis + final prose is not a foreign tool call');
 }
 {
@@ -248,6 +249,22 @@ function assert(cond: any, msg: string) {
 
   const nudgeBadWrap = formatForeignToolCallNudge(detectForeignToolCall(badWrap)!, known, badWrap);
   assert(/not valid JSON/.test(nudgeBadWrap) && /near:/.test(nudgeBadWrap) && !/which is not a Forge tool/.test(nudgeBadWrap), 'unparseable forge_action wrapper gets JSON parse error nudge');
+}
+{
+  const known = ['write_file', 'read_file'];
+  const search =
+    '        elif args.cmd == "demo":\n            demo_sequence(None)\n        except Exception as e:\n            error(str(e))';
+  const args = { path: 'inventory/cli.py', search, replace: search };
+  const payload = JSON.stringify(args);
+  const raw = '<|channel|>commentary to=write_file <|constrain|>json<|message|>' + payload;
+  const foreign = detectForeignToolCall(raw)!;
+  const acc = tryAcceptNativeToolCall(foreign, known);
+  assert(acc?.call.tool === 'write_file', 'harmony write_file with multiline search is accepted');
+  const hist = formatToolCallForHistory(acc!.call);
+  const inner = hist.match(/\{[\s\S]*\}/)![0];
+  const parsed = JSON.parse(inner);
+  assert(parsed.args.search === search, 'stored history JSON search is byte-identical to executed args');
+  assert(hist.includes('\n') && !/\s+\{/.test(hist.replace('```forge_action\n', '')), 'history forge_action block is not whitespace-collapsed to one line');
 }
 {
   const t09Stripped =
