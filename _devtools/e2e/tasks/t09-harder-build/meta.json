@@ -1,0 +1,16 @@
+{
+  "id": "t09-harder-build",
+  "title": "Build a 7-file library loan system from an empty repository",
+  "category": "build-from-scratch",
+  "protected": [],
+  "expected_files": [
+    "main.py",
+    "inventory/models.py",
+    "inventory/storage.py",
+    "inventory/rules.py",
+    "inventory/services.py",
+    "inventory/reports.py",
+    "inventory/cli.py"
+  ],
+  "referenceFinal": "Done."
+}
