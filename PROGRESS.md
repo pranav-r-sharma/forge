@@ -70,7 +70,7 @@ Then 0.15.0 items (see "Suggested release slicing" in the plan) once Phase 0 num
 **Superseding owner decision (2026-09-27): MLX is the actual direction — switch to it now, no more benchmark runs for the moment.** Changed `forge.provider`'s packaged default in `package.json` from `"ollama"` to `"mlx"` (also updated the doc comment in `src/util/config.ts`). Also activated it for real, live usage: added `forge.provider: "mlx"`, `forge.mlx.model` (the 4-bit snapshot, per the C2 decision above), and `forge.mlx.pythonPath` (pointing at the existing, already-approved `_devtools/mlx-venv` — no new install) to the owner's real VS Code user settings (`~/Library/Application Support/Code/User/settings.json`, outside this repo). `npm run typecheck && npm test && npm run compile`: clean (37/37, 1,338 checks) — the one test that checks a "default" provider value (`test_v15_factory.ts`) tests `parseProviderId`'s own unset/garbled-input fallback (a separate, intentional safety net, unrelated to the packaged schema default), so it was correctly unaffected. **Known gap:** `~/.forge/mlx-venv` (the fallback path `resolvePython()` uses when `forge.mlx.pythonPath` is empty, for use in *other* workspaces) does not exist yet — reusing this repo's dev venv works today via the explicit path, but is coupled to this checkout; creating a dedicated `~/.forge/mlx-venv` would be a *new* install and needs the owner's go-ahead first (standing rule 3), not done here.
 
 ## Next
-**t09-harder-build cycle 4** (gpt-oss Q8 MLX) after harness fixes for unknown-arg notes (`line_start`→`start_line`) and loop warn-once (`loop-warning` trace) — cycle 3 stopped at 122 iters / 897 s with `agentError` loop hard-stop while editing `inventory/cli.py` (`NameError: args`).
+Ask owner for manual-test findings; then HANDOFF.md §6 steps 2-3.
 
 ## t09 / t10 — cycles 2–3 + harness (gpt-oss Q8, 2026-09-27)
 
@@ -229,4 +229,12 @@ Three commits (`d912e59`, `720e092`, `fc20381`) close the harness gap found in t
 ## Files touched (this session, continued)
 `src/agent/toolProtocol.ts`, `src/agent/agentLoop.ts`, `src/tools/commandTool.ts`, `src/agent/types.ts`, `src/agent/approvalBroker.ts`, `_devtools/bench/run_task.ts`, `_devtools/runtime_test/test.ts`, `_devtools/runtime_test/test_v15_truncation.ts`, `_devtools/runtime_test/test_v15_command.ts`, `HANDOFF.md`, `_devtools/e2e/ITERATION_LOG.md` (new), `_devtools/e2e/results/t07-build-from-scratch-mlx4bit-cycle{1,2}.*` (new).
 
-**Last updated:** 2026-09-27 17:00 (unknown-arg + loop-warn harness; t09 c3 logged; next t09 c4)
+## Hand-off take 4 + t09 cycles 4–5 + packaging (2026-09-27)
+
+- **`.vscodeignore` (`d447fb5`):** excludes `_devtools/**`, `.agent-bridge/**`, etc. — vsix 137 MB → 604 KB.
+- **Latest build:** installed in owner's VS Code (`local-forge.forge-local-agent@0.14.0`, forced over prior 0.14.0; version not bumped).
+- **`HANDOFF.md`:** rewritten (take 4) — bridge/Cursor workflow, gpt-oss-only testing, fixture status, harness commit table, t09 cycle 5 evidence (§5a), ordered next steps (§6).
+- **t09 cycle 4:** FAIL — 120 iters / 764 s, loop stop after 2 loop-warnings; `check.sh` IndentationError `inventory/cli.py:149`. **Harness bug:** `write_file` whitespace-tolerant match falsely "No changes — already matches" on indentation-only fixes (13 wasted edits); ambiguous-match lacked line numbers; did-you-mean `cwd` for `cmd`. **Fix:** `7186c10`. Evidence: `t09-harder-build-gptossq8-cycle4.*`.
+- **t09 cycle 5:** INCOMPLETE — SIGTERM at 543.7 s / 61 iters (not a valid attempt). Evidence: checker false positive on `python3 main.py -h` as per-file check (unfixed); early "No changes" again (verify); task-command nudge + model re-running spec forms. Evidence: `t09-harder-build-gptossq8-cycle5.*`. Logged in `_devtools/e2e/ITERATION_LOG.md`.
+
+**Last updated:** 2026-09-27 18:45 (hand-off take 4; t09 c4–c5 logged; next: owner manual test, then §6.2–3)

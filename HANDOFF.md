@@ -1,100 +1,124 @@
-# Hand-off — Forge v0.15.0 (acceptance-test loop, take 3)
+# Hand-off — Forge v0.15.0 (acceptance-test loop, take 4)
 
-**Written:** 2026-09-27, by the previous agent, at the owner's request.
-**For:** the next agent picking this up.
-**Read this whole file before touching anything.** Then `CLAUDE.md` (standing rules — binding, read first) and `PROGRESS.md` (live state — trust it over this document for "what's next" if they disagree; read at least the last ~6 entries, they cover this exact effort in detail).
-
----
-
-## 0. Do this before anything else
-
-1. Read `CLAUDE.md` in full. Nothing in this document overrides it.
-2. Read `PROGRESS.md`'s last ~6 entries (from "Handed off again (2026-09-27): continue as an autonomous fix-fail-fast loop" through the end).
-3. `git log --oneline | head -10`, `git status --short`, `git branch --show-current` — confirm you're on `v0.15.0-work`, the tree is clean, and the last commit matches what `git log` shows at hand-off time (check the commit that adds this file). If it doesn't match, trust the repo over this document.
-4. `npm run typecheck && npm test && npm run compile` — must be clean before you change anything.
-5. `pgrep -fl mlx_lm.server; ollama ps; memory_pressure | grep "free percentage"` — confirm nothing orphaned, memory healthy.
-6. Unfamiliar repo state you didn't create → **stop and ask the owner**, don't touch or commit over it.
+**Written:** 2026-09-27, at the owner's request, after a long autonomous session.
+**For:** the next agent. Read this whole file first, then `CLAUDE.md` (binding), then the last ~8 entries of `PROGRESS.md` and all of `_devtools/e2e/ITERATION_LOG.md`. If they disagree with this file, trust `PROGRESS.md` + `git log`.
 
 ---
 
-## 1. Where things stand (short version — PROGRESS.md has full detail)
+## 0. How the owner wants you to work (important — read first)
 
-Two real harness bugs were found and fixed earlier in this effort (abandoned-mid-JSON-action silently accepted as a final answer; a workspace-wipe gap in the dangerous-command guard). Both are done, tested, committed — do not revisit unless you find new evidence they're incomplete.
-
-**This session (cycles 1-2 of the autonomous loop) found two more things, and the owner made two decisions as a result:**
-
-1. **`t07-build-from-scratch` is retired.** Its `check.sh` (built in an earlier session) hard-requires `unittest.TestCase`-style tests, but `task.md` never says so — cycle 2's model wrote a fully correct program with valid pytest-style tests, verified by hand to pass `acceptance.py` end-to-end, and still failed the grading script because `unittest discover` doesn't recognize pytest-style test functions. **This is a fixture defect, not a Forge bug and not a model mistake.** Per the "never delete/overwrite work you haven't read" rule, its files and this session's cycle 1/2 results are **not deleted** — they stay as historical record under `_devtools/e2e/tasks/t07-build-from-scratch/` and `_devtools/e2e/results/t07-*`. **Your job includes designing its replacement** (see §4).
-
-2. **A real, buildable harness gap was found by reading the full message transcript, not just the trace summary — fix this first, before anything else.** Read PROGRESS.md's "cycle 2" entry in full for the transcript evidence, but in short:
-   - The existing abandoned-action-nudge (`src/agent/agentLoop.ts`, fires when `looksLikeAbandonedToolCall` in `src/agent/toolProtocol.ts` detects a `"tool":"..."` fragment that never finished parsing) sends this message: *"Your last reply started an action but the JSON was left incomplete... reply now with **your next action**..."*
-   - That wording never says *which* action was left unfinished. It just says "your next action" — which the model can, and did, read as license to do something else entirely (move on to a different file) instead of resuming the one that got cut off.
-   - This is the actual mechanism behind the "wrote the test file before the file it imports" pattern that's been recorded across three separate cycles/sessions as a vague "model reasoning limitation." It isn't purely that — the harness's own recovery message is ambiguous enough to let this happen. One cycle self-corrected anyway (got lucky, found the missing file itself after a long detour); others didn't and burned their entire budget on a wrong theory instead.
-   - **The fix:** `looksLikeAbandonedToolCall` (or a sibling helper) should extract the tool name and path from the leftover JSON fragment when possible (a regex over the partial `{"tool":"write_file","args":{"path":"...` text is enough — you don't need it to be a full parse) and the nudge message should name that file explicitly: *"You were in the middle of writing `contacts/storage.py`. Finish writing that exact file now — do not move on to a different file."* Fall back to the current generic wording only when extraction genuinely fails (e.g. the fragment is too short to contain a path yet). Apply the same treatment to the `truncated-reply-nudge` (the `finishReason === 'length'` sibling case, same code block) — it has the identical generic-wording gap.
-   - Look at `findUnverifiedClaims`'s nudge (same file, a few lines below) as the existing good pattern to match: it already names specific paths (`You said you changed \`foo.ts\`... call write_file now`) instead of a vague "try again."
-   - New unit tests: reproduce an abandoned `write_file` fragment with a known path, confirm the nudge names that path; confirm the fallback still works when no path is extractable; a truncated-reply-length case too.
-
----
-
-## 2. New standing instruction — be strict about catching AI mistakes the harness can name (owner directive, 2026-09-27)
-
-**This applies to this loop going forward, not just the one fix above.** Whenever Forge's own code can programmatically detect a specific, identifiable defect in what the model just did — an abandoned/incomplete action, an unverified claim, a dangerous command, or any other pattern the code can pin down precisely (not a vague "something seems off," but something the code can actually name) — **the harness must not let the model simply drift to something else.** It must state, explicitly and concretely, exactly what was wrong and what the model needs to do about it — naming the specific file/tool/action involved, never a generic "try again" or "your next action" — and require the model to resolve *that exact thing* before any other action is accepted as valid progress.
-
-Concretely, as you continue the fix-fail-fast loop:
-- Every time you find a nudge, retry message, or recovery path in the agent loop that's currently generic where it could be specific (the code already knows more than it's telling the model), tighten it the same way as the fix in §1 — name the exact thing, don't just prompt for "next action."
-- This is a real code-quality bar for the harness now, not just a one-off bug fix: a vague recovery message that lets a known, named problem go unaddressed is itself something worth treating as a small harness gap, in the same spirit as bugs #1 and #2 before it — even if the model would probably self-correct anyway. Don't assume "the model usually figures it out" is good enough when the code could just tell it directly.
-- Still bounded by the same autonomy rules as everything else in this loop (§3 below) — small, targeted, test-covered changes; nothing speculative or unobserved.
+1. **You are the brain; Cursor is the hands.** You think, plan, review and decide. Every action — file edits, commands, test runs, model runs, commits — is delegated to Cursor through the bridge:
+   `bridge wake cursor "<self-contained task>" --model composer-2.5`
+   - Use **only `composer-2.5`** (never `composer-2.5-fast`, never another model).
+   - `--model` goes **after** the task text (`bridge wake cursor "<task>" --model composer-2.5`); putting it first fails with "unknown option".
+   - Read the reply with `bridge read claude`. Tasks over ~10 min: run the Bash call with `run_in_background: true` and redirect output to a log in `$TMPDIR`.
+   - If `bridge wake` prints `Authentication required`, Cursor's login expired: stop and ask the owner to run `agent login`. Do not do the work yourself.
+   - Reading files / transcripts / diffs yourself to review is fine and expected. **Always review Cursor's diff** (`git show <hash>`) — it has twice made things looser or narrower than asked (see §4).
+2. **Harness philosophy (owner directive):**
+   - Fixes must be **universal**: work for any model and any task. Never special-case one fixture, one model, or one language (e.g. a check hard-coded to `py_compile` was rejected and made generic).
+   - **The model fixes its own mistakes.** No silent auto-repair (owner explicitly rejected auto-adding missing JSON braces).
+   - **The harness gives clear, accurate, targeted information**: name the exact tool / file / line / command / error, never a vague "try again". A vague or *false* harness message is a harness bug.
+   - Never accept a reply as a final answer when the code can tell something is wrong.
+3. **Don't overfit.** The owner rejected spending effort on one fixture's grader. Tests should cover a variety of tasks.
+4. **Brief, simple language** in replies. State remaining token budget before any long/background run (CLAUDE.md rule 7).
 
 ---
 
-## 3. Standing rules that still apply — do not violate
+## 1. Test model (changed this session)
 
-From `CLAUDE.md` (read the full file): Ornith-1.5-9B/MLX-4bit only, no sudo, no new installs without asking, work only on `v0.15.0-work`, one small step per commit, one model loaded at a time, state remaining token budget before any background/long-running run and at every `Monitor` re-arm, a repeated operation stops at its first failure to diagnose it, never delete/overwrite work you haven't read, report faithfully.
+- **gpt-oss-20b MXFP4-Q8 (MLX)** only — CLAUDE.md rule 1 was updated. Snapshot:
+  `~/.cache/huggingface/hub/models--mlx-community--gpt-oss-20b-MXFP4-Q8/snapshots/773a7da77e569019bb0fd17a554b263738d669a3` (11 GB; also a Q4 variant exists, not used).
+- Ornith-1.5-9B is retired as the test model (superseded 2026-09-27).
+- Speed ~20–30 tok/s; a run loads in ~2 s. Needs ≥16 GB available before loading (preflight every run: `pgrep -fl mlx_lm.server; ollama ps; memory_pressure`, `vm_stat`). Confirm `mlx_lm.server` is gone after every run.
+- gpt-oss speaks **Harmony** format (`<|channel|>analysis ... to=<tool> <|constrain|>json<|message|>{...}`). The harness now handles it (see §3).
 
-**Autonomy grant (unchanged from the last hand-off):** you may implement a fix and re-run without pausing for approval, provided it's a small targeted change addressing a specific root-caused issue (not a refactor/redesign/speculative hardening), doesn't need anything CLAUDE.md gates behind asking first, stays on `v0.15.0-work`, is covered by new/updated unit tests with the full suite green, and is committed as its own step before you restart the test. Stop and ask if a fix needs something outside those bounds, you can't confidently classify a failure, you hit unfamiliar repo state, or you're near the budget-pause threshold.
-
-**Classifying a failure — harness bug vs. model limitation** (calibration examples in PROGRESS.md's "Confirmation rerun" and "cycle 2" entries):
-- **Harness bug (fix it):** Forge's own code does something wrong regardless of what the model asked for — a valid/near-valid action silently dropped or misinterpreted; something irreversible allowed through an incomplete safety net; a crash/exception in Forge's own code; a misleading tool result; an unrecoverable hang. **Also now includes:** a recovery/nudge message that's vaguer than the code's own knowledge lets it be (§2).
-- **Model limitation (record it, don't fix):** every tool did what it was asked and reported the truth; the model's own reasoning was wrong (bad diagnosis, logic bug in its own code, an unproductive rabbit hole it never escaped). Don't prompt-hint or special-case-guard against one specific model mistake — that's out of scope even under this grant.
-- **Genuinely unsure:** don't guess, don't fix. Log as "unclear — needs owner input," treat as model limitation for now (don't touch code), flag prominently.
-
-**Stopping conditions for the loop:** success (≥2 consecutive clean passes), model-limitation floor reached (correctly classified, no reason to expect a different bug from another run), a 5-cycle safety valve per sitting, or the budget-pause protocol.
-
-**Iteration log** (`_devtools/e2e/ITERATION_LOG.md`) — keep using it exactly as before: one short entry per cycle (run config, result, classification, fix commit if any, evidence path, next action). `PROGRESS.md` stays the detailed narrative. Commit both together with each cycle's fix (or as a trivial commit on a clean pass/model-limitation cycle with no code change).
-
-**Fail-fast** — the moment you recognize a genuine harness bug happening live, kill the run immediately (`TaskStop`, confirm no orphaned `mlx_lm.server`), fix, rerun. Don't let a run you already know is broken burn its remaining budget.
-
----
-
-## 4. Your task, in order
-
-1. **Fix the abandoned-action/truncated-reply nudge specificity gap** (§1.2) first — it's already root-caused, already scoped, already approved. Small change, new tests, full suite green, one commit.
-2. **Design a replacement for `t07-build-from-scratch`.** It needs to still be a genuine build-from-scratch task (CLAUDE.md standing rule 8), well-specified enough that a failure points at harness/model behavior rather than spec ambiguity, and — the lesson from this session — its grading script must not silently assume a test framework/style the task instructions never actually require. **Present options to the owner and get explicit approval before building it** (per the option-catalog-and-approval rule): e.g. (a) patch the same domain but make `check.sh` framework-agnostic (accept either `unittest` or `pytest` output), (b) same domain but make `task.md` explicitly specify `unittest.TestCase`, (c) a different domain/task entirely. Validate the new fixture with `validate_tasks.py` before running the real loop on it.
-3. **Resume the fix-fail-fast loop** on the new fixture, applying the §2 standing instruction throughout — not just to the one nudge fixed in step 1, but to any other generic-recovery-message gap you find along the way.
-4. Continue logging every cycle in both `ITERATION_LOG.md` and `PROGRESS.md`, per the format already established.
-
----
-
-## 5. Quick reference
-
+Run command template:
 ```bash
-# Confirm state
-npm run typecheck && npm test && npm run compile
-git log --oneline -10 && git status --short && git branch --show-current
-pgrep -fl mlx_lm.server; ollama ps; memory_pressure | grep "free percentage"
-
-# The MLX-4bit snapshot (Ornith only)
-S4=$(ls -d ~/.cache/huggingface/hub/models--ornith-ai--Ornith-1.5-9B-MLX-4bit/snapshots/*)
-
-# One cycle's run, workspace kept for inspection, watched live
-node _devtools/run-ts.js _devtools/bench/run_task.ts \
-  --task <your-new-task-id> --provider mlx --model "$S4" \
-  --thinking auto --terse true --out _devtools/e2e/results/<task>-mlx4bit-cycle<N>.json \
-  --timeout-s 600 --max-iters 40 --keep > /tmp/t0N-cycleN.log 2>&1 &
-
-# Summarize the trace
-python3 _devtools/bench/trace_report.py _devtools/e2e/results/<task>-mlx4bit-cycle<N>.trace.jsonl
+M=~/.cache/huggingface/hub/models--mlx-community--gpt-oss-20b-MXFP4-Q8/snapshots/773a7da77e569019bb0fd17a554b263738d669a3
+node _devtools/run-ts.js _devtools/bench/run_task.ts --task <id> --provider mlx --model "$M" \
+  --thinking auto --terse true --out _devtools/e2e/results/<id>-gptossq8-cycle<N>.json \
+  --timeout-s 1200 --max-iters 80 --keep > _devtools/e2e/results/<id>-gptossq8-cycle<N>.log 2>&1
 ```
+Kept workspaces land in `$TMPDIR/forge-e2e-<id>-XXXX` (path is in the result JSON). Always read the full `.messages.json`, not just the trace.
 
-**Read the full message transcript (`.messages.json`), not just the trace summary, before concluding anything** — that's how root cause #2 in this hand-off was actually found; the trace alone made it look like a plain repeat of the old "model limitation."
+---
 
-Good luck.
+## 2. Test fixtures and status
+
+All under `_devtools/e2e/tasks/`, validated with `python3 _devtools/bench/validate_tasks.py` (all 10 valid).
+
+| Task | What | Status |
+|---|---|---|
+| t01–t06 | older small tasks | t01 used as smoke test: PASS on gpt-oss |
+| t07-build-from-scratch | retired (grader required unittest style task never stated); kept as history |
+| **t08-five-file-build** | 5-file expense tracker, py_compile + run end to end | **DONE — 2 consecutive passes (cycles 2,3)** |
+| **t09-harder-build** | 7-file library loans (borrow limit 3, 14-day loan, $0.25/day fee capped $10, no double loan), exact CLI forms `add-book --db PATH ...` | **0/4 real cycles — still failing; cycle 5 was cut off (see §5a)** |
+| **t10-seeded-bugs** | broken 5-file CSV sales tool with 5 planted bugs (syntax, bad import, crash on blank row, `+` vs `*`, reversed sort); bug list in `README-bugs.md` outside `repo/` | **DONE — 2/2 passes; model finds and fixes all 5** |
+
+Graders (`check.sh`) must only check what `task.md` states (lesson from t07).
+
+**t09 failure pattern:** the model writes all 7 files fine, then `python3 main.py demo` fails on `--db` (it made `--db` a required top-level option). It then rewrites `--db` handling in `inventory/cli.py` and gets lost (duplicate code blocks, IndentationError). Cycle 4 was made much worse by a harness bug (fixed in `7186c10`, not yet validated live).
+
+---
+
+## 3. Harness fixes this session (all committed on `v0.15.0-work`, tests 1370 → 1507 checks, all green)
+
+| Commit | Fix |
+|---|---|
+| d912e59, 720e092, fc20381 | Abandoned/truncated-action nudges name the exact tool + file; the named unfinished write is **required** before other writes (1 redirect cap; read-only tools allowed; any write to the same path resolves it) |
+| 3458397 → 64d4205 | A complete reply with broken JSON gets the real parse error + location (not a false "cut off"); retry cap ends with an explicit failure note (was a silent "success"); brace auto-repair **removed** per owner |
+| aa81276 | Foreign-format tool calls are detected, not accepted as final answers; Harmony channels split (analysis = reasoning) |
+| 7548178 | Never store `<|...|>` control tokens in history (mlx_lm.server returned HTTP 404 on them); test.ts now counted in npm totals |
+| 8c41833 | Accept a native-format tool call **only if complete and exact** (known tool, strict JSON args); retry cap counts **consecutive** failures |
+| 805c115 | Accurate message for an empty/incomplete `forge_action` wrapper call |
+| 6e5c13b, 2c3119d | **Claimed-command checker**: before accepting a final answer, commands named in it must have been run; per-file check coverage ("ran py_compile on 4 of 5 files; never on main.py") — generic for any check command |
+| ba01527 | Harmony calls caught on any channel/constrain tag; **final answer blocked while the last command is still failing** (names cmd, exit code, files edited since; cap 1 then marked unverified); precise arg-type errors ("command must be a string, you sent an array; resend as ...") |
+| 375d40c, 115a52b | Per-file check ignores program runs (`python3 main.py demo` is not a per-file check); nested-action-in-args error; **task command forms check**: command forms written in the task must have been run, matched token-by-token in order with placeholder wildcards (PATH, ISBN, YYYY-MM-DD, `<file>`) |
+| a26e069 | Unknown tool args flagged with did-you-mean (`line_start` → `start_line`); loop detector **warns once with specifics** (repeated action, still-failing command + error) before stopping |
+| 7186c10 | **write_file**: indentation-only edits now applied (whitespace-tolerant match used to say "No changes — already matches" falsely, blocking IndentationError fixes); ambiguous-match errors name line numbers; did-you-mean prefers abbreviations (`cmd` → `command`) |
+| d447fb5 | `.vscodeignore` excludes `_devtools/**`, `.agent-bridge/**`, etc. (vsix went 137 MB → 604 KB) |
+
+Other: t08/t09/t10 fixtures (0331596, 468586c, 81def7f, 3421254); result files committed per cycle.
+
+**Known quirks / ideas not done:**
+- Hallucination-nudge counter is still whole-run cumulative (cap 2) — left as is on purpose.
+- Model habits seen repeatedly on gpt-oss: sends `command` as an array, adds a `timeout` arg, calls non-existent tools (`repo_browser.open_file`, `container.exec`), nests a whole action inside `args`. All now get exact corrective messages and it usually self-corrects next step.
+- Indentation fix in 7186c10 keeps the file's indentation on the *first* matched line; a bad indent on that first line is still not fixable via fuzzy match (edge case).
+
+---
+
+## 4. Lessons about Cursor (review its work)
+
+- It made the task-form check loose ("--db moved still matches") contrary to spec — caught in review, fixed in 115a52b.
+- It hard-coded the per-file check to `py_compile` — caught, fixed in 2c3119d.
+- It speculated a root cause (MLX 404) without evidence — required curl reproduction; the real cause was proven.
+- It sometimes reports only partial test runs — ask for the full `npm test` summary line.
+Give it exact specs, evidence paths (message numbers), expected messages, and required tests.
+
+---
+
+## 5. Current state
+
+- Branch `v0.15.0-work`, last commit `d447fb5` (plus whatever the hand-off commit adds). Nothing pushed. Tree clean except this hand-off.
+- The latest build is **installed in the owner's VS Code** (`local-forge.forge-local-agent@0.14.0`, forced over the old 0.14.0 — version number not bumped; ask the owner before bumping). Build: `npm run package`, install: `"/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code" --install-extension forge-local-agent-0.14.0.vsix --force`.
+- The owner is **testing the build manually** now. Their findings may come first — start by asking for them.
+- No model server running.
+
+## 5a. t09 cycle 5 — ran, but was killed (not a valid data point)
+
+- Result files `_devtools/e2e/results/t09-harder-build-gptossq8-cycle5.*` (18:43). It was started by a Cursor task that first appeared to fail on login, then ran once login was restored; it ended with **SIGTERM at 543.7 s, 61 iters** (probably when the owner interrupted a later tool call) — treat as incomplete, re-run it.
+- Useful evidence from it anyway:
+  1. **Checker false positive (unfixed):** `python3 main.py -h` was treated as a per-file check → "You ran `python3 -h` on 1 of the 7 .py files...". The 375d40c rule ("only flags remain after removing the path") lets `-h` through. Proper universal rule: when the executable is an interpreter (python/python3/node/ruby/bash/sh/…), a file that is the **script being run** (first positional after the interpreter and its options) is never a per-file check target; only files passed as data to a check (e.g. after `-m py_compile`, `--check`) count.
+  2. **"No changes — already matches" still appeared** (early, msgs ~28-31) after 7186c10. Verify whether the model's search and replace were byte-identical (then the message is true) or whether 7186c10 missed a path.
+  3. The task-command nudge fired again and the model started re-running the spec forms ("We need to run commands exactly as specified") just before the kill — good sign.
+  4. No `mlx_lm.server` left running (checked).
+
+## 6. Next steps (in order)
+
+1. Ask the owner for their manual-test findings; triage them under the philosophy in §0.
+2. Fix the §5a item 1 checker false positive (universal, tested, one commit) and check §5a item 2.
+3. Re-run **t09 cycle 5** (validates 7186c10 live; the earlier cycle 5 was killed). This is t09's 5th cycle — the per-sitting safety valve; after it, report to the owner rather than continuing blindly.
+4. Read the full transcript; fix any universal harness gap found (small, tested, one commit each), log in `ITERATION_LOG.md` + `PROGRESS.md`.
+5. Ideas to propose (not approved yet): a version bump for dev builds; more task variety (non-Python build, refactor, config/docs change) per the owner's "many kinds of tasks" point.
+
+Standing rules in `CLAUDE.md` still apply in full (branch, no sudo, one model loaded, memory preflight, budget statements, stop repeated runs at first failure, report faithfully).

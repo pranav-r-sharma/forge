@@ -101,3 +101,19 @@ One short entry per loop cycle. Full narrative for each cycle stays in `PROGRESS
 - **Findings:** `task-command-nudge` / **`115a52b`** task-form checker helped — model used spec CLI forms and started fixing; then thrashed on `cli.py`. Cycle 2 checker fix **`375d40c`** (no false `python3 demo` compile claim; nested-action error). Cycle 2 FAIL was global `--db` vs per-subcommand spec.
 - **Evidence:** `_devtools/e2e/results/t09-harder-build-gptossq8-cycle3.{json,trace.jsonl,messages.json}` (`agentError` + msgs 30–31, 44–45, 52–53, 64–65, 74–77, 86–87, 120–131)
 - **Next:** t09 cycle 4 after unknown-arg + loop-warn harness commits
+
+## t09-harder-build — Cycle 4 — gpt-oss Q8 (MLX)
+
+- **Result:** FAIL — 120 iterations, 764 s wall, loop stop after 2 loop-warnings; `check.sh` IndentationError `inventory/cli.py:149`
+- **Classification:** harness bug — `write_file` whitespace-tolerant match said "No changes — already matches" on indentation-only fixes (13 wasted edits); ambiguous-match message lacked line numbers; did-you-mean suggested `cwd` for `cmd`
+- **Fix:** `7186c10` — indentation-only edits applied; ambiguous-match errors name line numbers; did-you-mean prefers abbreviations (`cmd` → `command`)
+- **Evidence:** `_devtools/e2e/results/t09-harder-build-gptossq8-cycle4.{json,trace.jsonl,messages.json,log}`
+- **Next:** t09 cycle 5 (validate `7186c10` live)
+
+## t09-harder-build — Cycle 5 — gpt-oss Q8 (MLX)
+
+- **Result:** INCOMPLETE — killed by SIGTERM at 543.7 s, 61 iterations; **not a valid attempt**
+- **Classification:** evidence only (run interrupted; do not count as pass/fail)
+- **Findings:** checker false positive — "You ran `python3 -h` on 1 of 7 files" (`python3 main.py -h` treated as per-file check; **unfixed**); "No changes — already matches" appeared again early (verify vs byte-identical search); `task-command-nudge` fired and the model began running spec forms
+- **Evidence:** `_devtools/e2e/results/t09-harder-build-gptossq8-cycle5.{json,trace.jsonl,messages.json,log}`
+- **Next:** fix the false positive, re-run cycle 5 (`HANDOFF.md` §5a / §6)
