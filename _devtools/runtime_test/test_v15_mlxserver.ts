@@ -45,7 +45,10 @@ class FakeChild extends EventEmitter implements ChildLike {
 }
 
 interface Rig { mgr: MlxServerManager; children: FakeChild[]; spawns: { cmd: string; args: string[]; env: any }[]; logs: string[]; setHealthy: (b: boolean) => void; healthyAfterPolls: (n: number) => void; setAvail: (v: number | undefined) => void; }
-function rig(opts: { adoptExternal?: boolean } = {}): Rig {
+// adoptProbeAttempts defaults to 1 here (not the real production default of 3) so every pre-existing test's healthyAfterPolls(n)
+// keeps meaning exactly what it always did: n failures at the adopt-check, then success on the first startup-wait poll after
+// spawning. Tests that specifically exercise the multi-try adopt probe pass adoptProbeAttempts explicitly.
+function rig(opts: { adoptExternal?: boolean; adoptProbeAttempts?: number } = {}): Rig {
   let healthy = !!opts.adoptExternal;
   let polls = -1;
   let avail: number | undefined = undefined;
@@ -57,6 +60,7 @@ function rig(opts: { adoptExternal?: boolean } = {}): Rig {
     isHealthy: async () => { if (polls >= 0) { polls--; if (polls < 0) healthy = true; } return healthy; },
     availableGB: async () => avail,
     log: (l) => logs.push(l), sleep: (ms) => sleep(Math.min(ms, 2)), killGraceMs: 60, pollMs: 2,
+    adoptProbeAttempts: opts.adoptProbeAttempts ?? 1,
   });
   return { mgr, children, spawns, logs, setHealthy: (b) => (healthy = b), healthyAfterPolls: (n) => { polls = n; healthy = false; }, setAvail: (v) => (avail = v) };
 }
@@ -180,6 +184,15 @@ async function testRestartAdoptSerialize() {
   ok(x.spawns.length === 0 && x.mgr.state === 'ready' && x.logs.some((l) => /adopting/.test(l)), 'a healthy server already on the port is ADOPTED, not duplicated');
   await x.mgr.stop();
   ok(x.children.length === 0 && x.mgr.state === 'stopped', 'and stopping never kills a server Forge did not start');
+  // adopt a server that is slow to answer (e.g. busy under load) rather than mistaking silence for a free port
+  const slow = rig({ adoptProbeAttempts: 3 });
+  slow.healthyAfterPolls(2); // fails the first 2 probes, healthy on the 3rd — must still be adopted, not double-spawned
+  await slow.mgr.ensure(cfgFor(makeModelDir()));
+  ok(slow.spawns.length === 0 && slow.mgr.state === 'ready' && slow.logs.some((l) => /adopting/.test(l)), 'a server slow to answer 2 health checks is still adopted on the 3rd try, not duplicated');
+  const gone = rig({ adoptProbeAttempts: 3 });
+  gone.healthyAfterPolls(3); // fails all 3 adopt probes (port really is free), then the newly spawned server answers normally
+  await gone.mgr.ensure(cfgFor(makeModelDir()));
+  ok(gone.spawns.length === 1 && gone.mgr.state === 'ready', 'a port that fails all 3 adopt probes is treated as free and a server is started');
   // dispose kills a managed child
   const dsp = rig();
   dsp.healthyAfterPolls(1);

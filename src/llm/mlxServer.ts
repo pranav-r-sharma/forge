@@ -105,6 +105,8 @@ export interface MlxServerDeps {
   killGraceMs?: number;
   pollMs?: number;
   hfCacheRoot?: string;
+  /** How many times to probe before concluding the port is free rather than just slow to answer (default 3). */
+  adoptProbeAttempts?: number;
 }
 
 const defaultIsHealthy = async (port: number): Promise<boolean> => {
@@ -165,6 +167,18 @@ export class MlxServerManager {
     return [{ name, model: name, size: this.modelBytes }];
   }
 
+  /** Several tries, `pollMs` apart (default 3), before concluding a port is actually free rather than just slow to answer right now. */
+  private async probeAdopt(port: number, isHealthy: (port: number) => Promise<boolean>): Promise<boolean> {
+    const sleep = this.deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+    const pollMs = this.deps.pollMs ?? 500;
+    const attempts = this.deps.adoptProbeAttempts ?? 3;
+    for (let attempt = 0; attempt < attempts; attempt++) {
+      if (await isHealthy(port)) return true;
+      if (attempt < attempts - 1) await sleep(pollMs);
+    }
+    return false;
+  }
+
   /** Makes sure a healthy server for exactly this config is running; starts, restarts or adopts as needed. Calls are serialized. */
   ensure(cfg: MlxServerConfig): Promise<void> {
     const run = this.chain.then(() => this.doEnsure(cfg));
@@ -186,8 +200,11 @@ export class MlxServerManager {
     if (this._state !== 'stopped') await this.doStop(); // config changed or previous run died: start clean
     this._error = undefined;
 
-    // adopt something already serving on this port (e.g. started by the user) instead of fighting for it
-    if (await isHealthy(cfg.port)) {
+    // adopt something already serving on this port (e.g. started by the user, or a leftover process from an earlier run)
+    // instead of fighting for it. Retry the check briefly first: a real server can be slow to answer under load, and a
+    // single failed probe must never be mistaken for "the port is free" — that mistake spawns a second process straight
+    // into an EADDRINUSE crash instead of adopting the one already there.
+    if (await this.probeAdopt(cfg.port, isHealthy)) {
       this.external = true;
       this.key = key;
       this.resolvedModel = resolved;
