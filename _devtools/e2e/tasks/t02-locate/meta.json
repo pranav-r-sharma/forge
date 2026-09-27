@@ -1,0 +1,1 @@
+{"id":"t02-locate","title":"Locate a function and report its behavior (read-only)","category":"locate","protected":["inventory/stock.py","inventory/reorder.py","inventory/restock.py","inventory/report.py","tests/test_stock.py"],"referenceFinal":"The function is reorder_quantity in inventory/reorder.py. It returns 0 when current stock is above the reorder threshold (20)."}

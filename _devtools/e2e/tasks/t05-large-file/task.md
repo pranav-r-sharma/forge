@@ -1,0 +1,1 @@
+The function `price_with_tax` returns wrong values and the tests in tests/test_rules.py fail. It lives in a large module. Find the bug and fix it without changing the tests or any other function. Run the tests when you are done.

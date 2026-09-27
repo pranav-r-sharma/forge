@@ -116,7 +116,10 @@ async function main() {
   const after = listFiles(ws);
   const changed = Object.keys({ ...before, ...after }).filter((f) => before[f] !== after[f]);
   const protectedTouched = (meta.protected || []).filter((f: string) => before[f] !== after[f]);
-  const chk = spawnSync('bash', [path.join(taskDir, 'check.sh')], { cwd: ws, encoding: 'utf8', timeout: 120_000 });
+  // check.sh may inspect the final answer (locate-style tasks) and hidden acceptance files that live next to it in the task directory
+  const finalFile = path.join(os.tmpdir(), `forge-final-${process.pid}.txt`);
+  fs.writeFileSync(finalFile, finalText);
+  const chk = spawnSync('bash', [path.join(taskDir, 'check.sh')], { cwd: ws, encoding: 'utf8', timeout: 120_000, env: { ...process.env, FORGE_TASK_DIR: taskDir, FORGE_FINAL_FILE: finalFile, PYTHONDONTWRITEBYTECODE: '1' } });
   result.checkExit = chk.status;
   result.checkOutput = String((chk.stdout || '') + (chk.stderr || '')).trim().split('\n').slice(-6).join('\n');
   result.protectedTouched = protectedTouched;

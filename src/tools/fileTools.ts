@@ -229,6 +229,9 @@ export async function writeFileTool(args: Record<string, any>, ctx: ToolExecCont
   // file was balanced before the edit and is not after) to keep false
   // positives rare. Advisory only, same as indentAdvisory — never blocks.
   const balanceAdvisory = existing !== undefined ? detectBalanceRegression(existing, newText) : undefined;
+  const duplicateAdvisory = detectDuplicateDefinitions(existing, newText);
+  // Show what the edit produced (modifications only) so the model doesn't need a separate read_file step to check its own work.
+  const editEcho = existing !== undefined && kind === 'modify' ? echoEditedRegion(relPath, existing, newText) : undefined;
 
   const { id, applied } = await ctx.proposeEdit(
     { uri, relativePath: relPath, originalText: existing ?? '', newText, kind },
@@ -236,8 +239,8 @@ export async function writeFileTool(args: Record<string, any>, ctx: ToolExecCont
 
   const verb = kind === 'create' ? 'Created' : 'Updated';
   const verbPending = kind === 'create' ? 'creating' : 'updating';
-  const advisories = [fuzzyMatchAdvisory, reindentAdvisory, indentAdvisory, balanceAdvisory].filter(Boolean);
-  const advisorySuffix = advisories.length ? `\n\n${advisories.join('\n\n')}` : '';
+  const advisories = [fuzzyMatchAdvisory, reindentAdvisory, indentAdvisory, balanceAdvisory, duplicateAdvisory].filter(Boolean);
+  const advisorySuffix = (editEcho ? `\n\n${editEcho}` : '') + (advisories.length ? `\n\n${advisories.join('\n\n')}` : '');
   return {
     ok: true,
     content: applied
@@ -300,6 +303,95 @@ function applyFuzzyMatch(existing: string, match: FuzzyLineMatch, replace: strin
   const replaceLines = replace.split('\n');
   const spliced = [...existingLines.slice(0, match.startLine), ...replaceLines, ...existingLines.slice(match.endLine)];
   return spliced.join('\n');
+}
+
+/** Definition headers we can recognise reliably without a parser: Python `def`, JS/TS `function`. Returns name + indent width + line index. */
+const DEF_HEADER_RE = /^([ \t]*)(?:export\s+)?(?:default\s+)?(?:async\s+)?(?:def|function\*?)\s+([A-Za-z_$][\w$]*)\s*\(/;
+
+interface DefSite {
+  name: string;
+  indent: number;
+  line: number;
+}
+
+function findDefinitions(text: string): { sites: DefSite[]; lines: string[] } {
+  const lines = text.split('\n');
+  const sites: DefSite[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const m = DEF_HEADER_RE.exec(lines[i]);
+    if (m) sites.push({ name: m[2], indent: m[1].replace(/\t/g, '    ').length, line: i });
+  }
+  return { sites, lines };
+}
+
+/**
+ * Advisory for the most common way a search/replace edit corrupts a function (seen in the first end-to-end run on a 9B model): the new text
+ * leaves the OLD definition behind, so the function ends up (a) defined INSIDE ITSELF, or (b) defined twice at the top level. Neither is a syntax
+ * error, so the bracket check and the language server stay quiet while the function silently returns None. Only reports problems that the edit
+ * INTRODUCED (present now, absent before). Purely indentation-based, no parsing; returns undefined when nothing looks wrong.
+ */
+export function detectDuplicateDefinitions(existingFull: string | undefined, newFull: string): string | undefined {
+  const now = findDefinitions(newFull);
+  const before = existingFull === undefined ? { sites: [] as DefSite[], lines: [] as string[] } : findDefinitions(existingFull);
+  const nestedIn = (d: { sites: DefSite[]; lines: string[] }): Set<string> => {
+    const out = new Set<string>();
+    for (const outer of d.sites) {
+      for (const inner of d.sites) {
+        if (inner.line <= outer.line || inner.name !== outer.name || inner.indent <= outer.indent) continue;
+        // inner is inside outer's body only if no non-blank line between them returns to outer's indent or shallower
+        let inside = true;
+        for (let i = outer.line + 1; i < inner.line; i++) {
+          const ln = d.lines[i];
+          if (ln.trim() === '') continue;
+          if (ln.replace(/\t/g, '    ').search(/\S/) <= outer.indent) { inside = false; break; }
+        }
+        if (inside) out.add(outer.name);
+      }
+    }
+    return out;
+  };
+  const topCount = (d: { sites: DefSite[] }) => {
+    const c = new Map<string, number>();
+    for (const s of d.sites) if (s.indent === 0) c.set(s.name, (c.get(s.name) || 0) + 1);
+    return c;
+  };
+  const problems: string[] = [];
+  const nestedBefore = nestedIn(before);
+  for (const n of nestedIn(now)) if (!nestedBefore.has(n)) problems.push(`\`${n}\` is now defined INSIDE ITSELF (a \`${n}\` definition sits inside the body of \`${n}\`) — the old version was probably left behind`);
+  const cb = topCount(before);
+  for (const [n, c] of topCount(now)) if (c > 1 && c > (cb.get(n) || 0)) problems.push(`\`${n}\` is now defined ${c} times at the top level — the later definition silently replaces the earlier one`);
+  if (!problems.length) return undefined;
+  return `Heads up — this edit looks structurally wrong: ${problems.join('; ')}. Your "search" text probably covered only PART of the old definition. To replace a whole function, make "search" contain the ENTIRE old function (from its "def"/"function" line to its last line) so nothing of the old version remains, then re-check with the echoed lines below.`;
+}
+
+/**
+ * The lines around an edit, numbered exactly like read_file, so the model can SEE what it produced without spending another step on a read
+ * (t03 spent 7 of 22 steps re-reading a file it had just written). Region = first..last changed line ± 2 lines of context, capped.
+ */
+export function echoEditedRegion(relPath: string, oldText: string, newText: string, maxLines = 30): string | undefined {
+  if (oldText === newText) return undefined;
+  const a = oldText.split('\n');
+  const b = newText.split('\n');
+  let pre = 0;
+  while (pre < a.length && pre < b.length && a[pre] === b[pre]) pre++;
+  let suf = 0;
+  while (suf < a.length - pre && suf < b.length - pre && a[a.length - 1 - suf] === b[b.length - 1 - suf]) suf++;
+  const firstChanged = pre; // 0-indexed in b
+  const lastChanged = b.length - suf - 1; // inclusive; may be < firstChanged for a pure deletion
+  const from = Math.max(0, firstChanged - 2);
+  const to = Math.min(b.length - 1, Math.max(lastChanged, firstChanged) + 2);
+  let idx: number[] = [];
+  for (let i = from; i <= to; i++) idx.push(i);
+  let note = '';
+  if (idx.length > maxLines) {
+    const head = idx.slice(0, Math.ceil(maxLines * 0.6));
+    const tail = idx.slice(idx.length - Math.floor(maxLines * 0.4));
+    note = `\n... (${idx.length - head.length - tail.length} lines of the change not shown) ...`;
+    idx = [...head, ...tail];
+  }
+  const width = String(idx[idx.length - 1] + 1).length;
+  const rows = idx.map((i, k) => (note && k === Math.ceil(maxLines * 0.6) ? note.trimStart() + '\n' : '') + `${String(i + 1).padStart(width, ' ')}| ${b[i]}`);
+  return `Now ${relPath} (lines ${idx[0] + 1}-${idx[idx.length - 1] + 1} of ${b.length}):\n${rows.join('\n')}`;
 }
 
 /**
@@ -503,6 +595,8 @@ function peelIndentDepth(leadingWs: string, unit: string): { depth: number; rema
 }
 
 const LEADING_WS_RE = /^[ \t]*/;
+/** First line of a block that begins a new definition in the common languages (Python, JS/TS, Rust, Go, Java-likes, decorators). */
+const STARTS_DEFINITION_RE = /^\s*(?:@\w|async\s+def\s|def\s|class\s|(?:export\s+)?(?:default\s+)?(?:async\s+)?function[\s*]|export\s+(?:default\s+)?class\s|fn\s|func\s|(?:pub\s+)?(?:async\s+)?fn\s)/;
 
 /**
  * Cheap, backtick-only template-literal tracker: for each line of `text`,
@@ -622,6 +716,16 @@ export function reindentReplacement(
   const fileLines = originalFileText.split('\n');
   const anchorLine = fileLines[matchStartLineIndex] ?? '';
   const baseIndent = LEADING_WS_RE.exec(anchorLine)![0];
+
+  // A replacement that STARTS a definition (def / class / function / fn / decorator …) at a SHALLOWER indent than the line it replaces is
+  // deliberately creating an outer-scope definition — e.g. replacing two body lines of `slugify` with a whole new top-level `def slugify`.
+  // Forcing its first line onto the anchor's indentation would push it INSIDE the old function (found by the first multi-file end-to-end run:
+  // "the old function body got nested inside the new one again", four times). Leave such a block exactly as authored.
+  const firstLineOfReplace = replaceText.split('\n').find((l) => l.trim() !== '');
+  if (firstLineOfReplace !== undefined && STARTS_DEFINITION_RE.test(firstLineOfReplace)) {
+    const replaceIndentLen = LEADING_WS_RE.exec(firstLineOfReplace)![0].length;
+    if (replaceIndentLen < baseIndent.length) return { text: replaceText, reindented: false };
+  }
   const fileUnitStr = indentUnitString(fileUnit);
   const baseDepth = peelIndentDepth(baseIndent, fileUnitStr).depth;
 

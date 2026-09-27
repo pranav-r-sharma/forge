@@ -1,0 +1,43 @@
+{
+  "task": "t02-locate",
+  "provider": "mlx",
+  "model": "a48173b246ac705be75c05bedf1a0666db522d53",
+  "thinking": "off",
+  "ctx": 32768,
+  "appendOnly": true,
+  "maxIters": 30,
+  "timeoutS": 300,
+  "startedAt": "2026-09-27T03:49:24.813Z",
+  "hardware": "Apple M5, 32 GB",
+  "serverReadyS": 1.152,
+  "wallS": 14.228,
+  "checkExit": 0,
+  "checkOutput": "",
+  "protectedTouched": [],
+  "filesChanged": [],
+  "pass": true,
+  "finalText": "Found it.\n\nThe function is **`reorder_quantity`**, defined in **`inventory/reorder.py`**. When the current stock is above the reorder threshold, it returns **`0`**.",
+  "iterations": 5,
+  "tools": {
+    "search_code": 2,
+    "list_dir": 1,
+    "read_file": 1
+  },
+  "toolFailures": 0,
+  "redundantReads": 0,
+  "reads": 1,
+  "viewEvents": 0,
+  "modelS": 14.22,
+  "toolS": 0.01,
+  "tokensEvaluated": 3714,
+  "tokensCached": 14167,
+  "cacheHitPct": 79.2,
+  "evalTokens": 207,
+  "promptCharsMax": 16571,
+  "hw": {
+    "minAvailableGB": 12.4,
+    "maxSwapGB": 0.75,
+    "gpuPeakPct": 100
+  },
+  "tracePath": "_devtools/e2e/results/2026-09-27-smoke-t02-locate.trace.jsonl"
+}

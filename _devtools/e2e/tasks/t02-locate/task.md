@@ -1,0 +1,1 @@
+Which function decides how many units to order from suppliers when stock is low, and in which file is it defined? Also tell me what it returns when the current stock is ABOVE the reorder threshold. Answer in your final message with the file path, the function name, and the return value. Do not modify any files.

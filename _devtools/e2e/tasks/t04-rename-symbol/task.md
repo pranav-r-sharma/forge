@@ -1,0 +1,1 @@
+Rename the function `calc_tot` to `calculate_total` everywhere in this repository: its definition, every place it is called or imported (including the tests). Behaviour must not change. Run the tests when you are done.

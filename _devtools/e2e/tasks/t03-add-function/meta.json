@@ -1,0 +1,1 @@
+{"id": "t03-add-function", "title": "Add a function and tests across two files", "category": "add-feature", "protected": [], "expected_files": ["textutils/strings.py", "tests/test_strings.py"], "referenceFinal": "Done."}
