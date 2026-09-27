@@ -1,0 +1,14 @@
+{
+  "id": "t08-five-file-build",
+  "title": "Build a 5-file expense tracker CLI from an empty repository",
+  "category": "build-from-scratch",
+  "protected": [],
+  "expected_files": [
+    "main.py",
+    "tracker/models.py",
+    "tracker/storage.py",
+    "tracker/reports.py",
+    "tracker/cli.py"
+  ],
+  "referenceFinal": "Done."
+}

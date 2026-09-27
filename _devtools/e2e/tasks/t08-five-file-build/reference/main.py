@@ -1,0 +1,5 @@
+"""Expense tracker entry point."""
+from tracker.cli import main
+
+if __name__ == "__main__":
+    raise SystemExit(main())
