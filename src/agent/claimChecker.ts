@@ -92,14 +92,47 @@ export function perFileCommandTemplate(command: string, filePath: string): strin
   return undefined;
 }
 
-/**
- * Files written/edited this turn that share an extension with a per-file command
- * template but never received that command. Only meaningful when paired with
- * `finalAnswerMakesUniversalFileClaim`.
- */
-function isPerFileVerificationCommand(command: string): boolean {
-  const norm = normalizeCommandWhitespace(command);
-  return /\s-m\s+py_compile\b/i.test(norm);
+/** Template with every listed path removed (for one command that names multiple written files). */
+export function perFileCommandTemplateStripPaths(command: string, filePaths: string[]): string | undefined {
+  let norm = normalizeCommandWhitespace(command);
+  let removed = 0;
+  for (const filePath of filePaths) {
+    for (const v of [filePath, filePath.replace(/^\.\//, '')]) {
+      if (!v || !norm.includes(v)) continue;
+      norm = normalizeCommandWhitespace(norm.replace(v, ''));
+      removed++;
+      break;
+    }
+  }
+  if (removed === 0) return undefined;
+  return norm || undefined;
+}
+
+/** Executables whose per-file use is never treated as a verification template. */
+const NON_CHECK_EXECUTABLES = new Set([
+  'cat',
+  'ls',
+  'rm',
+  'mv',
+  'cp',
+  'echo',
+  'head',
+  'tail',
+  'wc',
+]);
+
+function baseExecutable(command: string): string {
+  const first = normalizeCommandWhitespace(command).split(/\s+/)[0] ?? '';
+  const leaf = first.replace(/^\.\//, '').split('/').pop() ?? first;
+  return leaf.toLowerCase();
+}
+
+/** True when a stripped command still looks like a per-file check (not cat/ls/…). */
+export function isPerFileVerificationTemplate(template: string): boolean {
+  const norm = normalizeCommandWhitespace(template);
+  if (!norm) return false;
+  if (NON_CHECK_EXECUTABLES.has(baseExecutable(norm))) return false;
+  return true;
 }
 
 /** Paths that count toward per-file verification coverage (skip package __init__ stubs). */
@@ -117,19 +150,19 @@ export function findPerFileCommandGaps(
   const coveredByTemplate = new Map<string, Set<string>>();
 
   for (const cmd of executedCommands) {
-    if (!isPerFileVerificationCommand(cmd)) continue;
     const norm = normalizeCommandWhitespace(cmd);
-    for (const file of written) {
-      if (!norm.includes(file) && !norm.includes(file.replace(/^\.\//, ''))) continue;
-      const template = perFileCommandTemplate(norm, file);
-      if (!template) continue;
-      let set = coveredByTemplate.get(template);
-      if (!set) {
-        set = new Set();
-        coveredByTemplate.set(template, set);
-      }
-      set.add(file);
+    const pathsInCmd = written.filter(
+      (file) => norm.includes(file) || norm.includes(file.replace(/^\.\//, '')),
+    );
+    if (pathsInCmd.length === 0) continue;
+    const template = perFileCommandTemplateStripPaths(norm, pathsInCmd);
+    if (!template || !isPerFileVerificationTemplate(template)) continue;
+    let set = coveredByTemplate.get(template);
+    if (!set) {
+      set = new Set();
+      coveredByTemplate.set(template, set);
     }
+    for (const file of pathsInCmd) set.add(file);
   }
 
   const gaps: { template: string; uncovered: string[] }[] = [];

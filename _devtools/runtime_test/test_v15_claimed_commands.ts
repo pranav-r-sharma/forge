@@ -9,6 +9,7 @@ import {
   finalAnswerMakesUniversalFileClaim,
   findPerFileCommandGaps,
   findUnrunClaimedCommands,
+  isPerFileVerificationTemplate,
 } from '../../src/agent/claimChecker';
 
 let passed = 0;
@@ -50,6 +51,33 @@ function ok(cond: boolean, label: string) {
   ok(
     gaps.some((g) => g.uncovered.includes('main.py')),
     'per-file gap: main.py never got py_compile while siblings did',
+  );
+
+  const nodeGaps = findPerFileCommandGaps(['node --check src/a.js'], ['src/a.js', 'src/b.js']);
+  ok(
+    nodeGaps.some((g) => g.template === 'node --check' && g.uncovered.includes('src/b.js')),
+    'per-file gap: node --check on one .js file flags sibling',
+  );
+
+  const gofmtGaps = findPerFileCommandGaps(
+    ['gofmt -w pkg/a.go', 'gofmt -w pkg/b.go'],
+    ['pkg/a.go', 'pkg/b.go', 'pkg/c.go'],
+  );
+  ok(
+    gofmtGaps.some((g) => g.template === 'gofmt -w' && g.uncovered.includes('pkg/c.go')),
+    'per-file gap: gofmt -w template covers same extension',
+  );
+
+  ok(!isPerFileVerificationTemplate('cat'), 'cat-only template is not a per-file check');
+  ok(
+    findPerFileCommandGaps(['cat foo.py', 'cat bar.py'], ['foo.py', 'bar.py', 'baz.py']).length === 0,
+    'cat on files does not define per-file verification coverage',
+  );
+
+  const multiNode = findPerFileCommandGaps(['node --check a.js b.js'], ['a.js', 'b.js', 'c.js']);
+  ok(
+    multiNode.some((g) => g.uncovered.includes('c.js') && !g.uncovered.includes('a.js')),
+    'node --check a.js b.js: only paths present in the command count as covered',
   );
 }
 
