@@ -34,3 +34,20 @@ One short entry per loop cycle. Full narrative for each cycle stays in `PROGRESS
 - **Fix:** `3458397` + `64d4205` — specific invalid-JSON message naming tool/path/parse error; cut-off wording only for real cut-offs; explicit failure when the cap is hit; no auto-repair (owner: model fixes its own JSON).
 - **Evidence:** `_devtools/e2e/results/t08-five-file-build-mlx4bit-cycle1.{json,trace.jsonl,messages.json}`, `_devtools/e2e/results/t08-cycle1.log`
 - **Next:** switch test model to gpt-oss-20b MXFP4-Q8 (MLX), smoke test, then t08 cycle 2
+
+## gpt-oss-20b MXFP4-Q8 smoke (t01) — runs 1–4
+
+- **Smoke 1:** FAIL, 1 iter, 10.1 s — Harmony `to=run_command` native call not executed; fix `aa81276` (foreign-format nudge + Harmony channel handling).
+- **Smoke 2:** FAIL, 1 iter, 5.8 s — mlx_lm.server 404 on replay when `<|channel|>` leaked into stored history; fix `7548178` (`assistantContentForHistory` strips Harmony; test runner counts).
+- **Smoke 3:** FAIL, 5 iters, 13.6 s — valid native calls still nudged instead of executed; fix `8c41833` (accept exact native tool calls; cap consecutive foreign failures).
+- **Smoke 4:** PASS, 13 iters, 16.0 s — t01-fix-bug end to end after smoke 1–3 fixes.
+- **Evidence:** `_devtools/e2e/results/smoke{,2,3,4}-gptoss-q8-t01.*`
+
+## Cycle 2 — gpt-oss-20b MXFP4-Q8 (MLX)
+
+- **Run:** t08-five-file-build, gpt-oss-20b MXFP4-Q8 (MLX snapshot), thinking=auto terse=true
+- **Result:** PASS — 27 iterations, 124.7 s wall, all 5 code files written first try; `py_compile` on models/storage/reports/cli + `main.py demo` + add/list with new db all exit 0; `check.sh` pass
+- **Classification:** success with recorded findings (not blockers)
+- **Findings:** (a) **Model limitation** — final answer overclaims: says all five files compile and summary works but never ran `py_compile` on `main.py` nor `summary` (true per `check.sh`, unverified in transcript); possible future harness idea: verify commands named in the final answer were run this turn. (b) **Harness inaccuracy (msg 24–25)** — empty native `to=forge_action {}` nudged as “not a Forge tool”; fixed `805c115`.
+- **Evidence:** `_devtools/e2e/results/t08-five-file-build-gptossq8-cycle2.{json,trace.jsonl,messages.json}`
+- **Next:** t08 cycle 3 (need 2 consecutive clean passes)

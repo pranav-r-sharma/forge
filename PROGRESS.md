@@ -70,7 +70,15 @@ Then 0.15.0 items (see "Suggested release slicing" in the plan) once Phase 0 num
 **Superseding owner decision (2026-09-27): MLX is the actual direction — switch to it now, no more benchmark runs for the moment.** Changed `forge.provider`'s packaged default in `package.json` from `"ollama"` to `"mlx"` (also updated the doc comment in `src/util/config.ts`). Also activated it for real, live usage: added `forge.provider: "mlx"`, `forge.mlx.model` (the 4-bit snapshot, per the C2 decision above), and `forge.mlx.pythonPath` (pointing at the existing, already-approved `_devtools/mlx-venv` — no new install) to the owner's real VS Code user settings (`~/Library/Application Support/Code/User/settings.json`, outside this repo). `npm run typecheck && npm test && npm run compile`: clean (37/37, 1,338 checks) — the one test that checks a "default" provider value (`test_v15_factory.ts`) tests `parseProviderId`'s own unset/garbled-input fallback (a separate, intentional safety net, unrelated to the packaged schema default), so it was correctly unaffected. **Known gap:** `~/.forge/mlx-venv` (the fallback path `resolvePython()` uses when `forge.mlx.pythonPath` is empty, for use in *other* workspaces) does not exist yet — reusing this repo's dev venv works today via the explicit path, but is coupled to this checkout; creating a dedicated `~/.forge/mlx-venv` would be a *new* install and needs the owner's go-ahead first (standing rule 3), not done here.
 
 ## Next
-**gpt-oss-20b MXFP4-Q8 smoke test** (MLX, snapshot per CLAUDE.md rule 1), then **t08-five-file-build cycle 2** on the new model.
+**t08-five-file-build cycle 3** on gpt-oss-20b MXFP4-Q8 (MLX) — need **2 consecutive clean passes** after cycle 2 PASS (124.7 s, 27 iters; evidence `t08-five-file-build-gptossq8-cycle2.*`).
+
+## gpt-oss-20b MXFP4-Q8 — smoke runs 1–4 (t01) + t08 cycle 2 (2026-09-27)
+
+- **Smoke 1** (`smoke-gptoss-q8-t01`): FAIL 1 iter / 10.1 s — Harmony native `run_command` not executed → **`aa81276`** (foreign-tool nudge + Harmony channel preprocess).
+- **Smoke 2** (`smoke2-gptoss-q8-t01`): FAIL 1 iter / 5.8 s — server 404 when replay stored `<|channel|>` tokens → **`7548178`** (strip Harmony from assistant history on replay).
+- **Smoke 3** (`smoke3-gptoss-q8-t01`): FAIL 5 iters / 13.6 s — valid native calls still only nudged → **`8c41833`** (accept exact native mappings; foreign nudge cap counts consecutive failures).
+- **Smoke 4** (`smoke4-gptoss-q8-t01`): **PASS** 13 iters / 16.0 s — t01-fix-bug after fixes 1–3.
+- **t08 cycle 2** (`t08-five-file-build-gptossq8-cycle2`): **PASS** 27 iters / 124.7 s — all five files first try; py_compile on four tracker modules + demo + add + list exit 0; `check.sh` pass. **Findings:** (a) model final answer overclaims compile/summary coverage (`main.py` / `summary` not run in transcript — grader still passes); record only, possible future “verify commands mentioned in final answer” harness idea. (b) harness msg 24–25 falsely said `forge_action` is not a Forge tool for empty native `{}` wrapper → **`805c115`**.
 
 ## t08-five-file-build — fixture + cycle 1 (2026-09-27)
 
@@ -198,4 +206,4 @@ Three commits (`d912e59`, `720e092`, `fc20381`) close the harness gap found in t
 ## Files touched (this session, continued)
 `src/agent/toolProtocol.ts`, `src/agent/agentLoop.ts`, `src/tools/commandTool.ts`, `src/agent/types.ts`, `src/agent/approvalBroker.ts`, `_devtools/bench/run_task.ts`, `_devtools/runtime_test/test.ts`, `_devtools/runtime_test/test_v15_truncation.ts`, `_devtools/runtime_test/test_v15_command.ts`, `HANDOFF.md`, `_devtools/e2e/ITERATION_LOG.md` (new), `_devtools/e2e/results/t07-build-from-scratch-mlx4bit-cycle{1,2}.*` (new).
 
-**Last updated:** 2026-09-27 (t08 cycle 1 logged; test model → gpt-oss-20b MXFP4-Q8; Next = gpt-oss smoke test, t08 cycle 2)
+**Last updated:** 2026-09-27 15:30 (gpt-oss smoke 1–4 + t08 cycle 2 PASS logged; Next = t08 cycle 3)
