@@ -40,17 +40,36 @@ function levenshtein(a: string, b: string): number {
   return row[n];
 }
 
+function isOrderedSubsequence(needle: string, haystack: string): boolean {
+  let j = 0;
+  for (let i = 0; i < haystack.length && j < needle.length; i++) {
+    if (haystack[i] === needle[j]) j++;
+  }
+  return j === needle.length;
+}
+
 /** Score how likely `unknown` was meant to be `candidate` (higher = better). */
 export function argNameSimilarity(unknown: string, candidate: string): number {
   const a = unknown.toLowerCase();
   const b = candidate.toLowerCase();
   if (a === b) return 100;
+  if (a.length >= 2 && b.startsWith(a)) return 72 + Math.min(a.length, 8);
+  if (b.length >= 2 && a.startsWith(b)) return 70 + Math.min(b.length, 8);
+  if (a.length >= 2 && isOrderedSubsequence(a, b)) return 65 + Math.min(a.length, 6);
+  if (b.length >= 2 && isOrderedSubsequence(b, a)) return 63 + Math.min(b.length, 6);
+  const compactA = a.replace(/_/g, '');
+  const compactB = b.replace(/_/g, '');
+  if (compactA.length >= 2 && compactB.includes(compactA)) return 68 + Math.min(compactA.length, 6);
+  if (compactB.length >= 2 && compactA.includes(compactB)) return 66 + Math.min(compactB.length, 6);
   const partsA = a.split('_').filter(Boolean);
   const partsB = new Set(b.split('_').filter(Boolean));
   let shared = 0;
   for (const p of partsA) if (partsB.has(p)) shared++;
   if (shared >= 2) return 55 + shared * 8;
   if (shared === 1 && partsA.length <= 3 && partsB.size <= 3) return 42;
+  for (const p of partsA) {
+    if (p.length >= 3 && [...partsB].some((q) => q.startsWith(p) || p.startsWith(q))) return 48;
+  }
   const dist = levenshtein(a, b);
   if (dist <= 2) return 45 - dist * 5;
   if (dist <= 4 && Math.abs(a.length - b.length) <= 2) return 35 - dist;

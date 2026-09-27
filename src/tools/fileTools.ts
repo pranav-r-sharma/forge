@@ -126,14 +126,19 @@ function applySearchReplace(existing: string, search: string, replace: string, r
       // Fuzzy matches are always whole lines (see findFuzzyLineMatches's
       // doc comment), so the matched region always starts at that line's
       // very first column — matchStartsAtLineStart is unconditionally true.
-      reindent = reindentReplacement(existing, fuzzyMatches[0].startLine, true, replace);
+      const indentOnlyEdit = searchLinesNormalizedEqual(search, replace) && replace !== search;
+      if (indentOnlyEdit) {
+        reindent = { text: buildFuzzyIndentationOnlyReplacement(existing, fuzzyMatches[0], replace), reindented: false };
+      } else {
+        reindent = reindentReplacement(existing, fuzzyMatches[0].startLine, true, replace);
+      }
       newText = applyFuzzyMatch(existing, fuzzyMatches[0], reindent.text);
-        fuzzyMatchAdvisory =
+      fuzzyMatchAdvisory =
         'Note: "search" did not match this file\'s content byte-for-byte, but matched once the whitespace/indentation on each line was normalized, so the edit was applied at that location anyway. Double-check the resulting indentation in the diff before treating this as done — copy it from the surrounding lines if it looks off.';
     } else if (fuzzyMatches.length > 1) {
       return {
         ok: false,
-        content: `The "search" text was not found in ${relPath} byte-for-byte, and even after normalizing whitespace it still matches ${fuzzyMatches.length} places, which is ambiguous. Include more surrounding context so it uniquely identifies one location.`,
+        content: formatAmbiguousSearchMessage(relPath, existing, fuzzyMatches.map((m) => m.startLine + 1), true),
       };
     } else {
       return {
@@ -144,11 +149,17 @@ function applySearchReplace(existing: string, search: string, replace: string, r
   } else if (occurrences > 1) {
     return {
       ok: false,
-      content: `The "search" text matches ${occurrences} places in ${relPath}, which is ambiguous. Include more surrounding context so it uniquely identifies one location.`,
+      content: formatAmbiguousSearchMessage(
+        relPath,
+        existing,
+        findExactSearchStartLines(existing, search),
+        false,
+      ),
     };
   } else {
     const matchIndex = existing.indexOf(search);
     const matchStartLineIndex = existing.slice(0, matchIndex).split('\n').length - 1;
+    const matchEndLine = existing.slice(0, matchIndex + search.length).split('\n').length;
     const lineStartIndex = existing.lastIndexOf('\n', matchIndex - 1) + 1;
     // Whether the match begins right at (or after only whitespace on) the
     // start of its line — i.e. whether "this line's indentation" is even a
@@ -162,8 +173,15 @@ function applySearchReplace(existing: string, search: string, replace: string, r
     // anchor's own indent to replace's first line, so the result had the file's real indent AND the added indent — e.g. 4 real spaces + 4 added
     // = 8, an IndentationError in Python. anchorIndentAlreadyPresent tells reindentReplacement the anchor's indent is physically still there.
     const anchorIndentAlreadyPresent = matchStartsAtLineStart && matchIndex > lineStartIndex;
-    reindent = reindentReplacement(existing, matchStartLineIndex, matchStartsAtLineStart, replace, anchorIndentAlreadyPresent);
-    newText = existing.replace(search, () => reindent.text);
+    const indentOnlyEdit = searchLinesNormalizedEqual(search, replace) && replace !== search;
+    if (indentOnlyEdit) {
+      const replacement = buildFuzzyIndentationOnlyReplacement(existing, { startLine: matchStartLineIndex, endLine: matchEndLine }, replace);
+      reindent = { text: replacement, reindented: false };
+      newText = applyFuzzyMatch(existing, { startLine: matchStartLineIndex, endLine: matchEndLine }, replacement);
+    } else {
+      reindent = reindentReplacement(existing, matchStartLineIndex, matchStartsAtLineStart, replace, anchorIndentAlreadyPresent);
+      newText = existing.replace(search, () => reindent.text);
+    }
   }
   // Item "whitespace and indentation issues when doing targeted writes to
   // existing files": reindentReplacement() above already does the real
@@ -326,6 +344,93 @@ interface FuzzyLineMatch {
 /** Trims each line and collapses internal whitespace runs to a single space, for comparison purposes only — never used to build the actual replacement text. */
 function normalizeLineForMatch(line: string): string {
   return line.trim().replace(/\s+/g, ' ');
+}
+
+function searchLinesNormalizedEqual(search: string, replace: string): boolean {
+  const s = search.split('\n');
+  const r = replace.split('\n');
+  if (s.length !== r.length) return false;
+  for (let i = 0; i < s.length; i++) {
+    if (normalizeLineForMatch(s[i]) !== normalizeLineForMatch(r[i])) return false;
+  }
+  return true;
+}
+
+/**
+ * Whitespace-tolerant match with the same normalized line content as "search" but different
+ * indentation in "replace" — apply the model's relative/absolute indents instead of re-mapping
+ * onto the file (which would round-trip back to the old bytes and falsely report "No changes").
+ */
+function buildFuzzyIndentationOnlyReplacement(existing: string, match: FuzzyLineMatch, replace: string): string {
+  const existingLines = existing.split('\n');
+  const replaceLines = replace.split('\n');
+  const anchorLine = existingLines[match.startLine] ?? '';
+  const baseIndent = (LEADING_WS_RE.exec(anchorLine) ?? [''])[0];
+  return replaceLines
+    .map((line, i) => {
+      if (line.trim() === '') return '';
+      const ws = (LEADING_WS_RE.exec(line) ?? [''])[0];
+      const content = line.slice(ws.length);
+      if (i === 0) return baseIndent + content;
+      return line;
+    })
+    .join('\n');
+}
+
+function lineNumberAtIndex(text: string, index: number): number {
+  return text.slice(0, index).split('\n').length;
+}
+
+function findExactSearchStartLines(existing: string, search: string): number[] {
+  const out: number[] = [];
+  let idx = 0;
+  while (true) {
+    idx = existing.indexOf(search, idx);
+    if (idx === -1) break;
+    out.push(lineNumberAtIndex(existing, idx));
+    idx += Math.max(1, search.length);
+  }
+  return out;
+}
+
+function formatLineNumberList(lines: number[]): string {
+  if (lines.length === 1) return `line ${lines[0]}`;
+  if (lines.length === 2) return `lines ${lines[0]} and ${lines[1]}`;
+  return `lines ${lines.slice(0, -1).join(', ')}, and ${lines[lines.length - 1]}`;
+}
+
+function formatAmbiguousSearchMessage(
+  relPath: string,
+  existing: string,
+  startLines1Based: number[],
+  afterWhitespaceNormalize: boolean,
+): string {
+  const count = startLines1Based.length;
+  const fileLines = existing.split('\n');
+  const nearbyExamples = startLines1Based.map((l) => l - 1).filter((l) => l >= 1);
+  const exampleHint =
+    nearbyExamples.length >= 2
+      ? `(e.g. line ${nearbyExamples[0]} or ${nearbyExamples[1]})`
+      : nearbyExamples.length === 1
+        ? `(e.g. line ${nearbyExamples[0]})`
+        : '';
+  const head = afterWhitespaceNormalize
+    ? `The "search" text was not found in ${relPath} byte-for-byte, and even after normalizing whitespace it still matches ${count} places: ${formatLineNumberList(startLines1Based)}.`
+    : `The "search" text matches ${count} places in ${relPath}: ${formatLineNumberList(startLines1Based)}.`;
+  const hint =
+    exampleHint !== ''
+      ? ` Include a nearby unique line ${exampleHint} so it identifies one location.`
+      : ' Include more surrounding context so it uniquely identifies one location.';
+  const snippets = startLines1Based
+    .map((lineNo) => {
+      const i = lineNo - 1;
+      const parts: string[] = [];
+      if (i > 0) parts.push(`  line ${lineNo - 1}: ${fileLines[i - 1]}`);
+      parts.push(`  line ${lineNo}: ${fileLines[i] ?? ''}`);
+      return parts.join('\n');
+    })
+    .join('\n');
+  return `${head}${hint}\n${snippets}`;
 }
 
 /**

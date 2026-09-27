@@ -28,6 +28,8 @@ function ok(cond: boolean, label: string) {
 {
   ok(argNameSimilarity('line_start', 'start_line') >= 40, 'line_start is similar to start_line');
   ok(suggestClosestArgName('line_start', ['path', 'start_line', 'end_line']) === 'start_line', 'did-you-mean picks start_line for line_start');
+  ok(suggestClosestArgName('cmd', ['command', 'cwd', 'background']) === 'command', 'did-you-mean prefers prefix cmd->command over cwd');
+  ok(suggestClosestArgName('cmd', ['command', 'cwd', 'background']) !== 'cwd', 'cmd is not suggested as cwd');
 
   const note = formatUnknownArgNotes('read_file', { path: 'a.py', line_start: 1, line_end: 10 }, [
     'path',

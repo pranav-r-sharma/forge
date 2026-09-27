@@ -314,7 +314,7 @@ async function testFuzzyMatchingAndBalanceRegression() {
     const existing = 'if (a) {\n  same();\n}\nif (b) {\n  same();\n}\n';
     const ctx: any = { workspaceRoot: vscode.Uri.file('/ws'), readEffective: async () => existing, proposeEdit: async () => ({ id: 'e1', applied: true }) };
     const result = await writeFileTool({ path: 'foo.ts', search: '    same();', replace: '    changed();' }, ctx);
-    ok(result.ok === false && /ambiguous/i.test(result.content), 'writeFileTool refuses an ambiguous fuzzy match (2+ locations) rather than guessing which one');
+    ok(result.ok === false && /matches 2 places/.test(result.content), 'writeFileTool refuses an ambiguous fuzzy match (2+ locations) rather than guessing which one');
   }
   {
     const existing = 'totally different content here\n';

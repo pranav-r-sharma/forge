@@ -253,6 +253,34 @@ async function testReplaceAll() {
   ok(idem.state.text === 'abababab\n', 'a replacement containing the search text is not re-scanned (single pass)');
 }
 
+async function testIndentationOnlyEditWhenSearchMatchesAsSubstring() {
+  const file = 'def f():\n        x = 1\n    y = 2\n';
+  const { state, ctx } = fileCtx(file);
+  const r = await writeFileTool(
+    { path: 'x.py', search: 'x = 1\n    y = 2', replace: 'x = 1\n        y = 2' },
+    ctx,
+  );
+  ok(r.ok && !/No changes/.test(r.content), 'indentation-only replace applies instead of falsely reporting no change');
+  ok(state.text === 'def f():\n        x = 1\n        y = 2\n', 'body line gets the replace indentation verbatim after the anchored header');
+  const { execFileSync } = await import('child_process');
+  let compiles = false;
+  try {
+    execFileSync('python3', ['-c', `import ast; ast.parse(${JSON.stringify(state.text)})`], { stdio: 'pipe' });
+    compiles = true;
+  } catch {
+    compiles = false;
+  }
+  ok(compiles, 'resulting file parses as valid Python');
+}
+
+async function testAmbiguousSearchNamesLineNumbers() {
+  const body = 'alpha\nbeta\nalpha\nbeta\n';
+  const { ctx } = fileCtx(body);
+  const r = await writeFileTool({ path: 'inventory/cli.py', search: 'alpha', replace: 'x' }, ctx);
+  ok(!r.ok && /matches 2 places in inventory\/cli\.py: lines 1 and 3/.test(r.content), 'ambiguous exact match names the file and line numbers');
+  ok(/line 1: alpha/.test(r.content) && /line 2: beta/.test(r.content) && /line 3: alpha/.test(r.content), 'shows each match line and the line before the second match');
+}
+
 async function main() {
   await testDoesNotDoubleIndentWhenSearchOmitsLeadingWhitespace();
   await testDoubleIndentAcrossIndentStyles();
@@ -262,6 +290,8 @@ async function main() {
   testEcho();
   await testWriteResultCarriesEchoAndWarnings();
   await testReplayOfTheFailingRun();
+  await testIndentationOnlyEditWhenSearchMatchesAsSubstring();
+  await testAmbiguousSearchNamesLineNumbers();
   await testMultiEdit();
   await testReplaceAll();
   console.log(`\n${passed} passed, ${failed} failed.`);
