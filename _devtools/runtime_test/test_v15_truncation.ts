@@ -221,6 +221,54 @@ async function main() {
     ok(ev.filter((e) => e.type === 'tool_call' && e.tool === 'write_file').length === 1, 'pending target: the named write still runs afterward');
   }
 
+  // native Harmony run_command (smoke3 msg1 shape) executes without a foreign nudge
+  {
+    const smoke1 =
+      '<|channel|>commentary to=run_command <|constrain|>json<|message|>{"command":"echo native1"}';
+    const m = scripted([[smoke1, 'stop'], ['done', 'stop']]);
+    const ev: AgentEvent[] = [];
+    await runAgentTurn([], 'go', deps(workspace(), m), (e) => ev.push(e), new vscode.CancellationTokenSource().token, 'fake', { mode: 'auto' });
+    ok(ev.some((e) => e.type === 'tool_call' && e.tool === 'run_command'), 'smoke3 msg1 Harmony run_command is executed');
+    ok(!/Not executed: you called run_command using a native/.test(m.seen[0]?.last ?? ''), 'no foreign-format nudge on accepted Harmony call');
+  }
+
+  // smoke3 msg4 garbled shape executes run_command
+  {
+    const smoke4 =
+      'assistantcommentary to=forge_action json{"tool":"run_command","args":{"command":"echo native4"}}';
+    const m = scripted([[smoke4, 'stop'], ['done', 'stop']]);
+    const ev: AgentEvent[] = [];
+    await runAgentTurn([], 'go', deps(workspace(), m), (e) => ev.push(e), new vscode.CancellationTokenSource().token, 'fake', { mode: 'auto' });
+    ok(ev.some((e) => e.type === 'tool_call' && e.tool === 'run_command'), 'smoke3 msg4 garbled native run_command is executed');
+  }
+
+  // forge_action wrapper with invalid JSON → nudge, not execution
+  {
+    const bad =
+      '<|channel|>commentary to=forge_action <|constrain|>json<|message|>{"tool":"run_command","args":';
+    const m = scripted([[bad, 'stop'], [act('read_file', { path: 'a.txt' }), 'stop'], ['done', 'stop']]);
+    const ev: AgentEvent[] = [];
+    await runAgentTurn([], 'go', deps(workspace(), m), (e) => ev.push(e), new vscode.CancellationTokenSource().token, 'fake', { mode: 'auto' });
+    ok(/Not executed/.test(m.seen[1].last), 'invalid forge_action native JSON gets a nudge');
+    ok(!ev.some((e) => e.type === 'tool_call' && e.tool === 'run_command'), 'invalid native JSON is not executed');
+  }
+
+  // truncation/foreign nudge cap counts consecutive failures only (fail, success, fail, fail does not hit cap 3)
+  {
+    const unknown = '<tool_call>{"name":"bash","arguments":{"cmd":"x"}}</tool_call>';
+    const m = scripted([
+      [unknown, 'stop'],
+      [act('read_file', { path: 'a.txt' }), 'stop'],
+      [unknown, 'stop'],
+      [unknown, 'stop'],
+      ['done', 'stop'],
+    ]);
+    const ev: AgentEvent[] = [];
+    await runAgentTurn([], 'go', deps(workspace(), m), (e) => ev.push(e), new vscode.CancellationTokenSource().token, 'fake', { mode: 'auto' });
+    ok(m.seen.length === 5, `counter resets after a successful action (${m.seen.length} model calls, not capped at 4)`);
+    ok(ev.some((e) => e.type === 'final') && (ev.find((e) => e.type === 'final') as any).text === 'done', 'run finishes normally without hitting the 3-strike cap');
+  }
+
   console.log(`\n${passed} passed, ${failed} failed.`);
   if (failed > 0) { console.log('Some v0.15.0 truncation tests FAILED.'); process.exit(1); }
   console.log('All v0.15.0 truncation tests passed.');

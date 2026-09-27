@@ -7,7 +7,7 @@ import { LlmProvider } from '../llm/provider';
 import { ChatMessage, OllamaCallMetrics } from '../ollama/types';
 import { AgentActivity, AgentEvent, ToolCall, ToolExecContext, ToolResult } from './types';
 import { buildSystemPrompt, buildTurnContextPrefix } from './systemPrompt';
-import { parseToolCall, looksLikeAbandonedToolCall, formatIncompleteActionNudge, formatIncompleteActionCapFailure, extractAbandonedActionTarget, preprocessHarmonyReply, containsHarmonyControls, detectForeignToolCall, formatForeignToolCallNudge, formatForeignToolCallCapFailure, assistantContentForHistory } from './toolProtocol';
+import { parseToolCall, looksLikeAbandonedToolCall, formatIncompleteActionNudge, formatIncompleteActionCapFailure, extractAbandonedActionTarget, preprocessHarmonyReply, containsHarmonyControls, detectForeignToolCall, formatForeignToolCallNudge, formatForeignToolCallCapFailure, assistantContentForHistory, tryAcceptNativeToolCall, formatToolCallForHistory, type ForeignToolCallFormat } from './toolProtocol';
 import { parseStructuredResponse, STRUCTURED_RESPONSE_SCHEMA } from './structuredOutput';
 import { generatePlanFirst, renderPlanFirstForPrompt } from './planFirst';
 import { shouldCritique, critiqueEdit } from './selfCritique';
@@ -293,7 +293,11 @@ export async function runAgentTurn(
     messages.push(msg);
     emit({ type: 'history_snapshot', messages: [...messages] });
   };
-  const pushAssistant = (raw: string) => pushMsg({ role: 'assistant', content: assistantContentForHistory(raw) });
+  const pushAssistant = (raw: string, acceptedCall?: ToolCall) =>
+    pushMsg({
+      role: 'assistant',
+      content: acceptedCall ? formatToolCallForHistory(acceptedCall) : assistantContentForHistory(raw),
+    });
   const allowedTools = new Set(toolsAllowedInMode(options.mode));
   // Native MCP tool connection: merged in alongside the built-in tool map at
   // every lookup site below, namespaced (mcp_<server>_<tool>) so it can
@@ -636,14 +640,22 @@ export async function runAgentTurn(
 
     const knownToolNames = [...Object.keys(TOOL_MAP), ...mcpToolMap.keys()];
     const foreignCall = !call && options.mode !== 'plan' ? detectForeignToolCall(fullText) : null;
-    if (foreignCall && truncationNudges < 3) {
+    let nativeAcceptedFormat: ForeignToolCallFormat | undefined;
+    if (!call && foreignCall) {
+      const accepted = tryAcceptNativeToolCall(foreignCall, knownToolNames);
+      if (accepted) {
+        call = { ...accepted.call, raw: fullText };
+        nativeAcceptedFormat = accepted.format;
+      }
+    }
+    if (foreignCall && !call && truncationNudges < 3) {
       truncationNudges++;
       pushAssistant(fullText);
       pushMsg({ role: 'user', content: formatForeignToolCallNudge(foreignCall, knownToolNames) });
       traceIter({ note: 'foreign-tool-call-nudge' });
       continue;
     }
-    if (foreignCall && truncationNudges >= 3) {
+    if (foreignCall && !call && truncationNudges >= 3) {
       const failureNote = formatForeignToolCallCapFailure(foreignCall, truncationNudges);
       pushAssistant(fullText);
       const finalText = `${displayText.trim()}\n\n[System] ${failureNote}`.trim();
@@ -745,7 +757,11 @@ export async function runAgentTurn(
 
     // Keep the model's own transcript of what it did, so it has memory of
     // prior tool calls across iterations.
-    pushAssistant(fullText);
+    pushAssistant(fullText, nativeAcceptedFormat ? call : undefined);
+
+    if (nativeAcceptedFormat) {
+      traceIter({ note: `native-tool-call-accepted:${nativeAcceptedFormat}` });
+    }
 
     if (pendingActionTarget) {
       const pending = pendingActionTarget;
@@ -932,6 +948,8 @@ export async function runAgentTurn(
     });
 
     pushMsg({ role: 'user', content: `[Tool "${call.tool}" result]\n${resultContentForModel}` });
+
+    truncationNudges = 0;
 
     if (call.tool === 'run_command') failedRunsInARow = result.ok ? 0 : failedRunsInARow + 1;
 

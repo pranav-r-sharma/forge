@@ -12,6 +12,8 @@ import {
   detectForeignToolCall,
   formatForeignToolCallNudge,
   assistantContentForHistory,
+  tryAcceptNativeToolCall,
+  formatToolCallForHistory,
 } from '../../src/agent/toolProtocol';
 import { resolveModelResponse } from '../../src/agent/agentLoop';
 import { cleanCompletion } from '../../src/completion/fimPrompt';
@@ -198,6 +200,37 @@ function assert(cond: any, msg: string) {
   assert(assistantContentForHistory(finalOnly) === 'Done.', 'final channel text is stored without controls or analysis');
   const plain = '```forge_action\n{"tool": "read_file", "args": {"path": "a.ts"}}\n```';
   assert(assistantContentForHistory(plain) === plain, 'plain forge_action is stored verbatim');
+}
+
+// ---- native tool-call acceptance (gpt-oss smoke3) ----
+{
+  const known = ['run_command', 'read_file'];
+  const smoke1 =
+    '<|channel|>analysis<|message|>We need to run tests. Let\'s run tests.<|end|><|start|>assistant<|channel|>commentary to=run_command <|constrain|>json<|message|>{"command":"python3 -m unittest discover -s tests -t ."}';
+  const foreign1 = detectForeignToolCall(smoke1)!;
+  const acc1 = tryAcceptNativeToolCall(foreign1, known);
+  assert(acc1?.call.tool === 'run_command' && acc1.format === 'harmony-commentary', 'smoke3 msg1 Harmony run_command is accepted');
+  const hist1 = formatToolCallForHistory(acc1!.call);
+  assert(hist1.startsWith('```forge_action') && hist1.includes('run_command') && !hist1.includes('<|'), 'accepted native call stores clean forge_action history');
+
+  const smoke4 =
+    'assistantcommentary to=forge_action json{"tool":"run_command","args":{"command":"python3 -m unittest discover -s tests -t ."}}';
+  const foreign4 = detectForeignToolCall(smoke4)!;
+  const acc4 = tryAcceptNativeToolCall(foreign4, known);
+  assert(acc4?.call.tool === 'run_command', 'smoke3 msg4 garbled bare JSON run_command is accepted');
+
+  const wrapped =
+    '<|channel|>commentary to=forge_action <|constrain|>json<|message|>{"tool":"run_command","args":{"command":"echo hi"}}';
+  const accWrap = tryAcceptNativeToolCall(detectForeignToolCall(wrapped)!, known);
+  assert(accWrap?.call.tool === 'run_command' && accWrap.call.args.command === 'echo hi', 'harmony to=forge_action with inner tool/args is accepted');
+
+  const badWrap =
+    '<|channel|>commentary to=forge_action <|constrain|>json<|message|>{"tool":"run_command","args":';
+  assert(tryAcceptNativeToolCall(detectForeignToolCall(badWrap)!, known) === null, 'forge_action wrapper with invalid JSON is not accepted');
+
+  const unknownNative = '<tool_call>{"name":"bash","arguments":{"cmd":"ls"}}</tool_call>';
+  const nudge = formatForeignToolCallNudge(detectForeignToolCall(unknownNative)!, known);
+  assert(/which is not a Forge tool/.test(nudge) && /run_command/.test(nudge), 'unknown native tool nudge lists Forge tools');
 }
 
 // ---- parseToolCall: invalid JSON in closed fence (t08 cycle 1, no brace auto-repair) ----

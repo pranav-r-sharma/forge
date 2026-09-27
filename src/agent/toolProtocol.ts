@@ -271,7 +271,47 @@ export function preprocessHarmonyReply(raw: string): PreprocessedModelReply {
   };
 }
 
-export type ForeignToolCall = { tool: string; args: Record<string, unknown> | null };
+export type ForeignToolCallFormat =
+  | 'harmony-commentary'
+  | 'xml-tool-call'
+  | 'openai-name-arguments'
+  | 'bare-tool-json';
+
+export type ForeignToolCall = { tool: string; args: Record<string, unknown> | null; format: ForeignToolCallFormat };
+
+const FORGE_ACTION_WRAPPER_NAMES = new Set(['forge_action', 'functions.forge_action']);
+
+/** Canonical forge_action block for the model-facing transcript (no Harmony control tokens). */
+export function formatToolCallForHistory(call: { tool: string; args: Record<string, unknown> }): string {
+  return '```forge_action\n' + JSON.stringify({ tool: call.tool, args: call.args }) + '\n```';
+}
+
+/**
+ * When detectForeignToolCall finds a complete native call, map it to a Forge ToolCall — strict parse only, no repair.
+ */
+export function tryAcceptNativeToolCall(
+  foreign: ForeignToolCall,
+  knownTools: string[]
+): { call: ToolCall; format: ForeignToolCallFormat } | null {
+  if (foreign.args === null) return null;
+
+  if (FORGE_ACTION_WRAPPER_NAMES.has(foreign.tool)) {
+    const innerTool = foreign.args.tool;
+    const innerArgs = foreign.args.args;
+    if (typeof innerTool !== 'string' || !knownTools.includes(innerTool)) return null;
+    if (!innerArgs || typeof innerArgs !== 'object' || Array.isArray(innerArgs)) return null;
+    return {
+      call: { tool: innerTool, args: innerArgs as Record<string, any>, raw: '' },
+      format: foreign.format,
+    };
+  }
+
+  if (!knownTools.includes(foreign.tool)) return null;
+  return {
+    call: { tool: foreign.tool, args: foreign.args as Record<string, any>, raw: '' },
+    format: foreign.format,
+  };
+}
 
 function parseJsonObject(text: string): Record<string, unknown> | null {
   const trimmed = text.trim();
@@ -319,7 +359,7 @@ export function detectForeignToolCall(raw: string): ForeignToolCall | null {
     const tool = harmony[1];
     const payload = harmony[2].trim();
     const args = parseJsonObject(payload);
-    return { tool, args };
+    return { tool, args, format: 'harmony-commentary' };
   }
 
   const xmlRe = /<tool_call>\s*([\s\S]*?)\s*<\/tool_call>/i;
@@ -333,7 +373,7 @@ export function detectForeignToolCall(raw: string): ForeignToolCall | null {
           : obj.args && typeof obj.args === 'object' && !Array.isArray(obj.args)
             ? (obj.args as Record<string, unknown>)
             : null;
-      return { tool: obj.name, args };
+      return { tool: obj.name, args, format: 'xml-tool-call' };
     }
   }
 
@@ -348,7 +388,7 @@ export function detectForeignToolCall(raw: string): ForeignToolCall | null {
             : obj.args && typeof obj.args === 'object' && !Array.isArray(obj.args)
               ? (obj.args as Record<string, unknown>)
               : null;
-        return { tool: obj.name, args };
+        return { tool: obj.name, args, format: 'openai-name-arguments' };
       }
     } catch {
       /* ignore */
@@ -357,8 +397,17 @@ export function detectForeignToolCall(raw: string): ForeignToolCall | null {
 
   const bareTool = findBalancedJsonWithTool(raw);
   if (bareTool) {
-    const parsed = tryParseToolJson(bareTool);
-    if (parsed) return { tool: parsed.tool, args: parsed.args };
+    try {
+      const obj = JSON.parse(bareTool) as { tool?: unknown; args?: unknown };
+      if (typeof obj.tool === 'string' && obj.args !== undefined) {
+        if (typeof obj.args !== 'object' || obj.args === null || Array.isArray(obj.args)) {
+          return { tool: obj.tool, args: null, format: 'bare-tool-json' };
+        }
+        return { tool: obj.tool, args: obj.args as Record<string, unknown>, format: 'bare-tool-json' };
+      }
+    } catch {
+      /* ignore */
+    }
   }
 
   return null;
