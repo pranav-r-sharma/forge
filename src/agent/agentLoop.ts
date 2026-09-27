@@ -26,9 +26,13 @@ import { unknownArgNotesForSpec } from '../tools/unknownToolArgs';
 import {
   evaluateClaimedCommands,
   extractTaskCommandForms,
+  findUnexercisedTaskForms,
   findUnverifiedClaims,
+  formatTaskCommandNudge,
   formatUnresolvedFailureNudge,
   parseRunCommandExitCode,
+  shouldSendTaskCommandNudge,
+  taskCommandFormUnverifiedMarkers,
   unresolvedFailureMarker,
   type UnresolvedRunFailure,
 } from './claimChecker';
@@ -522,6 +526,8 @@ export async function runAgentTurn(
 
   let hallucinationNudges = 0;
   let claimedCommandNudges = 0;
+  let taskCommandNudges = 0;
+  let lastUnexercisedTaskFormsSeen: string[] | undefined;
   let unresolvedFailureNudges = 0;
   let unresolvedRunFailure: UnresolvedRunFailure | undefined;
   let commandsExecutedThisTurn: string[] = [];
@@ -730,17 +736,29 @@ export async function runAgentTurn(
         traceIter({ note: 'unverified-claim-nudge' });
         continue;
       }
+      const unexercisedTaskForms = findUnexercisedTaskForms(taskCommandForms, commandsExecutedThisTurn);
       const claimedCmd = evaluateClaimedCommands(
         displayText,
         commandsExecutedThisTurn,
         filesWrittenThisTurn,
-        taskCommandForms,
+        [],
       );
-      const claimedCmdIssues =
-        claimedCmd.unrunCommands.length > 0 ||
-        claimedCmd.perFileGaps.length > 0 ||
-        claimedCmd.unexercisedTaskForms.length > 0;
-      if (claimedCmdIssues && claimedCommandNudges < 1) {
+      const hasClaimedCmdIssues =
+        claimedCmd.unrunCommands.length > 0 || claimedCmd.perFileGaps.length > 0;
+      const hasTaskFormIssues = unexercisedTaskForms.length > 0;
+
+      if (
+        hasTaskFormIssues &&
+        shouldSendTaskCommandNudge(unexercisedTaskForms, lastUnexercisedTaskFormsSeen, taskCommandNudges)
+      ) {
+        taskCommandNudges++;
+        lastUnexercisedTaskFormsSeen = [...unexercisedTaskForms];
+        pushAssistant(fullText);
+        pushMsg({ role: 'user', content: formatTaskCommandNudge(unexercisedTaskForms) });
+        traceIter({ note: 'task-command-nudge' });
+        continue;
+      }
+      if (hasClaimedCmdIssues && claimedCommandNudges < 1) {
         claimedCommandNudges++;
         pushAssistant(fullText);
         pushMsg({ role: 'user', content: claimedCmd.nudgeMessage });
@@ -756,7 +774,8 @@ export async function runAgentTurn(
       }
       const unverifiedAll = [
         ...unverified,
-        ...(claimedCmdIssues ? claimedCmd.unverifiedMarkers : []),
+        ...claimedCmd.unverifiedMarkers,
+        ...(hasTaskFormIssues ? taskCommandFormUnverifiedMarkers(unexercisedTaskForms) : []),
         ...(unresolvedRunFailure ? [unresolvedFailureMarker(unresolvedRunFailure)] : []),
       ];
       pushAssistant(fullText);

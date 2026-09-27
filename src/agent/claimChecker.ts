@@ -461,8 +461,48 @@ export function commandMatchesTaskForm(form: string, executed: string): boolean 
   return tokensMatchTaskForm(f, e);
 }
 
+/** Inner command from `bash -lc "…"` / `sh -c '…'` wrappers (one level). */
+export function unwrapShellWrapper(command: string): string | undefined {
+  const tokens = tokenizeShellCommand(normalizeCommandWhitespace(command));
+  if (tokens.length < 3) return undefined;
+  const exe = tokens[0]!.replace(/^\.\//, '').split('/').pop()?.toLowerCase() ?? '';
+  if (exe !== 'bash' && exe !== 'sh' && exe !== 'zsh') return undefined;
+  const flag = tokens[1]!.toLowerCase();
+  if (flag !== '-c' && flag !== '-lc') return undefined;
+  const inner = tokens.slice(2).join(' ').trim();
+  return inner || undefined;
+}
+
+export function expandExecutedCommandsForTaskMatch(executedCommands: string[]): string[] {
+  const out: string[] = [];
+  for (const cmd of executedCommands) {
+    out.push(cmd);
+    const inner = unwrapShellWrapper(cmd);
+    if (inner) out.push(inner);
+  }
+  return out;
+}
+
 export function findUnexercisedTaskForms(taskForms: string[], executedCommands: string[]): string[] {
-  return taskForms.filter((form) => !executedCommands.some((exec) => commandMatchesTaskForm(form, exec)));
+  const expanded = expandExecutedCommandsForTaskMatch(executedCommands);
+  return taskForms.filter((form) => !expanded.some((exec) => commandMatchesTaskForm(form, exec)));
+}
+
+/** Whether another task-form nudge is allowed (max 3 per turn; re-nudge only after progress). */
+export function shouldSendTaskCommandNudge(
+  unexercised: string[],
+  previousUnexercised: string[] | undefined,
+  nudgesAlreadySent: number,
+): boolean {
+  if (unexercised.length === 0) return false;
+  if (nudgesAlreadySent >= 3) return false;
+  if (nudgesAlreadySent === 0) return true;
+  if (previousUnexercised === undefined) return true;
+  return unexercised.length < previousUnexercised.length;
+}
+
+export function taskCommandFormUnverifiedMarkers(unexercised: string[]): string[] {
+  return unexercised.map((form) => `task command form not run: ${form}`);
 }
 
 export function formatTaskCommandNudge(unexercised: string[]): string {

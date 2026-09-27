@@ -12,6 +12,10 @@ import {
   findPerFileCommandGaps,
   findUnexercisedTaskForms,
   findUnrunClaimedCommands,
+  formatTaskCommandNudge,
+  shouldSendTaskCommandNudge,
+  taskCommandFormUnverifiedMarkers,
+  unwrapShellWrapper,
   isPerFileVerificationTemplate,
   scriptOperandIsCheckTarget,
   templateHasOnlyFlagsAfterExecutable,
@@ -187,9 +191,9 @@ function ok(cond: boolean, label: string) {
   const taskForms = extractTaskCommandForms(taskMd);
   const check = evaluateClaimedCommands(finalBeforeNudge, executedCommands, filesWritten, taskForms);
   ok(check.perFileGaps.length === 0, 't09 cycle-2 final text: no per-file py_compile-style false positives from main.py demo runs');
-  ok(check.unexercisedTaskForms.length === 6, 't09 cycle-2: six CLI forms not run in task order (demo + py_compile exercised)');
+  ok(check.unexercisedTaskForms.length === 5, 't09 cycle-2: five CLI forms not run (demo, py_compile, add-book exercised)');
   ok(
-    check.nudgeMessage.includes('add-book') &&
+    !check.nudgeMessage.includes('add-book') &&
       check.nudgeMessage.includes('add-member') &&
       check.nudgeMessage.includes('borrow') &&
       check.nudgeMessage.includes('return') &&
@@ -222,6 +226,36 @@ function ok(cond: boolean, label: string) {
   ok(unex.length === 0, `t08 cycle-3: all task command forms exercised: ${JSON.stringify(unex)}`);
   const taskOnly = evaluateClaimedCommands('', executedCommands, [], taskForms);
   ok(taskOnly.unexercisedTaskForms.length === 0 && taskOnly.nudgeMessage === '', 't08 cycle-3: no task-command nudge');
+}
+
+// ---------- task-form nudge policy + bash -lc ----------
+{
+  const all = [
+    'python3 main.py add-book --db PATH --isbn ISBN --title TITLE --author AUTHOR',
+    'python3 main.py add-member --db PATH --member-id ID --name NAME',
+    'python3 main.py borrow --db PATH --member-id ID --isbn ISBN --date YYYY-MM-DD',
+    'python3 main.py return --db PATH --isbn ISBN --date YYYY-MM-DD',
+    'python3 main.py overdue --db PATH --date YYYY-MM-DD',
+    'python3 main.py fees --db PATH',
+  ];
+  const afterTwo = all.slice(2);
+  ok(shouldSendTaskCommandNudge(all, undefined, 0), 'first task-form nudge when forms remain');
+  ok(!shouldSendTaskCommandNudge(all, all, 1), 'no re-nudge without progress');
+  ok(shouldSendTaskCommandNudge(afterTwo, all, 1), 're-nudge when unexercised set shrank');
+  ok(!shouldSendTaskCommandNudge(afterTwo, all, 3), 'no nudge after cap of 3');
+  const markers = taskCommandFormUnverifiedMarkers(['python3 main.py demo', 'python3 main.py fees --db PATH']);
+  ok(
+    markers.every((m) => m.startsWith('task command form not run:')) && markers.some((m) => m.includes('demo')),
+    'unverified markers name missing task forms',
+  );
+  const nudge = formatTaskCommandNudge(['python3 main.py borrow --db PATH --member-id ID --isbn ISBN --date YYYY-MM-DD']);
+  ok(nudge.includes('borrow') && !nudge.includes('add-book'), 'task nudge lists only still-missing forms');
+  ok(unwrapShellWrapper('bash -lc "python3 main.py demo"') === 'python3 main.py demo', 'unwrap bash -lc');
+  ok(unwrapShellWrapper("sh -c 'python3 main.py fees --db x'") === 'python3 main.py fees --db x', 'unwrap sh -c');
+  ok(
+    findUnexercisedTaskForms(['python3 main.py demo'], ['bash -lc "python3 main.py demo"']).length === 0,
+    'commands inside bash -lc count as exercised',
+  );
 }
 
 // ---------- nested action in args ----------
