@@ -9,7 +9,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { ReadCoverage } from '../../src/agent/readCoverage';
-import { TraceWriter, argsHash, describeArgsForTrace, tracePathFor } from '../../src/agent/traceLog';
+import { TraceWriter, argsHash, describeArgsForTrace, tracePathFor, hwForTrace } from '../../src/agent/traceLog';
 import { runAgentTurn } from '../../src/agent/agentLoop';
 import { ApprovalBroker } from '../../src/agent/approvalBroker';
 import { PendingEditManager } from '../../src/tools/editApply';
@@ -102,7 +102,7 @@ function workspaceWith(files: Record<string, string>): vscode.Uri {
   return vscode.Uri.file(tmp);
 }
 
-function depsFor(workspaceRoot: vscode.Uri, events: AgentEvent[], ollama: any, trace?: TraceWriter) {
+function depsFor(workspaceRoot: vscode.Uri, events: AgentEvent[], ollama: any, trace?: TraceWriter, hw?: () => any) {
   const l = new TaskLedger();
   return {
     ollama,
@@ -116,6 +116,7 @@ function depsFor(workspaceRoot: vscode.Uri, events: AgentEvent[], ollama: any, t
     mcpTools: [],
     taskLedger: { addTasks: (t: any[]) => t.map((x) => l.add(typeof x === 'string' ? x : x.description).id), updateTask: () => true, list: () => l.list() },
     trace,
+    hw,
     workspaceRoot,
     workspaceName: 'test',
   } as any;
@@ -216,6 +217,39 @@ async function testSubAgentDepthAndNotes() {
   ok(rec[0].tool === 'no_such_tool' && rec[0].ok === false && /unknown/.test(rec[0].note || ''), 'an unknown-tool step is recorded with ok:false and a note');
 }
 
+async function testHardwareInTrace() {
+  const snap: any = {
+    memory: { totalGB: 32, usedGB: 11.2, availableGB: 20.8, cachedGB: 5, freeGB: 7, wiredGB: 2, compressedGB: 1, swapUsedGB: 0.8, pressure: 'normal', source: 'darwin', tsMs: 1 },
+    gpus: [{ utilizationPct: 90, avgPct: 64, peakPct: 100, inUseGB: 6.2, tsMs: 1 }],
+    sampledAtMs: 1,
+  };
+  const h = hwForTrace(snap)!;
+  ok(h.usedGB === 11.2 && h.availableGB === 20.8 && h.swapGB === 0.8 && h.pressure === 'normal' && h.gpuAvgPct === 64 && h.gpuPeakPct === 100 && h.gpuMemGB === 6.2, 'hwForTrace maps memory + smoothed GPU to plain numbers');
+  ok(hwForTrace(undefined) === undefined && hwForTrace({ gpus: [] }) === undefined, 'no snapshot / nothing readable → undefined (key omitted, no zeros faked)');
+  ok(hwForTrace({ gpus: [{ utilizationPct: 1, avgPct: 2, peakPct: 3, tsMs: 1 }] })?.usedGB === undefined, 'a GPU-only snapshot leaves memory fields undefined rather than 0');
+
+  const ws = workspaceWith({ 'a.txt': 'x\n' });
+  const file = tracePathFor(ws.fsPath, 'sessH');
+  const writer = new TraceWriter(file, 'sessH');
+  await runAgentTurn([], 'go', depsFor(ws, [], scripted([act('read_file', { path: 'a.txt' }), 'done']), writer, () => snap), () => {}, new vscode.CancellationTokenSource().token, 'fake', { mode: 'auto' });
+  await writer.flush();
+  const rec = readTraces(file);
+  ok(rec.length === 2 && rec.every((r) => r.hw && r.hw.usedGB === 11.2 && r.hw.gpuAvgPct === 64), 'every trace record carries the hardware reading from the provider');
+
+  const file2 = tracePathFor(ws.fsPath, 'sessH2');
+  const w2 = new TraceWriter(file2, 'sessH2');
+  await runAgentTurn([], 'go', depsFor(ws, [], scripted(['done']), w2, undefined), () => {}, new vscode.CancellationTokenSource().token, 'fake', { mode: 'auto' });
+  await w2.flush();
+  ok(!('hw' in JSON.parse(fs.readFileSync(file2, 'utf8').trim().split('\n')[0])), 'without a hardware provider the "hw" key is simply absent');
+  const w3 = new TraceWriter(tracePathFor(ws.fsPath, 'sessH3'), 'sessH3');
+  const ev: AgentEvent[] = [];
+  await runAgentTurn([], 'go', depsFor(ws, ev, scripted(['done']), w3, () => { throw new Error('sampler exploded'); }), (e) => ev.push(e), new vscode.CancellationTokenSource().token, 'fake', { mode: 'auto' });
+  ok(ev.some((e) => e.type === 'final'), 'a throwing hardware provider cannot break the turn');
+  await w3.flush();
+  const r3 = fs.readFileSync(tracePathFor(ws.fsPath, 'sessH3'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  ok(r3.length === 1 && r3[0].final === true && !('hw' in r3[0]), 'and the record is still written — just without the hw field');
+}
+
 async function main() {
   testReadCoverage();
   testArgsAndPaths();
@@ -224,6 +258,7 @@ async function main() {
   await testPruningStubsAreCounted();
   await testTraceCannotBreakATurn();
   await testSubAgentDepthAndNotes();
+  await testHardwareInTrace();
   console.log(`\n${passed} passed, ${failed} failed.`);
   if (failed > 0) { console.log('Some v0.15.0 trace tests FAILED.'); process.exit(1); }
   console.log('All v0.15.0 trace tests passed.');

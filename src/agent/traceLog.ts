@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { sha1 } from '../util/hash';
+import type { HwSnapshot } from '../util/hwSampler';
 
 /**
  * Per-iteration trace of the agent loop (v0.15.0 plan §1.1): one JSON line per model call / tool call, written to
@@ -45,8 +46,32 @@ export interface TraceRecord {
   resultChars?: number;
   /** read_file whose lines were all already shown this turn (and not invalidated by a write/command since). */
   redundantRead?: boolean;
+  /** Hardware state when this iteration was recorded (latest sampler reading) — so every benchmark carries the conditions it ran under. Absent when no sampler is wired or nothing could be read. */
+  hw?: TraceHw;
   final?: boolean;
   note?: string;
+}
+
+export interface TraceHw {
+  usedGB?: number;
+  availableGB?: number;
+  swapGB?: number;
+  pressure?: string;
+  gpuAvgPct?: number;
+  gpuPeakPct?: number;
+  gpuMemGB?: number;
+}
+
+/** Compact, plain-number view of a sampler snapshot for the trace. Returns undefined (key omitted) when there is nothing trustworthy to record. */
+export function hwForTrace(snap: HwSnapshot | undefined): TraceHw | undefined {
+  if (!snap) return undefined;
+  const m = snap.memory;
+  const g = snap.gpus[0];
+  if (!m && !g) return undefined;
+  return {
+    usedGB: m?.usedGB, availableGB: m?.availableGB, swapGB: m?.swapUsedGB, pressure: m?.pressure,
+    gpuAvgPct: g?.avgPct, gpuPeakPct: g?.peakPct, gpuMemGB: g?.inUseGB,
+  };
 }
 
 /** Fields the loop supplies; the writer stamps v / ts / sessionId. */

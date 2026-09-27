@@ -128,7 +128,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     private readonly workspaceRoot: vscode.Uri,
     private readonly workspaceName: string
   ) {
-    this.services = { ollama, pendingEdits, backgroundProcesses, workspaceIndex, chatMemoryIndex, rules, skills, hooks, memory, chatStore, webSearchService, webFetchService, mcpManager, workspaceRoot, workspaceName };
+    this.services = { ollama, pendingEdits, backgroundProcesses, workspaceIndex, chatMemoryIndex, rules, skills, hooks, memory, chatStore, webSearchService, webFetchService, mcpManager, workspaceRoot, workspaceName, hwSnapshot: () => this.hwSampler.latest() };
     this.entryIndex = new WorkspaceEntryIndex(workspaceRoot);
     this.pendingEdits.onDidChange((edits) => this.post({ type: 'pendingEdits', edits }));
     this.hwSampler.start(2000, () => void this.pushHwStatus());

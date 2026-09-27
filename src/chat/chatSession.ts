@@ -49,6 +49,8 @@ export interface ChatSessionServices {
   mcpManager: McpManager;
   workspaceRoot: vscode.Uri;
   workspaceName: string;
+  /** Latest hardware reading (memory/GPU) for the trace log; optional so tests and other hosts needn't provide it. */
+  hwSnapshot?: () => import('../util/hwSampler').HwSnapshot | undefined;
 }
 
 /**
@@ -593,6 +595,7 @@ export class ChatSession {
           webFetch: cfg.webSearchEnabled ? (url, offset, length) => this.services.webFetchService.fetch(url, offset, length) : undefined,
           mcpTools: this.services.mcpManager.listToolSpecs(),
           trace: cfg.traceEnabled ? this.getTraceWriter() : undefined,
+          hw: this.services.hwSnapshot,
           taskLedger: {
             addTasks: (tasks, parentTaskId) => {
               // Cost-aware task planning: each entry is either a bare string

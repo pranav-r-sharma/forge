@@ -1,5 +1,6 @@
 import { ReadCoverage } from './readCoverage';
-import { TraceWriter, TraceInput, argsHash, describeArgsForTrace } from './traceLog';
+import { TraceWriter, TraceInput, argsHash, describeArgsForTrace, hwForTrace } from './traceLog';
+import type { HwSnapshot } from '../util/hwSampler';
 import * as vscode from 'vscode';
 import { OllamaClient, keepAliveOpt } from '../ollama/client';
 import { ChatMessage, OllamaCallMetrics } from '../ollama/types';
@@ -45,6 +46,8 @@ export interface AgentDeps {
   taskLedger: ToolExecContext['taskLedger'];
   /** Optional per-iteration trace sink (v0.15.0 §1.1). Tracing is best-effort and can never affect a turn. */
   trace?: TraceWriter;
+  /** Latest hardware reading, for the trace only (see traceLog.ts hwForTrace). */
+  hw?: () => HwSnapshot | undefined;
   workspaceRoot: vscode.Uri;
   workspaceName: string;
 }
@@ -448,6 +451,12 @@ export async function runAgentTurn(
     if (!deps.trace) return;
     try {
       const m = iterState.metrics;
+      let hw: ReturnType<typeof hwForTrace>;
+      try {
+        hw = hwForTrace(deps.hw?.());
+      } catch {
+        hw = undefined; // a failing hardware reader must not cost us the rest of the record
+      }
       deps.trace.write({
         turnId,
         iter: iterState.iter,
@@ -464,6 +473,7 @@ export async function runAgentTurn(
         tokPerSec: m?.tokensPerSecond,
         promptEvalMs: m?.promptEvalDurationMs,
         loadMs: m?.loadDurationMs,
+        hw,
         ...extra,
       });
     } catch {
