@@ -1,0 +1,17 @@
+{
+  "what": "Raw MLX smoke/speed, Ornith-1.5-9B, offline, trust_remote_code off, no server, temperature default, max_tokens 48",
+  "hardware": "Apple M5, 32 GB, macOS (Darwin 25.6.0)",
+  "versions": {"python": "3.14.3", "mlx": "0.32.2", "mlx-lm": "0.31.3", "transformers": "5.17.0"},
+  "revisions": {"4bit": "a48173b246ac705be75c05bedf1a0666db522d53", "8bit": "b4b70543d60c81e7c418a001b74cd4352212bd44"},
+  "runs": [
+    {"arm": "M-4", "prompt_tokens": 2506,  "prefill_tps": 455.5, "decode_tps": 18.21, "peak_gb": 6.58,  "load_s": 1.58},
+    {"arm": "M-8", "prompt_tokens": 2512,  "prefill_tps": 386.3, "decode_tps": 11.09, "peak_gb": 10.96, "load_s": 2.25},
+    {"arm": "M-4", "prompt_tokens": 16277, "prefill_tps": 444.6, "decode_tps": 16.42, "peak_gb": 6.99,  "load_s": 1.56},
+    {"arm": "M-8", "prompt_tokens": 16309, "prefill_tps": 383.9, "decode_tps": 9.93,  "peak_gb": 11.38, "load_s": 1.6}
+  ],
+  "vs_ollama_q4km_same_machine": {
+    "ollama_prefill_tps_by_prompt_tokens": {"2229": 317, "6623": 231, "13132": 212, "26163": 183, "52178": 116},
+    "ollama_decode_tps": {"2k": 14.1, "13k": 13.1, "52k": 10.5},
+    "note": "MLX 4-bit prefill is ~1.4x Ollama at ~2.5k tokens and ~2.1x at ~13-16k tokens, and does not slow with length in this range. Single runs, not medians; repeat before relying on ratios. Ollama ran with num_ctx=ctx, MLX with default settings."
+  }
+}
