@@ -2,6 +2,7 @@ import { ChatRequestOptions, GenerateRequestOptions, OllamaPsModel, OllamaTagInf
 import { OllamaClient } from '../ollama/client';
 import { OpenAiCompatClient } from './openaiCompatClient';
 import { LlmProvider, ProviderCapabilities, ProviderId, parseProviderId } from './provider';
+import { expandTilde, listLocalMlxModels, resolveModelLibraryPath } from './mlxModels';
 
 export { parseProviderId };
 
@@ -11,6 +12,8 @@ export interface ProviderConfig {
   ollamaBaseUrl: string;
   mlxBaseUrl: string;
   openaiCompatBaseUrl: string;
+  mlxModelLibraryPath?: string;
+  mlxExtraModelFolders?: string[];
 }
 
 /** What the active provider is and where it lives — for status text and error messages, so they never say "Ollama" when it is MLX. */
@@ -96,6 +99,17 @@ export class SwitchableProvider implements LlmProvider {
     return this.active().health();
   }
   async listModels(): Promise<OllamaTagInfo[]> {
+    if (providerEndpoint(this.getCfg()).id === 'mlx') {
+      const c = this.getCfg();
+      const lib = resolveModelLibraryPath(c.mlxModelLibraryPath ?? '');
+      const extra = (c.mlxExtraModelFolders ?? []).map(expandTilde);
+      return listLocalMlxModels(lib, extra).map((m) => ({
+        name: m.id,
+        model: m.id,
+        size: m.sizeBytes,
+        digest: '',
+      }));
+    }
     await this.prepare();
     return this.active().listModels();
   }

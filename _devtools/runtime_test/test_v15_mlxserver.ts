@@ -16,9 +16,10 @@ function ok(cond: any, msg: string) {
 }
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+const MLX_CFG = JSON.stringify({ quantization: { bits: 4 } });
 function makeModelDir(bytes = 10): string {
   const d = fs.mkdtempSync(path.join(os.tmpdir(), 'forge-mlx-model-'));
-  fs.writeFileSync(path.join(d, 'config.json'), '{}');
+  fs.writeFileSync(path.join(d, 'config.json'), MLX_CFG);
   const f = path.join(d, 'model.safetensors');
   fs.writeFileSync(f, 'x');
   if (bytes > 1) fs.truncateSync(f, bytes);
@@ -81,15 +82,15 @@ function testArgsAndResolution() {
   const cache = fs.mkdtempSync(path.join(os.tmpdir(), 'forge-hf-'));
   const snap = path.join(cache, 'models--org--name', 'snapshots', 'abc123');
   fs.mkdirSync(snap, { recursive: true });
-  fs.writeFileSync(path.join(snap, 'config.json'), '{}'); fs.writeFileSync(path.join(snap, 'model.safetensors'), 'x');
+  fs.writeFileSync(path.join(snap, 'config.json'), MLX_CFG); fs.writeFileSync(path.join(snap, 'model.safetensors'), 'x');
   ok(resolveModelPath('org/name', cache) === snap, 'a Hugging Face repo id resolves to its cached snapshot');
   const snap2 = path.join(cache, 'models--org--name', 'snapshots', 'newer');
   fs.mkdirSync(snap2, { recursive: true });
-  fs.writeFileSync(path.join(snap2, 'config.json'), '{}'); fs.writeFileSync(path.join(snap2, 'model.safetensors'), 'x');
+  fs.writeFileSync(path.join(snap2, 'config.json'), MLX_CFG); fs.writeFileSync(path.join(snap2, 'model.safetensors'), 'x');
   fs.utimesSync(snap2, new Date(Date.now() + 10_000), new Date(Date.now() + 10_000));
   ok(resolveModelPath('org/name', cache) === snap2, 'with several snapshots, the newest is used');
   let e1 = ''; try { resolveModelPath('org/missing', cache); } catch (e: any) { e1 = e.message; }
-  ok(/not found locally/.test(e1) && /never downloads/.test(e1), 'a model that is not downloaded gives a clear "offline, never downloads" error');
+  ok(/was not found locally/.test(e1) && /never downloads/.test(e1) && /Searched:/.test(e1), 'a model that is not downloaded gives a clear "offline, never downloads" error with folders searched');
   let e2 = ''; try { resolveModelPath('   '); } catch (e: any) { e2 = e.message; }
   ok(/No MLX model is configured/.test(e2), 'an empty model setting explains what to set');
   ok(modelWeightsBytes(makeModelDir(12345)) === 12345 && modelWeightsBytes('/no/such/dir') === 0, 'weights size is measured (0 for a missing dir)');

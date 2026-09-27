@@ -10,6 +10,10 @@ export interface ForgeConfig {
   mlxBaseUrl: string;
   /** Local model folder or Hugging Face repo id (already downloaded) the managed MLX server loads. */
   mlxModel: string;
+  /** Hugging Face hub cache root (or any folder with models--org--name layout). */
+  mlxModelLibraryPath: string;
+  /** Extra directories to scan for MLX models (e.g. LM Studio). */
+  mlxExtraModelFolders: string[];
   /** Python with mlx-lm installed; empty = ~/.forge/mlx-venv if present, else python3. */
   mlxPythonPath: string;
   /** Start/stop the MLX server automatically (localhost URLs only). */
@@ -131,6 +135,12 @@ export function getConfig(): ForgeConfig {
     provider: parseProviderId(cfg.get<string>('provider')),
     mlxBaseUrl: (cfg.get<string>('mlx.baseUrl') || 'http://127.0.0.1:8123').replace(/\/+$/, ''),
     mlxModel: (cfg.get<string>('mlx.model') || '').trim(),
+    mlxModelLibraryPath: (() => {
+      const v = cfg.get<string>('mlx.modelLibraryPath');
+      if (v === undefined || v === null) return '~/.cache/huggingface/hub';
+      return String(v).trim();
+    })(),
+    mlxExtraModelFolders: (cfg.get<string[]>('mlx.extraModelFolders') || []).filter((a) => typeof a === 'string'),
     mlxPythonPath: (cfg.get<string>('mlx.pythonPath') || '').trim(),
     mlxAutoStart: cfg.get<boolean>('mlx.autoStart') ?? true,
     mlxPromptCacheGB: cfg.get<number>('mlx.promptCacheGB') ?? 4,

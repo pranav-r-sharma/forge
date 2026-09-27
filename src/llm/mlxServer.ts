@@ -3,6 +3,10 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { OllamaPsModel } from '../ollama/types';
+import { expandTilde, resolveModelPath as resolveModelPathImpl, type ResolveModelPathOptions } from './mlxModels';
+
+export { resolveModelPath } from './mlxModels';
+export type { ResolveModelPathOptions } from './mlxModels';
 
 /**
  * Lifecycle manager for a local `mlx_lm.server` (v0.15.0 Phase 0 §0.1c). Forge starts it when MLX is the chosen runtime, waits until it is healthy,
@@ -47,31 +51,13 @@ export function buildServerArgs(cfg: Pick<MlxServerConfig, 'port' | 'promptCache
   return [...args, ...(cfg.extraArgs || [])];
 }
 
-/** A model directory is usable when it has a config.json and at least one weights file. */
-function isModelDir(dir: string): boolean {
+/** Wraps mlxModels.resolveModelPath and maps failures to MlxServerError. */
+function resolveModelForServer(model: string, opts?: ResolveModelPathOptions): string {
   try {
-    if (!fs.statSync(dir).isDirectory() || !fs.existsSync(path.join(dir, 'config.json'))) return false;
-    return fs.readdirSync(dir).some((f) => f.endsWith('.safetensors'));
-  } catch {
-    return false;
+    return resolveModelPathImpl(model, opts);
+  } catch (e: any) {
+    throw new MlxServerError(e?.message || String(e));
   }
-}
-
-/** Resolves `model` (a directory, or "org/name" already in the Hugging Face cache) to a local snapshot directory. Never downloads. */
-export function resolveModelPath(model: string, hfCacheRoot: string = path.join(process.env.HF_HOME || path.join(os.homedir(), '.cache', 'huggingface'), 'hub')): string {
-  const m = (model || '').trim();
-  if (!m) throw new MlxServerError('No MLX model is configured. Set forge.mlx.model to a local model folder or a Hugging Face repo id (e.g. "ornith-ai/Ornith-1.5-9B-MLX-4bit") that is already downloaded.');
-  if (isModelDir(m)) return m;
-  if (/^[\w.-]+\/[\w.-]+$/.test(m)) {
-    const snapshots = path.join(hfCacheRoot, `models--${m.replace('/', '--')}`, 'snapshots');
-    try {
-      const dirs = fs.readdirSync(snapshots).map((d) => path.join(snapshots, d)).filter(isModelDir).sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs);
-      if (dirs.length) return dirs[0];
-    } catch {
-      /* fall through */
-    }
-  }
-  throw new MlxServerError(`MLX model "${m}" was not found locally. Forge runs the MLX server offline and never downloads models by itself — download it first (for example: huggingface-cli download ${/^[\w.-]+\/[\w.-]+$/.test(m) ? m : '<org/name>'}) or point forge.mlx.model at a model folder.`);
 }
 
 /** Total size of the weights files, bytes (for the free-memory check). */
@@ -104,7 +90,8 @@ export interface MlxServerDeps {
   /** Grace period between SIGTERM and SIGKILL. */
   killGraceMs?: number;
   pollMs?: number;
-  hfCacheRoot?: string;
+  /** Read on each ensure() so live settings edits apply. */
+  mlxModelPathContext?: () => { libraryPathSetting: string; extraFolders: string[] };
   /** How many times to probe before concluding the port is free rather than just slow to answer (default 3). */
   adoptProbeAttempts?: number;
 }
@@ -194,7 +181,11 @@ export class MlxServerManager {
 
   private async doEnsure(cfg: MlxServerConfig): Promise<void> {
     const isHealthy = this.deps.isHealthy ?? defaultIsHealthy;
-    const resolved = resolveModelPath(cfg.model, this.deps.hfCacheRoot);
+    const ctx = this.deps.mlxModelPathContext?.() ?? { libraryPathSetting: '', extraFolders: [] };
+    const resolved = resolveModelForServer(cfg.model, {
+      libraryPathSetting: ctx.libraryPathSetting,
+      extraFolders: ctx.extraFolders,
+    });
     const key = JSON.stringify([cfg.pythonPath, resolved, cfg.port, cfg.promptCacheBytes ?? 0, cfg.extraArgs ?? []]);
     if (this._state === 'ready' && this.key === key && (this.external || (this.child && (await isHealthy(cfg.port))))) return;
     if (this._state !== 'stopped') await this.doStop(); // config changed or previous run died: start clean
@@ -344,6 +335,8 @@ export interface MlxEnsureConfig {
   mlxAutoStart: boolean;
   mlxPromptCacheGB: number;
   mlxExtraArgs: string[];
+  mlxModelLibraryPath?: string;
+  mlxExtraModelFolders?: string[];
 }
 
 /**

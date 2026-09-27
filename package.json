@@ -113,7 +113,18 @@
         "forge.mlx.model": {
           "type": "string",
           "default": "",
-          "description": "The MLX model Forge's managed mlx_lm.server loads: a local model folder, or a Hugging Face repo id that is ALREADY downloaded (e.g. \"ornith-ai/Ornith-1.5-9B-MLX-4bit\"). Forge runs the server offline and never downloads models. Changing this restarts the server."
+          "description": "The MLX model Forge's managed mlx_lm.server loads. Prefer a portable Hugging Face repo id (e.g. \"mlx-community/gpt-oss-20b-MXFP4-Q8\" or \"ornith-ai/Ornith-1.5-9B-MLX-4bit\") over an absolute folder path so the same setting works on another Mac. You can also point at a local model folder. Forge runs the server offline and never downloads models. Changing this restarts the server."
+        },
+        "forge.mlx.modelLibraryPath": {
+          "type": "string",
+          "default": "~/.cache/huggingface/hub",
+          "description": "Folder where MLX models are stored (Hugging Face cache layout models--org--name/snapshots/<hash>/, or plain model folders). \"~\" is expanded. If empty: use $HF_HUB_CACHE, else $HF_HOME/hub, else ~/.cache/huggingface/hub. Change this if this Mac keeps models elsewhere."
+        },
+        "forge.mlx.extraModelFolders": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "Extra folders to search for MLX models (e.g. your LM Studio models directory). \"~\" is expanded in each entry."
         },
         "forge.mlx.pythonPath": {
           "type": "string",

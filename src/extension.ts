@@ -70,6 +70,10 @@ export async function activate(context: vscode.ExtensionContext) {
   const mlxServer = new MlxServerManager({
     log: (l) => logger.info(`[mlx] ${l}`),
     availableGB: async () => (await readMemorySample())?.availableGB,
+    mlxModelPathContext: () => {
+      const c = getConfig();
+      return { libraryPathSetting: c.mlxModelLibraryPath, extraFolders: c.mlxExtraModelFolders };
+    },
   });
   activeMlxServer = mlxServer;
   const ollama = new SwitchableProvider(() => getConfig(), {

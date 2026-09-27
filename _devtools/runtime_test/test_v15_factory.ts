@@ -31,7 +31,7 @@ async function testMlxReadyHooks() {
     await p.chat({ model: 'x', messages: [{ role: 'user', content: 'hi' }] });
     ok(order[0] === 'ensure' && ox.requests.some((r) => r.path === '/v1/chat/completions'), 'chat on MLX first awaits ensureReady(), then talks to the server');
     order.length = 0; await p.listModels();
-    ok(order[0] === 'ensure', 'listModels() also ensures the server is up');
+    ok(order.length === 0, 'listModels() on MLX uses the local disk scan and does not await ensureReady()');
     fail = true;
     let msg = ''; try { await p.chat({ model: 'x', messages: [{ role: 'user', content: 'hi' }] }); } catch (e: any) { msg = e.message; }
     ok(/MLX model missing/.test(msg), 'an ensureReady() failure surfaces as the chat error (a user-readable reason, not a connection error)');
@@ -75,7 +75,8 @@ async function main() {
     const t2 = await p.chat({ model: 'whatever', messages: [{ role: 'user', content: 'hi' }] });
     ok(t2 === 'Hello world' && ox.requests.some((r) => r.path === '/v1/chat/completions') && !ol.requests.some((r) => r.path === '/api/chat'), 'after switching to mlx, chat goes to the MLX server');
     ok((await p.health()).ok && ox.requests.some((r) => r.path === '/health'), 'health() checks the ACTIVE server');
-    ok((await p.listModels())[0].name.includes('Ornith'), 'listModels() comes from the active server');
+    const mlxModels = await p.listModels();
+    ok(Array.isArray(mlxModels) && !ox.requests.some((r) => r.path === '/v1/models'), 'listModels() on MLX returns a local scan without calling the server');
 
     // ---- per-role fallback: embeddings + FIM stay on Ollama while chat is on MLX ----
     ol.requests.length = 0; ox.requests.length = 0;
