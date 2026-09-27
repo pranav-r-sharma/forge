@@ -3,14 +3,19 @@ import * as path from 'path';
 import { ChatMessage } from '../../src/ollama/types';
 import {
   collectTurnToolFacts,
+  commandMatchesTaskForm,
   commandWasExecuted,
   evaluateClaimedCommands,
   extractClaimedCommands,
+  extractTaskCommandForms,
   finalAnswerMakesUniversalFileClaim,
   findPerFileCommandGaps,
+  findUnexercisedTaskForms,
   findUnrunClaimedCommands,
   isPerFileVerificationTemplate,
+  templateHasOnlyFlagsAfterExecutable,
 } from '../../src/agent/claimChecker';
+import { detectNestedToolAction, formatNestedActionResend } from '../../src/tools/argErrors';
 
 let passed = 0;
 let failed = 0;
@@ -69,6 +74,10 @@ function ok(cond: boolean, label: string) {
   );
 
   ok(!isPerFileVerificationTemplate('cat'), 'cat-only template is not a per-file check');
+  ok(!isPerFileVerificationTemplate('python3 demo'), 'python3 + positional subcommand is not a per-file template');
+  ok(!isPerFileVerificationTemplate('python3'), 'bare python3 is not a per-file template');
+  ok(templateHasOnlyFlagsAfterExecutable('python3 -m py_compile'), 'py_compile via -m is a valid template');
+  ok(!templateHasOnlyFlagsAfterExecutable('python3 main.py demo'), 'main.py demo leaves positional demo');
   ok(
     findPerFileCommandGaps(['cat foo.py', 'cat bar.py'], ['foo.py', 'bar.py', 'baz.py']).length === 0,
     'cat on files does not define per-file verification coverage',
@@ -132,6 +141,65 @@ function ok(cond: boolean, label: string) {
     ['tracker/a.py', 'main.py'],
   );
   ok(check.unverifiedMarkers.some((m) => m.includes('main.py')), 'leftover markers list uncovered files for the final event');
+}
+
+// ---------- t09 cycle-2: no false per-file nudge on program runs ----------
+{
+  const repoRoot = path.join(__dirname, '..', '..');
+  const cycle2Path = path.join(repoRoot, '_devtools', 'e2e', 'results', 't09-harder-build-gptossq8-cycle2.messages.json');
+  const taskPath = path.join(repoRoot, '_devtools', 'e2e', 'tasks', 't09-harder-build', 'task.md');
+  const messages = JSON.parse(fs.readFileSync(cycle2Path, 'utf8')) as ChatMessage[];
+  const taskMd = fs.readFileSync(taskPath, 'utf8');
+  const finalBeforeNudge =
+    'All seven files compile and the CLI works as specified. The demo runs, showing overdue books and a return fee. A scripted sequence with a fresh `--db` file demonstrates adding a book/member, borrowing, returning late, checking overdue (none after return), and listing fees. No errors were encountered.';
+  const { executedCommands, filesWritten } = collectTurnToolFacts(messages);
+  const check = evaluateClaimedCommands(finalBeforeNudge, executedCommands, filesWritten, extractTaskCommandForms(taskMd));
+  ok(check.perFileGaps.length === 0, 't09 cycle-2 final text: no per-file py_compile-style false positives from main.py demo runs');
+  ok(check.nudgeMessage === '', 't09 cycle-2: no combined claim/task nudge when CLI forms were exercised');
+  const forms = extractTaskCommandForms(taskMd);
+  const unex = findUnexercisedTaskForms(forms, executedCommands);
+  ok(
+    unex.every((f) => f.includes('py_compile') || f.includes('add --db') || f.includes('list --db') || f.includes('summary --db')),
+    `t09 cycle-2: add-book/add-member/borrow/return/overdue/fees/demo forms count as exercised (leftover only py_compile/list/summary if any): ${JSON.stringify(unex)}`,
+  );
+  ok(
+    forms.some((f) => f.includes('add-book')) &&
+      commandMatchesTaskForm(
+        'python3 main.py add-book --db PATH --isbn ISBN --title TITLE --author AUTHOR',
+        "python3 main.py --db testdb.json add-book --isbn 111 --title 'Test Book' --author 'Author A'",
+      ),
+    'task form matcher: add-book with --db before subcommand',
+  );
+}
+
+// ---------- t08 cycle-3: task CLI forms matched ----------
+{
+  const repoRoot = path.join(__dirname, '..', '..');
+  const taskPath = path.join(repoRoot, '_devtools', 'e2e', 'tasks', 't08-five-file-build', 'task.md');
+  const cycle3Path = path.join(repoRoot, '_devtools', 'e2e', 'results', 't08-five-file-build-gptossq8-cycle3.messages.json');
+  const taskMd = fs.readFileSync(taskPath, 'utf8');
+  const messages = JSON.parse(fs.readFileSync(cycle3Path, 'utf8')) as ChatMessage[];
+  const { executedCommands } = collectTurnToolFacts(messages);
+  const forms = extractTaskCommandForms(taskMd);
+  const unex = findUnexercisedTaskForms(forms, executedCommands);
+  ok(
+    unex.every((f) => f.includes('py_compile') || f.includes('<file>')),
+    `t08 cycle-3: add/list/summary/demo forms exercised (unexercised only compile placeholder): ${JSON.stringify(unex)}`,
+  );
+}
+
+// ---------- nested action in args ----------
+{
+  const nested = detectNestedToolAction({
+    tool: 'run_command',
+    args: { command: 'python3 -m py_compile main.py' },
+  });
+  ok(nested?.tool === 'run_command' && nested.args.command === 'python3 -m py_compile main.py', 'detectNestedToolAction finds inner action');
+  const msg = formatNestedActionResend('run_command', nested!);
+  ok(
+    msg === 'You nested a whole action inside "args". Resend as {"tool":"run_command","args":{"command":"python3 -m py_compile main.py"}}',
+    'nested-action resend message',
+  );
 }
 
 console.log(`\n${passed} passed, ${failed} failed.`);

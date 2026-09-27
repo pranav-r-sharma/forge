@@ -64,3 +64,16 @@ export function requireStringArg(
   }
   return { ok: true, value };
 }
+
+/** Args object that embeds a full `{tool, args}` action instead of real tool fields. */
+export function detectNestedToolAction(args: Record<string, unknown>): { tool: string; args: Record<string, unknown> } | undefined {
+  if (typeof args.tool !== 'string' || !args.tool.trim()) return undefined;
+  const inner = args.args;
+  if (inner === undefined || inner === null || typeof inner !== 'object' || Array.isArray(inner)) return undefined;
+  return { tool: args.tool.trim(), args: inner as Record<string, unknown> };
+}
+
+export function formatNestedActionResend(_outerTool: string, inner: { tool: string; args: Record<string, unknown> }): string {
+  const payload = JSON.stringify({ tool: inner.tool, args: inner.args });
+  return `You nested a whole action inside "args". Resend as ${payload}`;
+}

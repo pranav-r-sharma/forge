@@ -119,6 +119,8 @@ const NON_CHECK_EXECUTABLES = new Set([
   'head',
   'tail',
   'wc',
+  'bash',
+  'sh',
 ]);
 
 function baseExecutable(command: string): string {
@@ -127,11 +129,63 @@ function baseExecutable(command: string): string {
   return leaf.toLowerCase();
 }
 
+const BARE_EXECUTABLE_ONLY = new Set(['python3', 'python', 'node', 'bash', 'sh']);
+
+/** Split a shell command into tokens; quoted segments count as one token. */
+export function tokenizeShellCommand(command: string): string[] {
+  const tokens: string[] = [];
+  let i = 0;
+  const s = command.trim();
+  while (i < s.length) {
+    while (i < s.length && /\s/.test(s[i]!)) i++;
+    if (i >= s.length) break;
+    const ch = s[i]!;
+    if (ch === '"' || ch === "'") {
+      i++;
+      const start = i;
+      while (i < s.length && s[i] !== ch) {
+        if (s[i] === '\\' && i + 1 < s.length) i += 2;
+        else i++;
+      }
+      tokens.push(s.slice(start, i));
+      if (i < s.length) i++;
+      continue;
+    }
+    const start = i;
+    while (i < s.length && !/\s/.test(s[i]!)) i++;
+    tokens.push(s.slice(start, i));
+  }
+  return tokens;
+}
+
+/**
+ * After the executable, only flags/options and their values — no bare positional args
+ * (so `python3 -m py_compile` ok, `python3 demo` / `python3 main.py demo` not).
+ */
+export function templateHasOnlyFlagsAfterExecutable(template: string): boolean {
+  const tokens = tokenizeShellCommand(template);
+  if (tokens.length === 0) return false;
+  const exeLeaf = tokens[0]!.replace(/^\.\//, '').split('/').pop()?.toLowerCase() ?? '';
+  if (tokens.length === 1 && BARE_EXECUTABLE_ONLY.has(exeLeaf)) return false;
+  let i = 1;
+  while (i < tokens.length) {
+    const t = tokens[i]!;
+    if (t.startsWith('-')) {
+      i++;
+      if (i < tokens.length && !tokens[i]!.startsWith('-')) i++;
+      continue;
+    }
+    return false;
+  }
+  return true;
+}
+
 /** True when a stripped command still looks like a per-file check (not cat/ls/…). */
 export function isPerFileVerificationTemplate(template: string): boolean {
   const norm = normalizeCommandWhitespace(template);
   if (!norm) return false;
   if (NON_CHECK_EXECUTABLES.has(baseExecutable(norm))) return false;
+  if (!templateHasOnlyFlagsAfterExecutable(norm)) return false;
   return true;
 }
 
@@ -179,19 +233,135 @@ export function findPerFileCommandGaps(
 export interface ClaimedCommandCheck {
   unrunCommands: string[];
   perFileGaps: { template: string; uncovered: string[] }[];
+  unexercisedTaskForms: string[];
   nudgeMessage: string;
   unverifiedMarkers: string[];
+  /** Which trace note to use when a combined nudge is sent (at most one nudge per turn). */
+  nudgeTraceNote: 'claimed-command-nudge' | 'task-command-nudge' | undefined;
+}
+
+/** Shell command forms from the user task (inline code spans with the same heuristic as claimed commands). */
+export function extractTaskCommandForms(taskText: string): string[] {
+  return extractClaimedCommands(taskText);
+}
+
+export function isTaskFormPlaceholder(token: string): boolean {
+  if (token === '...') return true;
+  if (/^YYYY-MM-DD$/i.test(token)) return true;
+  if (/^<[^>]+>$/.test(token)) return true;
+  if (/^[A-Z][A-Z0-9_]*$/.test(token)) return true;
+  return false;
+}
+
+function stripDbFlagTokens(tokens: string[]): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < tokens.length; i++) {
+    if (tokens[i] === '--db' && i + 1 < tokens.length) {
+      i++;
+      continue;
+    }
+    out.push(tokens[i]!);
+  }
+  return out;
+}
+
+function tokensMatchTaskForm(formTokens: string[], execTokens: string[]): boolean {
+  let f = [...formTokens];
+  let allowExtra = false;
+  if (f[f.length - 1] === '...') {
+    allowExtra = true;
+    f.pop();
+  }
+  if (execTokens.length < f.length) return false;
+  if (!allowExtra && execTokens.length !== f.length) return false;
+  for (let i = 0; i < f.length; i++) {
+    if (taskFormTokensEquivalent(f[i]!, execTokens[i]!)) continue;
+    return false;
+  }
+  return true;
+}
+
+function taskFormTokensEquivalent(formTok: string, execTok: string): boolean {
+  if (isTaskFormPlaceholder(formTok)) return true;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(formTok) && /^\d{4}-\d{2}-\d{2}$/.test(execTok)) return true;
+  if (/^\d+\.?\d*$/.test(formTok) && /^\d+\.?\d*$/.test(execTok)) return true;
+  return formTok === execTok;
+}
+
+/** `python3 main.py <subcmd>` with the same subcommand and flag names (values may differ). */
+function pythonMainPyCliStructureMatches(form: string, executed: string): boolean {
+  const formParsed = parsePythonMainPyCli(tokenizeShellCommand(normalizeCommandWhitespace(form)));
+  const execParsed = parsePythonMainPyCli(tokenizeShellCommand(normalizeCommandWhitespace(executed)));
+  if (!formParsed || !execParsed) return false;
+  if (formParsed.subcommand !== execParsed.subcommand) return false;
+  for (const flag of formParsed.flags) {
+    if (!execParsed.flags.has(flag)) return false;
+  }
+  return true;
+}
+
+function parsePythonMainPyCli(tokens: string[]): { subcommand: string; flags: Set<string> } | undefined {
+  let i = 0;
+  if (tokens[i]?.toLowerCase() !== 'python3') return undefined;
+  i++;
+  if (i >= tokens.length) return undefined;
+  if (tokens[i] === 'main.py' || tokens[i]?.endsWith('.py')) i++;
+  const flags = new Set<string>();
+  const positional: string[] = [];
+  while (i < tokens.length) {
+    const t = tokens[i]!;
+    if (t === '--db' && i + 1 < tokens.length) {
+      i += 2;
+      continue;
+    }
+    if (t.startsWith('--')) {
+      flags.add(t);
+      i++;
+      if (i < tokens.length && !tokens[i]!.startsWith('-')) i++;
+      continue;
+    }
+    positional.push(t);
+    i++;
+  }
+  if (positional.length === 0) return undefined;
+  return { subcommand: positional[0]!, flags };
+}
+
+/** True when an executed command matches a task-specified form (wildcards; `--db` may move). */
+export function commandMatchesTaskForm(form: string, executed: string): boolean {
+  const normForm = normalizeCommandWhitespace(form);
+  if (/<[^>]+>/.test(normForm)) {
+    const prefix = normalizeCommandWhitespace(normForm.replace(/<[^>]+>/g, ' '));
+    const execNorm = normalizeCommandWhitespace(executed);
+    if (prefix && execNorm.startsWith(prefix) && execNorm.length > prefix.length) return true;
+  }
+  if (pythonMainPyCliStructureMatches(form, executed)) return true;
+  const f = tokenizeShellCommand(normForm);
+  const e = tokenizeShellCommand(normalizeCommandWhitespace(executed));
+  if (tokensMatchTaskForm(f, e)) return true;
+  return tokensMatchTaskForm(stripDbFlagTokens(f), stripDbFlagTokens(e));
+}
+
+export function findUnexercisedTaskForms(taskForms: string[], executedCommands: string[]): string[] {
+  return taskForms.filter((form) => !executedCommands.some((exec) => commandMatchesTaskForm(form, exec)));
+}
+
+export function formatTaskCommandNudge(unexercised: string[]): string {
+  const list = unexercised.map((c) => `\`${c}\``).join(', ');
+  return `[System check] The task specifies these command forms, but you never ran a command matching them: ${list}. Run them as written (fix the code if they fail), or explain why not.`;
 }
 
 export function evaluateClaimedCommands(
   finalText: string,
   executedCommands: string[],
   filesWrittenThisTurn: string[],
+  taskCommandForms: string[] = [],
 ): ClaimedCommandCheck {
   const unrunCommands = findUnrunClaimedCommands(finalText, executedCommands);
   const perFileGaps = finalAnswerMakesUniversalFileClaim(finalText)
     ? findPerFileCommandGaps(executedCommands, filesWrittenThisTurn)
     : [];
+  const unexercisedTaskForms = findUnexercisedTaskForms(taskCommandForms, executedCommands);
 
   const parts: string[] = [];
   for (const cmd of unrunCommands) {
@@ -206,6 +376,11 @@ export function evaluateClaimedCommands(
       `You ran \`${gap.template}\` on ${ranOn} of the ${totalSameExt} \`${ext}\` files you wrote; never on: ${gap.uncovered.join(', ')}.`,
     );
   }
+  if (unexercisedTaskForms.length > 0) {
+    parts.push(
+      `The task specifies these command forms, but you never ran a command matching them: ${unexercisedTaskForms.map((c) => `\`${c}\``).join(', ')}. Run them as written (fix the code if they fail), or explain why not.`,
+    );
+  }
   const nudgeMessage =
     parts.length > 0
       ? `[System check] ${parts.join(' ')} Run the missing command(s) now, or correct your summary.`
@@ -216,8 +391,17 @@ export function evaluateClaimedCommands(
   for (const gap of perFileGaps) {
     for (const f of gap.uncovered) unverifiedMarkers.push(`per-file check missing: ${gap.template} → ${f}`);
   }
+  for (const form of unexercisedTaskForms) {
+    unverifiedMarkers.push(`task command form not run: ${form}`);
+  }
 
-  return { unrunCommands, perFileGaps, nudgeMessage, unverifiedMarkers };
+  const hasClaimedIssues = unrunCommands.length > 0 || perFileGaps.length > 0;
+  const hasTaskIssues = unexercisedTaskForms.length > 0;
+  let nudgeTraceNote: ClaimedCommandCheck['nudgeTraceNote'];
+  if (hasTaskIssues) nudgeTraceNote = 'task-command-nudge';
+  else if (hasClaimedIssues) nudgeTraceNote = 'claimed-command-nudge';
+
+  return { unrunCommands, perFileGaps, unexercisedTaskForms, nudgeMessage, unverifiedMarkers, nudgeTraceNote };
 }
 
 /** True if `path` appears anywhere as the subject of a write_file tool call/result in the transcript so far (this turn or any earlier one). Approximate by design — a substring scan over the raw message text, not a structured index — but effective and avoids false positives across turns. */

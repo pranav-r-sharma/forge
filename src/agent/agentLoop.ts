@@ -24,12 +24,14 @@ import { CompactionCache, PromptViewState, hardCapOversizedMessages, maybeCompac
 import { LoopDetector, signatureForStep } from './loopDetector';
 import {
   evaluateClaimedCommands,
+  extractTaskCommandForms,
   findUnverifiedClaims,
   formatUnresolvedFailureNudge,
   parseRunCommandExitCode,
   unresolvedFailureMarker,
   type UnresolvedRunFailure,
 } from './claimChecker';
+import { detectNestedToolAction, formatNestedActionResend } from '../tools/argErrors';
 import { runVerifyCommand } from './verifyCheck';
 import { detectSuspiciousVerifyBypass } from './gamingDetection';
 import { BackgroundProcessManager } from '../tools/backgroundProcessManager';
@@ -376,6 +378,8 @@ export async function runAgentTurn(
   }
 
   pushMsg({ role: 'user', content: `${turnContextPrefix}${planBlock}${userMessage}` });
+
+  const taskCommandForms = extractTaskCommandForms(userMessage);
 
   const toolCtx: ToolExecContext = {
     workspaceRoot: deps.workspaceRoot,
@@ -725,14 +729,21 @@ export async function runAgentTurn(
         traceIter({ note: 'unverified-claim-nudge' });
         continue;
       }
-      const claimedCmd = evaluateClaimedCommands(displayText, commandsExecutedThisTurn, filesWrittenThisTurn);
+      const claimedCmd = evaluateClaimedCommands(
+        displayText,
+        commandsExecutedThisTurn,
+        filesWrittenThisTurn,
+        taskCommandForms,
+      );
       const claimedCmdIssues =
-        claimedCmd.unrunCommands.length > 0 || claimedCmd.perFileGaps.length > 0;
+        claimedCmd.unrunCommands.length > 0 ||
+        claimedCmd.perFileGaps.length > 0 ||
+        claimedCmd.unexercisedTaskForms.length > 0;
       if (claimedCmdIssues && claimedCommandNudges < 1) {
         claimedCommandNudges++;
         pushAssistant(fullText);
         pushMsg({ role: 'user', content: claimedCmd.nudgeMessage });
-        traceIter({ note: 'claimed-command-nudge' });
+        traceIter({ note: claimedCmd.nudgeTraceNote ?? 'claimed-command-nudge' });
         continue;
       }
       if (unresolvedRunFailure && unresolvedFailureNudges < 1) {
@@ -915,6 +926,16 @@ export async function runAgentTurn(
         if (checkLoop(loopDetector, call.tool, call.args, false, msg, emit)) return { messages, compactionCache };
         continue;
       }
+    }
+
+    const nestedAction = detectNestedToolAction(call.args as Record<string, unknown>);
+    if (nestedAction) {
+      const msg = formatNestedActionResend(call.tool, nestedAction);
+      emit({ type: 'tool_result', callId, ok: false, summary: msg });
+      pushMsg({ role: 'user', content: `[Tool "${call.tool}" result]\n${msg}` });
+      traceIter({ tool: call.tool, ok: false, note: 'nested-action-in-args' });
+      if (checkLoop(loopDetector, call.tool, call.args, false, msg, emit)) return { messages, compactionCache };
+      continue;
     }
 
     const toolStartedAt = Date.now();

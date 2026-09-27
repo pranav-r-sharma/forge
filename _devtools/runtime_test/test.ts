@@ -18,7 +18,7 @@ import {
 import { resolveModelResponse } from '../../src/agent/agentLoop';
 import { formatUnresolvedFailureNudge } from '../../src/agent/claimChecker';
 import { cleanCompletion } from '../../src/completion/fimPrompt';
-import { requireStringArg, suggestCommandFromArgvArray } from '../../src/tools/argErrors';
+import { requireStringArg, suggestCommandFromArgvArray, detectNestedToolAction, formatNestedActionResend } from '../../src/tools/argErrors';
 
 let passed = 0;
 let failed = 0;
@@ -278,6 +278,15 @@ function assert(cond: any, msg: string) {
   );
   assert(!wrong.ok && /must be a string, but you sent an array/.test(wrong.content), 'wrong-type command mentions array');
   assert(/python3 -m py_compile/.test(wrong.content), 'wrong-type command suggests resend with shell string');
+  const nested = detectNestedToolAction({
+    tool: 'run_command',
+    args: { command: 'echo hi' },
+  });
+  assert(nested?.tool === 'run_command', 'nested tool action detected in args');
+  assert(
+    formatNestedActionResend('run_command', nested!).includes('Resend as {"tool":"run_command","args":{"command":"echo hi"}}'),
+    'nested action resend uses inner payload',
+  );
 }
 {
   const nudge = formatUnresolvedFailureNudge({
