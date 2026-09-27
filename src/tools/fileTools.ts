@@ -96,6 +96,104 @@ export async function listDirTool(args: Record<string, any>, ctx: ToolExecContex
   };
 }
 
+/** Result of applying one search/replace to a text: the new text plus the non-blocking advisories it produced, or a failure to report. */
+type ApplyResult =
+  | { ok: true; newText: string; fuzzyMatchAdvisory?: string; reindentAdvisory?: string; indentAdvisory?: string; info?: string }
+  | { ok: false; content: string };
+
+/** Applies ONE exact-or-fuzzy search/replace to `existing`. This is the logic write_file always had for {search, replace}, extracted so several edits can share it. */
+function applySearchReplace(existing: string, search: string, replace: string, relPath: string): ApplyResult {
+  let newText: string;
+  let indentAdvisory: string | undefined;
+  let reindentAdvisory: string | undefined;
+  let fuzzyMatchAdvisory: string | undefined;
+  const occurrences = countOccurrences(existing, search);
+  let reindent: ReindentResult;
+  if (occurrences === 0) {
+    // Local models are weaker than frontier ones at reproducing a file's
+    // exact whitespace/indentation byte-for-byte, and that's exactly the
+    // case where an otherwise-correct search snippet fails outright. Before
+    // giving up, retry with whitespace-normalized line matching: if every
+    // line of "search" matches the corresponding line of some run in the
+    // file once each side is trimmed and internal runs of whitespace are
+    // collapsed, that's almost certainly the intended location — just typed
+    // with different indentation. See findFuzzyLineMatches()'s doc comment
+    // for the (deliberate) scope limits of this fallback.
+    const fuzzyMatches = findFuzzyLineMatches(existing, search);
+    if (fuzzyMatches.length === 1) {
+      // Fuzzy matches are always whole lines (see findFuzzyLineMatches's
+      // doc comment), so the matched region always starts at that line's
+      // very first column — matchStartsAtLineStart is unconditionally true.
+      reindent = reindentReplacement(existing, fuzzyMatches[0].startLine, true, replace);
+      newText = applyFuzzyMatch(existing, fuzzyMatches[0], reindent.text);
+        fuzzyMatchAdvisory =
+        'Note: "search" did not match this file\'s content byte-for-byte, but matched once the whitespace/indentation on each line was normalized, so the edit was applied at that location anyway. Double-check the resulting indentation in the diff before treating this as done — copy it from the surrounding lines if it looks off.';
+    } else if (fuzzyMatches.length > 1) {
+      return {
+        ok: false,
+        content: `The "search" text was not found in ${relPath} byte-for-byte, and even after normalizing whitespace it still matches ${fuzzyMatches.length} places, which is ambiguous. Include more surrounding context so it uniquely identifies one location.`,
+      };
+    } else {
+      return {
+        ok: false,
+        content: `The "search" text was not found in ${relPath}, even after trying a whitespace-tolerant match. It must match the file's current content (line content, ignoring pure indentation/spacing differences — no line-number gutters). Re-read the file and try a smaller, unique snippet.`,
+      };
+    }
+  } else if (occurrences > 1) {
+    return {
+      ok: false,
+      content: `The "search" text matches ${occurrences} places in ${relPath}, which is ambiguous. Include more surrounding context so it uniquely identifies one location.`,
+    };
+  } else {
+    const matchIndex = existing.indexOf(search);
+    const matchStartLineIndex = existing.slice(0, matchIndex).split('\n').length - 1;
+    const lineStartIndex = existing.lastIndexOf('\n', matchIndex - 1) + 1;
+    // Whether the match begins right at (or after only whitespace on) the
+    // start of its line — i.e. whether "this line's indentation" is even a
+    // meaningful concept to re-anchor the replacement onto. A "search" that
+    // matches mid-line (a sub-line fragment following real code on the same
+    // line) has no such anchor; see reindentReplacement()'s doc comment.
+    const matchStartsAtLineStart = /^[ \t]*$/.test(existing.slice(lineStartIndex, matchIndex));
+    reindent = reindentReplacement(existing, matchStartLineIndex, matchStartsAtLineStart, replace);
+    newText = existing.replace(search, () => reindent.text);
+  }
+  // Item "whitespace and indentation issues when doing targeted writes to
+  // existing files": reindentReplacement() above already does the real
+  // fix — it remaps "replace"'s leading whitespace onto the file's actual
+  // indent scheme, preserving the replace block's own relative nesting, and
+  // writes the corrected text to disk. detectIndentMismatch() is now only
+  // consulted as a residual advisory for the narrow case where
+  // reindentReplacement() declined to touch anything (mid-line match, a
+  // file with no indentation to sniff a scheme from, or "replace" text
+  // whose own indentation is too internally inconsistent to confidently
+  // reinterpret) — surfacing a heads-up instead of silently risking a
+  // corrupted edit. When reindentReplacement() DID confidently rewrite
+  // something, we note that instead so the diff isn't a silent surprise.
+  if (!reindent.reindented) {
+    indentAdvisory = detectIndentMismatch(existing, replace);
+  } else if (reindent.text !== replace) {
+    // 0.14.0: reindentReplacement() can now do a PARTIAL remap — most of a
+    // block corrected, a handful of individually-inconsistent lines left
+    // exactly as authored (see ReindentResult.partialLines's doc comment)
+    // — so the advisory says which case actually happened rather than
+    // always claiming the whole block was confidently fixed.
+    reindentAdvisory = reindent.partialLines?.length
+      ? `Note: most of "replace"'s indentation didn't match this file's indent style, so it was automatically remapped — EXCEPT line(s) ${reindent.partialLines.join(', ')} within "replace", whose own indentation was too inconsistent to confidently reinterpret and were left exactly as you wrote them. Double-check those specific line(s) in the diff before treating this edit as done.`
+      : 'Note: the indentation in "replace" didn\'t match this file\'s indent style, so it was automatically remapped (same relative nesting, this file\'s tabs/spaces and width) before writing — worth a glance at the diff to confirm it landed the way you intended.';
+  }
+  return { ok: true, newText, fuzzyMatchAdvisory, reindentAdvisory, indentAdvisory };
+}
+
+/** Replaces EVERY exact occurrence of `search` (e.g. renaming a symbol within one file). Exact text only — no fuzzy matching, no re-indentation. */
+function applyReplaceAll(existing: string, search: string, replace: string, relPath: string): ApplyResult {
+  if (search === '') return { ok: false, content: 'The "search" text is empty — nothing to replace.' };
+  const count = countOccurrences(existing, search);
+  if (count === 0) {
+    return { ok: false, content: `The "search" text was not found in ${relPath}. With "all": true it must match the file's current text exactly (every occurrence is replaced, so no whitespace-tolerant matching is used).` };
+  }
+  return { ok: true, newText: existing.split(search).join(replace), info: `Replaced ${count} occurrence${count === 1 ? '' : 's'} of the search text.` };
+}
+
 export async function writeFileTool(args: Record<string, any>, ctx: ToolExecContext): Promise<ToolResult> {
   const relPath: string = args.path ?? args.file ?? '';
   if (!relPath) return { ok: false, content: 'Missing required arg "path".' };
@@ -128,87 +226,48 @@ export async function writeFileTool(args: Record<string, any>, ctx: ToolExecCont
   let reindentAdvisory: string | undefined;
   let fuzzyMatchAdvisory: string | undefined;
 
-  if (hasSearchReplace) {
+  const MAX_EDITS_PER_CALL = 50;
+  const hasEdits = Array.isArray(args.edits) && args.edits.length > 0;
+  const extraNotes: string[] = [];
+
+  if (hasEdits) {
+    // Several edits to ONE file in one call (measured: renaming a symbol in 5 files took 16 single-edit calls and hit the step cap). Applied in order
+    // to the evolving text, ALL-or-nothing: if any edit cannot be applied, none is, and the failing one is named.
+    if (existing === undefined) {
+      return { ok: false, content: `Cannot edit "${relPath}": file does not exist. Use "content" to create it.` };
+    }
+    const edits: any[] = args.edits;
+    if (edits.length > MAX_EDITS_PER_CALL) {
+      return { ok: false, content: `Too many edits in one call (${edits.length}; the limit is ${MAX_EDITS_PER_CALL}). Split them across calls.` };
+    }
+    let text = existing;
+    for (let i = 0; i < edits.length; i++) {
+      const spec = edits[i];
+      if (!spec || typeof spec.search !== 'string' || typeof spec.replace !== 'string') {
+        return { ok: false, content: `Edit ${i + 1} of ${edits.length} is not {"search": "...", "replace": "..."} (both must be strings), so NONE of the edits were applied to ${relPath}.` };
+      }
+      const r = spec.all === true ? applyReplaceAll(text, spec.search, spec.replace, relPath) : applySearchReplace(text, spec.search, spec.replace, relPath);
+      if (!r.ok) {
+        return { ok: false, content: `Edit ${i + 1} of ${edits.length} could not be applied, so NONE of the ${edits.length} edits were applied to ${relPath} (the file is unchanged). ${r.content}` };
+      }
+      text = r.newText;
+      for (const note of [r.info, r.fuzzyMatchAdvisory, r.reindentAdvisory, r.indentAdvisory]) if (note) extraNotes.push(`[edit ${i + 1}] ${note}`);
+    }
+    newText = text;
+    kind = 'modify';
+    extraNotes.unshift(`Applied ${edits.length} edit${edits.length === 1 ? '' : 's'} in order.`);
+  } else if (hasSearchReplace) {
     if (existing === undefined) {
       return { ok: false, content: `Cannot search/replace in "${relPath}": file does not exist. Use "content" to create it.` };
     }
-    const search: string = args.search;
-    const occurrences = countOccurrences(existing, search);
-    let reindent: ReindentResult;
-    if (occurrences === 0) {
-      // Local models are weaker than frontier ones at reproducing a file's
-      // exact whitespace/indentation byte-for-byte, and that's exactly the
-      // case where an otherwise-correct search snippet fails outright. Before
-      // giving up, retry with whitespace-normalized line matching: if every
-      // line of "search" matches the corresponding line of some run in the
-      // file once each side is trimmed and internal runs of whitespace are
-      // collapsed, that's almost certainly the intended location — just typed
-      // with different indentation. See findFuzzyLineMatches()'s doc comment
-      // for the (deliberate) scope limits of this fallback.
-      const fuzzyMatches = findFuzzyLineMatches(existing, search);
-      if (fuzzyMatches.length === 1) {
-        // Fuzzy matches are always whole lines (see findFuzzyLineMatches's
-        // doc comment), so the matched region always starts at that line's
-        // very first column — matchStartsAtLineStart is unconditionally true.
-        reindent = reindentReplacement(existing, fuzzyMatches[0].startLine, true, args.replace);
-        newText = applyFuzzyMatch(existing, fuzzyMatches[0], reindent.text);
-        kind = 'modify';
-        fuzzyMatchAdvisory =
-          'Note: "search" did not match this file\'s content byte-for-byte, but matched once the whitespace/indentation on each line was normalized, so the edit was applied at that location anyway. Double-check the resulting indentation in the diff before treating this as done — copy it from the surrounding lines if it looks off.';
-      } else if (fuzzyMatches.length > 1) {
-        return {
-          ok: false,
-          content: `The "search" text was not found in ${relPath} byte-for-byte, and even after normalizing whitespace it still matches ${fuzzyMatches.length} places, which is ambiguous. Include more surrounding context so it uniquely identifies one location.`,
-        };
-      } else {
-        return {
-          ok: false,
-          content: `The "search" text was not found in ${relPath}, even after trying a whitespace-tolerant match. It must match the file's current content (line content, ignoring pure indentation/spacing differences — no line-number gutters). Re-read the file and try a smaller, unique snippet.`,
-        };
-      }
-    } else if (occurrences > 1) {
-      return {
-        ok: false,
-        content: `The "search" text matches ${occurrences} places in ${relPath}, which is ambiguous. Include more surrounding context so it uniquely identifies one location.`,
-      };
-    } else {
-      const matchIndex = existing.indexOf(search);
-      const matchStartLineIndex = existing.slice(0, matchIndex).split('\n').length - 1;
-      const lineStartIndex = existing.lastIndexOf('\n', matchIndex - 1) + 1;
-      // Whether the match begins right at (or after only whitespace on) the
-      // start of its line — i.e. whether "this line's indentation" is even a
-      // meaningful concept to re-anchor the replacement onto. A "search" that
-      // matches mid-line (a sub-line fragment following real code on the same
-      // line) has no such anchor; see reindentReplacement()'s doc comment.
-      const matchStartsAtLineStart = /^[ \t]*$/.test(existing.slice(lineStartIndex, matchIndex));
-      reindent = reindentReplacement(existing, matchStartLineIndex, matchStartsAtLineStart, args.replace);
-      newText = existing.replace(search, () => reindent.text);
-      kind = 'modify';
-    }
-    // Item "whitespace and indentation issues when doing targeted writes to
-    // existing files": reindentReplacement() above already does the real
-    // fix — it remaps "replace"'s leading whitespace onto the file's actual
-    // indent scheme, preserving the replace block's own relative nesting, and
-    // writes the corrected text to disk. detectIndentMismatch() is now only
-    // consulted as a residual advisory for the narrow case where
-    // reindentReplacement() declined to touch anything (mid-line match, a
-    // file with no indentation to sniff a scheme from, or "replace" text
-    // whose own indentation is too internally inconsistent to confidently
-    // reinterpret) — surfacing a heads-up instead of silently risking a
-    // corrupted edit. When reindentReplacement() DID confidently rewrite
-    // something, we note that instead so the diff isn't a silent surprise.
-    if (!reindent.reindented) {
-      indentAdvisory = detectIndentMismatch(existing, args.replace);
-    } else if (reindent.text !== args.replace) {
-      // 0.14.0: reindentReplacement() can now do a PARTIAL remap — most of a
-      // block corrected, a handful of individually-inconsistent lines left
-      // exactly as authored (see ReindentResult.partialLines's doc comment)
-      // — so the advisory says which case actually happened rather than
-      // always claiming the whole block was confidently fixed.
-      reindentAdvisory = reindent.partialLines?.length
-        ? `Note: most of "replace"'s indentation didn't match this file's indent style, so it was automatically remapped — EXCEPT line(s) ${reindent.partialLines.join(', ')} within "replace", whose own indentation was too inconsistent to confidently reinterpret and were left exactly as you wrote them. Double-check those specific line(s) in the diff before treating this edit as done.`
-        : 'Note: the indentation in "replace" didn\'t match this file\'s indent style, so it was automatically remapped (same relative nesting, this file\'s tabs/spaces and width) before writing — worth a glance at the diff to confirm it landed the way you intended.';
-    }
+    const r = args.all === true ? applyReplaceAll(existing, args.search, args.replace, relPath) : applySearchReplace(existing, args.search, args.replace, relPath);
+    if (!r.ok) return { ok: false, content: r.content };
+    newText = r.newText;
+    kind = 'modify';
+    fuzzyMatchAdvisory = r.fuzzyMatchAdvisory;
+    reindentAdvisory = r.reindentAdvisory;
+    indentAdvisory = r.indentAdvisory;
+    if (r.info) extraNotes.push(r.info);
   } else if (typeof args.content === 'string') {
     newText = args.content;
     kind = existing === undefined ? 'create' : 'modify';
@@ -239,7 +298,7 @@ export async function writeFileTool(args: Record<string, any>, ctx: ToolExecCont
 
   const verb = kind === 'create' ? 'Created' : 'Updated';
   const verbPending = kind === 'create' ? 'creating' : 'updating';
-  const advisories = [fuzzyMatchAdvisory, reindentAdvisory, indentAdvisory, balanceAdvisory, duplicateAdvisory].filter(Boolean);
+  const advisories = [...extraNotes, fuzzyMatchAdvisory, reindentAdvisory, indentAdvisory, balanceAdvisory, duplicateAdvisory].filter(Boolean);
   const advisorySuffix = (editEcho ? `\n\n${editEcho}` : '') + (advisories.length ? `\n\n${advisories.join('\n\n')}` : '');
   return {
     ok: true,

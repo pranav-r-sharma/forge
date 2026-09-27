@@ -132,6 +132,82 @@ async function testReplayOfTheFailingRun() {
   console.log('   (info) result tail:', JSON.stringify(r8.content.slice(-330)));
 }
 
+const RENAME = `from .pricing import calc_tot
+
+
+def render(order_id, lines):
+    total = calc_tot(lines)
+    other = calc_tot([])
+    return f"{order_id}: {total} {other}"
+`;
+
+async function testMultiEdit() {
+  // several edits, one call, applied in order
+  const { state, ctx } = fileCtx(RENAME);
+  const r = await writeFileTool({ path: 'inv.py', edits: [
+    { search: 'from .pricing import calc_tot', replace: 'from .pricing import calculate_total' },
+    { search: 'total = calc_tot(lines)', replace: 'total = calculate_total(lines)' },
+    { search: 'other = calc_tot([])', replace: 'other = calculate_total([])' },
+  ] }, ctx);
+  ok(r.ok && !state.text.includes('calc_tot') && (state.text.match(/calculate_total/g) || []).length === 3, 'three edits in ONE call all land');
+  ok(/Applied 3 edits in order\./.test(r.content) && /Now inv\.py \(lines 1-\d+ of \d+\):/.test(r.content), 'the result says so and echoes the combined changed region once');
+
+  // later edits see earlier ones (sequential semantics)
+  const seq = fileCtx('a = 1\n');
+  const rs = await writeFileTool({ path: 'x.py', edits: [{ search: 'a = 1', replace: 'a = 2' }, { search: 'a = 2', replace: 'a = 3' }] }, seq.ctx);
+  ok(rs.ok && seq.state.text === 'a = 3\n', 'edits are applied in order to the evolving text (the 2nd edit can target the 1st edit\'s output)');
+
+  // all-or-nothing
+  const atomic = fileCtx(RENAME);
+  const bad = await writeFileTool({ path: 'inv.py', edits: [
+    { search: 'from .pricing import calc_tot', replace: 'from .pricing import calculate_total' },
+    { search: 'THIS TEXT IS NOT IN THE FILE', replace: 'x' },
+    { search: 'other = calc_tot([])', replace: 'other = calculate_total([])' },
+  ] }, atomic.ctx);
+  ok(!bad.ok && /Edit 2 of 3 could not be applied, so NONE of the 3 edits were applied/.test(bad.content) && /the file is unchanged/.test(bad.content), 'a failing edit names itself and NOTHING is applied');
+  ok(atomic.state.text === RENAME, 'and the file really is byte-identical afterwards');
+  const amb = await writeFileTool({ path: 'inv.py', edits: [{ search: 'calc_tot', replace: 'x' }] }, fileCtx(RENAME).ctx);
+  ok(!amb.ok && /Edit 1 of 1/.test(amb.content) && /matches \d+ places/.test(amb.content), 'an ambiguous search inside edits explains the ambiguity (with the edit number)');
+
+  // validation
+  ok(!(await writeFileTool({ path: 'x.py', edits: [{ search: 'a' }] }, fileCtx('a').ctx)).ok, 'an edit without "replace" is rejected clearly');
+  ok(!(await writeFileTool({ path: 'x.py', edits: [null] }, fileCtx('a').ctx)).ok, 'a null edit is rejected, not a crash');
+  ok(!(await writeFileTool({ path: 'x.py', edits: Array.from({ length: 51 }, () => ({ search: 'a', replace: 'a' })) }, fileCtx('a').ctx)).ok, 'more than 50 edits in a call is refused');
+  ok(/does not exist/.test((await writeFileTool({ path: 'no.py', edits: [{ search: 'a', replace: 'b' }] }, { ...fileCtx('').ctx, readEffective: async () => undefined } as any)).content), 'edits on a missing file: a clear message');
+  const empty = await writeFileTool({ path: 'x.py', edits: [], content: 'fresh\n' }, fileCtx('old\n').ctx);
+  ok(empty.ok, 'an empty edits array falls through to the other forms (content) instead of failing');
+
+  // duplicate-definition advisory still fires on the combined result
+  const dup = fileCtx('def f():\n    return 1\n');
+  const rd = await writeFileTool({ path: 'd.py', edits: [{ search: '    return 1', replace: 'def f():\n    return 2' }] }, dup.ctx);
+  ok(rd.ok && /defined 2 times|INSIDE ITSELF/.test(rd.content), 'structural advisories still run over the combined result');
+
+  // per-edit notes: fuzzy match is attributed to its edit
+  const fz = fileCtx('def f():\n    a = 1\n    b = 2\n');
+  const rf = await writeFileTool({ path: 'z.py', edits: [{ search: 'a  =  1', replace: 'a = 10' }, { search: '    b = 2', replace: '    b = 20' }] }, fz.ctx);
+  ok(rf.ok || /Edit 1 of 2/.test(rf.content), 'a whitespace-different search is handled (fuzzy) or reported against its edit number, never silently misapplied');
+}
+
+async function testReplaceAll() {
+  const { state, ctx } = fileCtx(RENAME);
+  const r = await writeFileTool({ path: 'inv.py', search: 'calc_tot', replace: 'calculate_total', all: true }, ctx);
+  ok(r.ok && !state.text.includes('calc_tot') && (state.text.match(/calculate_total/g) || []).length === 3, 'all:true replaces every occurrence in one call');
+  ok(/Replaced 3 occurrences/.test(r.content), 'and reports how many');
+  const one = fileCtx('x = 1\n');
+  ok(/Replaced 1 occurrence of/.test((await writeFileTool({ path: 'a.py', search: 'x = 1', replace: 'x = 2', all: true }, one.ctx)).content), 'singular wording for one occurrence');
+  const none = await writeFileTool({ path: 'inv.py', search: 'nope', replace: 'x', all: true }, fileCtx(RENAME).ctx);
+  ok(!none.ok && /not found in inv\.py/.test(none.content), 'all:true with no match fails clearly');
+  ok(!(await writeFileTool({ path: 'inv.py', search: '', replace: 'x', all: true }, fileCtx(RENAME).ctx)).ok, 'an empty search with all:true is refused (it would match everywhere)');
+  const amb = await writeFileTool({ path: 'inv.py', search: 'calc_tot', replace: 'x' }, fileCtx(RENAME).ctx);
+  ok(!amb.ok && /matches 4 places|matches \d+ places/.test(amb.content), 'WITHOUT all:true an ambiguous search is still refused, as before');
+  const lit = fileCtx('a.b a.b\n');
+  await writeFileTool({ path: 'l.py', search: 'a.b', replace: '$&', all: true }, lit.ctx);
+  ok(lit.state.text === '$& $&\n', 'replacement text is literal (no regex/`$` interpretation)');
+  const idem = fileCtx('abab\n');
+  await writeFileTool({ path: 'i.py', search: 'ab', replace: 'abab', all: true }, idem.ctx);
+  ok(idem.state.text === 'abababab\n', 'a replacement containing the search text is not re-scanned (single pass)');
+}
+
 async function main() {
   testDedentedDefinitionIsNotForcedIn();
   testOrdinaryReindentStillWorks();
@@ -139,6 +215,8 @@ async function main() {
   testEcho();
   await testWriteResultCarriesEchoAndWarnings();
   await testReplayOfTheFailingRun();
+  await testMultiEdit();
+  await testReplaceAll();
   console.log(`\n${passed} passed, ${failed} failed.`);
   if (failed > 0) { console.log('Some v0.15.0 edit tests FAILED.'); process.exit(1); }
   console.log('All v0.15.0 edit tests passed.');
