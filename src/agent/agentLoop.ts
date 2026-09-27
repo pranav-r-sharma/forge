@@ -651,7 +651,7 @@ export async function runAgentTurn(
     if (foreignCall && !call && truncationNudges < 3) {
       truncationNudges++;
       pushAssistant(fullText);
-      pushMsg({ role: 'user', content: formatForeignToolCallNudge(foreignCall, knownToolNames) });
+      pushMsg({ role: 'user', content: formatForeignToolCallNudge(foreignCall, knownToolNames, fullText) });
       traceIter({ note: 'foreign-tool-call-nudge' });
       continue;
     }

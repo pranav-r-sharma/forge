@@ -413,8 +413,57 @@ export function detectForeignToolCall(raw: string): ForeignToolCall | null {
   return null;
 }
 
+const FORGE_ACTION_WRAPPER_RESEND =
+  ' Resend as ```forge_action\n{"tool":"<tool name>","args":{...}}\n```';
+
+function extractForeignForgeActionPayload(raw: string): string | null {
+  const harmonyRe =
+    /<\|channel\|>commentary\s+to=(?:functions\.)?forge_action\b[^<]*(?:<\|constrain\|>[^<]*)?<\|message\|>([\s\S]*?)(?:<\|end\|>|(?=<\|start\|>)|$)/i;
+  const harmony = harmonyRe.exec(raw);
+  if (harmony) return harmony[1].trim();
+
+  const bareRe = /to=(?:functions\.)?forge_action\b\s*(?:json)?\s*(\{[\s\S]*\})/i;
+  const bare = bareRe.exec(raw);
+  if (bare) return bare[1].trim();
+
+  return null;
+}
+
 /** User nudge when the model used a native tool-call format instead of forge_action. */
-export function formatForeignToolCallNudge(foreign: ForeignToolCall, knownTools: string[]): string {
+export function formatForeignToolCallNudge(
+  foreign: ForeignToolCall,
+  knownTools: string[],
+  raw = ''
+): string {
+  if (FORGE_ACTION_WRAPPER_NAMES.has(foreign.tool)) {
+    if (foreign.args === null) {
+      const payload = extractForeignForgeActionPayload(raw) ?? '';
+      const err = forgeActionJsonParseErrorDetail(payload);
+      return `[System check] Not executed: your forge_action call is not valid JSON: ${err.message}, near: ${err.near}.${FORGE_ACTION_WRAPPER_RESEND}`;
+    }
+
+    const innerTool = foreign.args.tool;
+    const innerArgs = foreign.args.args;
+    const hasTool = typeof innerTool === 'string';
+    const hasArgs =
+      innerArgs !== undefined &&
+      typeof innerArgs === 'object' &&
+      innerArgs !== null &&
+      !Array.isArray(innerArgs);
+
+    if (!hasTool || !hasArgs) {
+      let detail: string;
+      if (Object.keys(foreign.args).length === 0) detail = 'empty JSON {}';
+      else if (!hasTool) detail = 'no "tool" field';
+      else detail = 'no "args" object';
+      return `[System check] Not executed: your forge_action call had ${detail}.${FORGE_ACTION_WRAPPER_RESEND}`;
+    }
+
+    if (!knownTools.includes(innerTool)) {
+      return `[System check] Not executed: your forge_action call used unknown tool "${innerTool}". Available tools: ${knownTools.join(', ')}. Resend using a \`\`\`forge_action block with a known tool name.`;
+    }
+  }
+
   const known = knownTools.includes(foreign.tool);
   if (!known) {
     return `[System check] Not executed: you called ${foreign.tool} using a native tool-call format, which is not a Forge tool. Forge only runs actions written as a \`\`\`forge_action block. Available tools: ${knownTools.join(', ')}. Resend using a \`\`\`forge_action block with a known tool name.`;

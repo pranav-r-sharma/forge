@@ -231,6 +231,21 @@ function assert(cond: any, msg: string) {
   const unknownNative = '<tool_call>{"name":"bash","arguments":{"cmd":"ls"}}</tool_call>';
   const nudge = formatForeignToolCallNudge(detectForeignToolCall(unknownNative)!, known);
   assert(/which is not a Forge tool/.test(nudge) && /run_command/.test(nudge), 'unknown native tool nudge lists Forge tools');
+
+  const emptyWrap =
+    '<|channel|>commentary to=forge_action <|constrain|>json<|message|>{}';
+  const foreignEmpty = detectForeignToolCall(emptyWrap)!;
+  const nudgeEmpty = formatForeignToolCallNudge(foreignEmpty, known, emptyWrap);
+  assert(foreignEmpty.tool === 'forge_action' && foreignEmpty.args !== null && Object.keys(foreignEmpty.args).length === 0, 'harmony forge_action with {} is detected');
+  assert(/empty JSON \{\}/.test(nudgeEmpty) && !/which is not a Forge tool/.test(nudgeEmpty), 'empty forge_action wrapper nudge names missing payload, not unknown tool');
+
+  const missingArgsWrap =
+    '<|channel|>commentary to=forge_action <|constrain|>json<|message|>{"tool":"run_command"}';
+  const nudgeMissingArgs = formatForeignToolCallNudge(detectForeignToolCall(missingArgsWrap)!, known, missingArgsWrap);
+  assert(/no "args" object/.test(nudgeMissingArgs), 'forge_action wrapper without args object gets specific nudge');
+
+  const nudgeBadWrap = formatForeignToolCallNudge(detectForeignToolCall(badWrap)!, known, badWrap);
+  assert(/not valid JSON/.test(nudgeBadWrap) && /near:/.test(nudgeBadWrap) && !/which is not a Forge tool/.test(nudgeBadWrap), 'unparseable forge_action wrapper gets JSON parse error nudge');
 }
 
 // ---- parseToolCall: invalid JSON in closed fence (t08 cycle 1, no brace auto-repair) ----
