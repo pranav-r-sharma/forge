@@ -33,6 +33,9 @@
     allChatsOpen: false,
     settingsOpen: false,
     settings: null, // populated lazily from 'settingsData' the first time the panel is opened
+    settingsRenderPending: false,
+    provider: 'ollama',
+    mlxModel: '',
     numCtxOverride: undefined, // active session's per-chat context override, if any
     sessionModel: '', // active session's own model override, if any — item "run separate models in different chats"
     statusText: '', // brief "what is the agent doing" line — item "brief status messages"
@@ -455,6 +458,12 @@
     }
   });
 
+  el.settingsPanel.addEventListener('focusout', () => {
+    setTimeout(() => {
+      if (state.settingsRenderPending && !isFocusInSettingsPanel()) renderSettings(true);
+    }, 0);
+  });
+
   function settingRow(label, hint, inputHtml) {
     return `<div class="setting-row"><div class="setting-label">${escapeHtml(label)}${hint ? `<div class="setting-hint">${escapeHtml(hint)}</div>` : ''}</div><div class="setting-control">${inputHtml}</div></div>`;
   }
@@ -464,19 +473,95 @@
   // util/hwMetrics.ts's estimateSuggestedNumCtx doc comment for exactly
   // why this is deliberately rough, not precise) shown right under the
   // per-chat context override, with a one-click way to apply it.
-  function renderNumCtxSuggestion() {
+  function renderNumCtxSuggestionHtml() {
     const suggested = state.hwStatus && state.hwStatus.suggestedNumCtx;
     if (!suggested) return '';
-    return `<div class="setting-row numctx-suggestion">
+    return `<div class="setting-row numctx-suggestion" id="settings-numctx-suggestion">
       <div class="setting-label"></div>
       <div class="setting-control">
-        <div class="numctx-suggestion-text">You have idle RAM right now — you could try raising this to ~${suggested.toLocaleString()} tokens. This is a rough estimate based on free memory, not a guarantee it'll fit; watch the HW readout after changing it.</div>
+        <div class="numctx-suggestion-text" id="settings-numctx-suggestion-text">You have idle RAM right now — you could try raising this to ~${suggested.toLocaleString()} tokens. This is a rough estimate based on free memory, not a guarantee it'll fit; watch the HW readout after changing it.</div>
         <button id="use-suggested-numctx" class="numctx-suggestion-btn" data-value="${suggested}">Use ${suggested.toLocaleString()}</button>
       </div>
     </div>`;
   }
 
-  function renderSettings() {
+  function isFocusInSettingsPanel() {
+    if (!state.settingsOpen || !el.settingsPanel || el.settingsPanel.style.display === 'none') return false;
+    const ae = document.activeElement;
+    return !!(ae && el.settingsPanel.contains(ae));
+  }
+
+  /** Updates only the RAM-based numCtx hint inside an open Settings panel (hwStatus must not rebuild the whole panel). */
+  function updateSettingsHwReadout() {
+    const host = document.getElementById('settings-numctx-suggestion-host');
+    if (!host) return;
+    const suggested = state.hwStatus && state.hwStatus.suggestedNumCtx;
+    if (!suggested) {
+      host.innerHTML = '';
+      return;
+    }
+    const existing = document.getElementById('settings-numctx-suggestion');
+    if (existing) {
+      const textEl = document.getElementById('settings-numctx-suggestion-text');
+      const btn = document.getElementById('use-suggested-numctx');
+      if (textEl) {
+        textEl.textContent = `You have idle RAM right now — you could try raising this to ~${suggested.toLocaleString()} tokens. This is a rough estimate based on free memory, not a guarantee it'll fit; watch the HW readout after changing it.`;
+      }
+      if (btn) {
+        btn.dataset.value = String(suggested);
+        btn.textContent = `Use ${suggested.toLocaleString()}`;
+        if (!btn.dataset.hwBound) {
+          btn.dataset.hwBound = '1';
+          btn.addEventListener('click', () => {
+            const v = parseInt(btn.dataset.value, 10);
+            if (!Number.isFinite(v)) return;
+            const input = document.getElementById('set-session-numctx');
+            if (input) input.value = v;
+            vscodeApi.postMessage({ type: 'setSessionNumCtx', numCtx: v });
+          });
+        }
+      }
+      return;
+    }
+    host.innerHTML = renderNumCtxSuggestionHtml();
+    const suggestBtn = document.getElementById('use-suggested-numctx');
+    if (suggestBtn) {
+      suggestBtn.dataset.hwBound = '1';
+      suggestBtn.addEventListener('click', () => {
+        const v = parseInt(suggestBtn.dataset.value, 10);
+        if (!Number.isFinite(v)) return;
+        document.getElementById('set-session-numctx').value = v;
+        vscodeApi.postMessage({ type: 'setSessionNumCtx', numCtx: v });
+      });
+    }
+  }
+
+  function sessionModelSettingRow() {
+    if (state.provider === 'mlx') {
+      const current = state.mlxModel || state.chatModel;
+      const opts = state.models
+        .map((m) => `<option value="${escapeAttr(m.name)}" ${m.name === current ? 'selected' : ''}>${escapeHtml(m.name)}</option>`)
+        .join('');
+      return settingRow(
+        'MLX model',
+        'MLX runs one model at a time; this changes it for all chats.',
+        `<select id="set-session-model">${opts}</select>`
+      );
+    }
+    return settingRow(
+      'Model for this chat',
+      'Overrides the global default (and any per-mode routing) for this one chat — item "run separate models in different chats".',
+      `<select id="set-session-model"><option value="">(use global default)</option>${state.models.map((m) => `<option value="${escapeAttr(m.name)}" ${m.name === state.sessionModel ? 'selected' : ''}>${escapeHtml(m.name)}</option>`).join('')}</select>`
+    );
+  }
+
+  function renderSettings(force) {
+    if (!force && isFocusInSettingsPanel()) {
+      state.settingsRenderPending = true;
+      updateSettingsHwReadout();
+      return;
+    }
+    state.settingsRenderPending = false;
     const s = state.settings;
     if (!s) {
       el.settingsBody.innerHTML = '<div class="search-empty">Loading…</div>';
@@ -489,12 +574,8 @@
         'Tokens this chat may use — blank uses the global default below. A lighter/faster model leaves more memory headroom, so it can often afford a larger number here than a big model could.',
         `<input id="set-session-numctx" type="number" min="512" step="512" placeholder="${s.numCtx}" value="${state.numCtxOverride || ''}" />`
       )}
-      ${renderNumCtxSuggestion()}
-      ${settingRow(
-        'Model for this chat',
-        'Overrides the global default (and any per-mode routing) for this one chat — item "run separate models in different chats".',
-        `<select id="set-session-model"><option value="">(use global default)</option>${state.models.map((m) => `<option value="${escapeAttr(m.name)}" ${m.name === state.sessionModel ? 'selected' : ''}>${escapeHtml(m.name)}</option>`).join('')}</select>`
-      )}
+      <div id="settings-numctx-suggestion-host">${renderNumCtxSuggestionHtml()}</div>
+      ${sessionModelSettingRow()}
       <div class="settings-section-title">Global defaults</div>
       ${settingRow('Context window (forge.numCtx)', 'Applies to every chat without its own override.', `<input id="set-numCtx" type="number" min="512" step="512" value="${s.numCtx}" />`)}
       ${settingRow('Temperature', '', `<input id="set-temperature" type="number" min="0" max="2" step="0.1" value="${s.temperature}" />`)}
@@ -543,9 +624,13 @@
       vscodeApi.postMessage({ type: 'setSessionNumCtx', numCtx: v ? parseInt(v, 10) : null });
     });
     document.getElementById('set-session-model').addEventListener('change', (e) => {
-      state.sessionModel = e.target.value;
-      vscodeApi.postMessage({ type: 'setSessionModel', model: e.target.value });
-      renderModelBtn();
+      if (state.provider === 'mlx') {
+        vscodeApi.postMessage({ type: 'setMlxModel', model: e.target.value });
+      } else {
+        state.sessionModel = e.target.value;
+        vscodeApi.postMessage({ type: 'setSessionModel', model: e.target.value });
+        renderModelBtn();
+      }
     });
     const suggestBtn = document.getElementById('use-suggested-numctx');
     if (suggestBtn) {
@@ -1437,6 +1522,8 @@
           skills: msg.state.skills,
           sessions: msg.state.sessions,
           hwStatus: msg.state.hwStatus || { loadedModels: [] },
+          provider: msg.state.provider || 'ollama',
+          mlxModel: msg.state.mlxModel || '',
         });
         el.tabToggle.checked = state.tabCompletionEnabled;
         renderModelBtn();
@@ -1552,7 +1639,7 @@
       case 'hwStatus': {
         state.hwStatus = msg.status;
         renderHwReadout();
-        if (state.settingsOpen && state.settings) renderSettings();
+        if (state.settingsOpen && state.settings) updateSettingsHwReadout();
         break;
       }
       case 'metricsUpdate': {
