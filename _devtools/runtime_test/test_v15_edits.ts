@@ -299,6 +299,34 @@ async function testSearchReplaceIdenticalMessage() {
   ok(r.ok && /"search" and "replace" are identical/.test(r.content), 'search === replace yields the explicit identical message');
 }
 
+/** Pre-edit `inventory/cli.py` excerpt from t09 cycle5 msg 62 (except wrongly nested under elif). */
+const T09_CYCLE5_CLI_PRE_MSG65 = `    service = LibraryService(str(db_path)) if db_path else None
+    reports = LibraryReports(str(db_path))
+
+    try:
+        if args.cmd == "add-book":
+            pass
+        elif args.cmd == "fees":
+            for mid, fee in reports.total_fees_per_member().items():
+                print(f"{mid}: {fee:.2f}")
+        elif args.cmd == "demo":
+            demo_sequence(None)
+        except Exception as e:
+            error(str(e))
+`;
+
+async function testT09Cycle5CliExceptDedent() {
+  const { state, ctx } = fileCtx(T09_CYCLE5_CLI_PRE_MSG65);
+  const search =
+    '        elif args.cmd == "demo":\n            demo_sequence(None)\n        except Exception as e:\n            error(str(e))';
+  const replace =
+    '        elif args.cmd == "demo":\n            demo_sequence(None)\n    except Exception as e:\n        error(str(e))';
+  const r = await writeFileTool({ path: 'inventory/cli.py', search, replace }, ctx);
+  ok(r.ok && !/made no change/.test(r.content), 't09 cycle5 msg65: dedent except/except-body applies (not a false no-change)');
+  ok(state.text.includes('\n    except Exception as e:\n'), 'except aligns with try (4 spaces)');
+  ok(!/\n        except Exception as e:\n/.test(state.text), 'elif-level except indent is gone');
+}
+
 async function testCycle5IdenticalFourLineBlockMessage() {
   const block =
     '    # temporary db in a temp dir\n    import tempfile, shutil\n    tmp = tempfile.mkdtemp()\n    tmp_db = Path(tmp) / "demo.json"';
@@ -329,6 +357,7 @@ async function main() {
   await testIndentOnlyFixesBadIndentOnFirstMatchedLineExact();
   await testIndentOnlyFixesBadIndentOnFirstMatchedLineFuzzy();
   await testSearchReplaceIdenticalMessage();
+  await testT09Cycle5CliExceptDedent();
   await testCycle5IdenticalFourLineBlockMessage();
   await testAmbiguousSearchNamesLineNumbers();
   await testMultiEdit();
