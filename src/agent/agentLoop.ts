@@ -7,7 +7,7 @@ import { LlmProvider } from '../llm/provider';
 import { ChatMessage, OllamaCallMetrics } from '../ollama/types';
 import { AgentActivity, AgentEvent, ToolCall, ToolExecContext, ToolResult } from './types';
 import { buildSystemPrompt, buildTurnContextPrefix } from './systemPrompt';
-import { parseToolCall, looksLikeAbandonedToolCall, formatIncompleteActionNudge } from './toolProtocol';
+import { parseToolCall, looksLikeAbandonedToolCall, formatIncompleteActionNudge, extractAbandonedActionTarget } from './toolProtocol';
 import { parseStructuredResponse, STRUCTURED_RESPONSE_SCHEMA } from './structuredOutput';
 import { generatePlanFirst, renderPlanFirstForPrompt } from './planFirst';
 import { shouldCritique, critiqueEdit } from './selfCritique';
@@ -19,7 +19,7 @@ import { ForgeMode, isAutonomousMode, toolsAllowedInMode } from './modes';
 import { HookRunner } from '../forge/hooks';
 import { getConfig } from '../util/config';
 import { logger } from '../util/logger';
-import { resolveWorkspacePath } from '../util/paths';
+import { resolveWorkspacePath, toRelative } from '../util/paths';
 import { CompactionCache, PromptViewState, hardCapOversizedMessages, maybeCompact, pruneStaleReadsView, updateCharsPerToken, updatePromptView, DEFAULT_CHARS_PER_TOKEN } from './contextManager';
 import { LoopDetector, signatureForStep } from './loopDetector';
 import { findUnverifiedClaims } from './claimChecker';
@@ -214,6 +214,33 @@ export function resolveModelResponse(fullText: string, structuredOutputEnabled: 
     }
   }
   return { call: parseToolCall(fullText), displayText: fullText };
+}
+
+/** Investigation-only tools — allowed while a pending unfinished write is outstanding. */
+const PENDING_ACTION_BYPASS_TOOLS = new Set([
+  'read_file',
+  'list_dir',
+  'search_code',
+  'search_codebase',
+  'get_problems',
+]);
+
+type PendingActionTarget = { tool: string; path: string; redirectsUsed: number };
+
+function normalizeToolPath(workspaceRoot: vscode.Uri, relPath: string): string | undefined {
+  try {
+    return toRelative(workspaceRoot, resolveWorkspacePath(workspaceRoot, relPath));
+  } catch {
+    return relPath.replace(/^\/+/, '').replace(/^\.\/+/, '');
+  }
+}
+
+function toolCallMatchesPendingPath(call: ToolCall, pendingPath: string, workspaceRoot: vscode.Uri): boolean {
+  const argPath: unknown = call.args?.path ?? call.args?.file;
+  if (typeof argPath !== 'string') return false;
+  const a = normalizeToolPath(workspaceRoot, pendingPath);
+  const b = normalizeToolPath(workspaceRoot, argPath);
+  return a !== undefined && b !== undefined && a === b;
 }
 
 /**
@@ -474,6 +501,7 @@ export async function runAgentTurn(
 
   let hallucinationNudges = 0;
   let truncationNudges = 0;
+  let pendingActionTarget: PendingActionTarget | undefined;
   /** Consecutive failed run_command results (tests/build still failing) — drives forge.thinking='auto': the agent is stuck, so let the model think. */
   let failedRunsInARow = 0;
 
@@ -614,6 +642,10 @@ export async function runAgentTurn(
       truncationNudges++;
       pushMsg({ role: 'assistant', content: fullText });
       pushMsg({ role: 'user', content: formatIncompleteActionNudge(fullText, lengthTruncated) });
+      const nudgeTarget = extractAbandonedActionTarget(fullText);
+      if (nudgeTarget?.path) {
+        pendingActionTarget = { tool: nudgeTarget.tool, path: nudgeTarget.path, redirectsUsed: 0 };
+      }
       traceIter({ note: lengthTruncated ? 'truncated-reply-nudge' : 'abandoned-action-nudge' });
       continue;
     }
@@ -668,6 +700,7 @@ export async function runAgentTurn(
       }
 
       traceIter({ final: true });
+      pendingActionTarget = undefined;
       emit({ type: 'final', text: displayText.trim(), unverifiedClaims: unverified.length > 0 ? unverified : undefined });
       emit({ type: 'done' });
       return { messages, compactionCache };
@@ -676,6 +709,26 @@ export async function runAgentTurn(
     // Keep the model's own transcript of what it did, so it has memory of
     // prior tool calls across iterations.
     pushMsg({ role: 'assistant', content: fullText });
+
+    if (pendingActionTarget) {
+      const pending = pendingActionTarget;
+      const bypass = PENDING_ACTION_BYPASS_TOOLS.has(call.tool);
+      const matches =
+        call.tool === pending.tool && toolCallMatchesPendingPath(call, pending.path, deps.workspaceRoot);
+      if (bypass) {
+        /* keep pending — reading/searching before finishing the write is fine */
+      } else if (matches) {
+        pendingActionTarget = undefined;
+      } else if (pending.redirectsUsed >= 1) {
+        pendingActionTarget = undefined;
+      } else {
+        pending.redirectsUsed++;
+        const redirectMsg = `[System check] Not executed: you still have not finished ${pending.tool} on \`${pending.path}\`. Do that exact action now, before anything else.`;
+        pushMsg({ role: 'user', content: redirectMsg });
+        traceIter({ note: 'pending-action-redirect', tool: call.tool, path: describeArgsForTrace(call.tool, call.args).path });
+        continue;
+      }
+    }
 
     // Self-consistency / best-of-N for the single riskiest step in the loop:
     // a full-file rewrite of an existing file (forge.bestOfN.enabled, off by

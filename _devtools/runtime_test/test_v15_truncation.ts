@@ -167,6 +167,46 @@ async function main() {
     ok(m.seen.length === 1 && ev.some((e) => e.type === 'final'), 'Plan mode does not nudge (no tools to continue with)');
   }
 
+  // strict-catch: after an incomplete write_file nudge, the matching path is executed; pending clears
+  {
+    const ws = workspace();
+    const abandoned = '```forge_action\n{"tool":"write_file","args":{"path":"contacts/storage.py","content":"class X';
+    const finish = act('write_file', { path: 'contacts/storage.py', content: 'class X:\n  pass\n' });
+    const m = scripted([[abandoned, 'stop'], [finish, 'stop'], ['done', 'stop']]);
+    const ev: AgentEvent[] = [];
+    await runAgentTurn([], 'go', deps(ws, m), (e) => ev.push(e), new vscode.CancellationTokenSource().token, 'fake', { mode: 'auto' });
+    ok(ev.filter((e) => e.type === 'tool_call' && e.tool === 'write_file').length === 1, 'pending target: finishing the named path runs write_file once');
+  }
+
+  // strict-catch: a different write path is redirected once, then allowed on the second try
+  {
+    const ws = workspace();
+    const abandoned = '```forge_action\n{"tool":"write_file","args":{"path":"target.py","content":"start';
+    const wrong = act('write_file', { path: 'other.py', content: 'nope' });
+    const m = scripted([[abandoned, 'stop'], [wrong, 'stop'], [wrong, 'stop'], ['done', 'stop']]);
+    const ev: AgentEvent[] = [];
+    await runAgentTurn([], 'go', deps(ws, m), (e) => ev.push(e), new vscode.CancellationTokenSource().token, 'fake', { mode: 'auto' });
+    ok(/Not executed.*target\.py/.test(m.seen[2].last), 'pending target: first wrong write gets a redirect naming the pending path');
+    ok(ev.filter((e) => e.type === 'tool_call' && e.tool === 'write_file').length === 1, 'pending target: after one redirect the wrong write is allowed through');
+  }
+
+  // strict-catch: read-only tools pass through while pending is still outstanding
+  {
+    const ws = workspace();
+    const abandoned = '```forge_action\n{"tool":"write_file","args":{"path":"target.py","content":"start';
+    const m = scripted([
+      [abandoned, 'stop'],
+      [act('read_file', { path: 'a.txt' }), 'stop'],
+      [act('write_file', { path: 'target.py', content: 'ok\n' }), 'stop'],
+      ['done', 'stop'],
+    ]);
+    const ev: AgentEvent[] = [];
+    await runAgentTurn([], 'go', deps(ws, m), (e) => ev.push(e), new vscode.CancellationTokenSource().token, 'fake', { mode: 'auto' });
+    ok(ev.some((e) => e.type === 'tool_call' && e.tool === 'read_file'), 'pending target: read_file is allowed before finishing the pending write');
+    ok(!/Not executed/.test(m.seen[2].last), 'pending target: read_file does not trigger a redirect');
+    ok(ev.filter((e) => e.type === 'tool_call' && e.tool === 'write_file').length === 1, 'pending target: the named write still runs afterward');
+  }
+
   console.log(`\n${passed} passed, ${failed} failed.`);
   if (failed > 0) { console.log('Some v0.15.0 truncation tests FAILED.'); process.exit(1); }
   console.log('All v0.15.0 truncation tests passed.');

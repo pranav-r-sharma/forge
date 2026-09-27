@@ -99,12 +99,29 @@ function assert(cond: any, msg: string) {
   assert(extractAbandonedActionTarget('plain prose with no tool key') === undefined, 'extractAbandonedActionTarget returns undefined when no tool name is extractable');
 }
 {
+  const twoTools =
+    'Thinking: {"tool":"read_file","args":{"path":"old.py"}} — now the real call {"tool":"write_file","args":{"path":"new.py","content":"partial';
+  const t = extractAbandonedActionTarget(twoTools);
+  assert(t && t.tool === 'write_file' && t.path === 'new.py', 'extractAbandonedActionTarget uses the last "tool" fragment when several appear');
+}
+{
+  const pathBeforeLast =
+    '{"tool":"write_file","args":{"path":"ignored.py"}} padding {"tool":"write_file","args":{"path":"keep.py","content":"x';
+  const t = extractAbandonedActionTarget(pathBeforeLast);
+  assert(t && t.path === 'keep.py', 'extractAbandonedActionTarget ignores a path that appears before the last tool match');
+}
+{
   const generic = formatIncompleteActionNudge('still thinking about the module…', true);
   assert(/cut off by the output-length limit/.test(generic) && /your next action/.test(generic), 'formatIncompleteActionNudge keeps generic length wording when nothing is extractable');
   const genericAbandoned = formatIncompleteActionNudge('```forge_action\n{"tool":"write', false);
   assert(/JSON was left incomplete/.test(genericAbandoned) && /your next action/.test(genericAbandoned), 'formatIncompleteActionNudge keeps generic abandoned wording when tool name is not fully quoted');
   const toolOnlyNudge = formatIncompleteActionNudge('{"tool":"write_file","args":{"path":"contacts/storage.py', false);
   assert(/middle of write_file/.test(toolOnlyNudge) && /Finish that exact write_file action/.test(toolOnlyNudge), 'formatIncompleteActionNudge names the tool when path is not extractable');
+  const specificPath = formatIncompleteActionNudge(
+    '{"tool":"write_file","args":{"path":"contacts/storage.py","content":"x',
+    false
+  );
+  assert(/Do not repeat your analysis; keep any reasoning to a couple of sentences/.test(specificPath), 'formatIncompleteActionNudge appends the short reasoning hint on specific path nudges');
 }
 
 // ---- cleanCompletion ----

@@ -113,10 +113,14 @@ const JSON_STRING_IN_QUOTES = '"((?:[^"\\\\]|\\\\.)*)"';
 
 /** Pull tool name (and path when fully quoted) from a partial forge_action JSON fragment. */
 export function extractAbandonedActionTarget(raw: string): AbandonedActionTarget | undefined {
-  const toolMatch = new RegExp(`"tool"\\s*:\\s*${JSON_STRING_IN_QUOTES}`).exec(raw);
-  if (!toolMatch) return undefined;
-  const tool = decodeJsonStringFragment(toolMatch[1]);
-  const pathMatch = new RegExp(`"path"\\s*:\\s*${JSON_STRING_IN_QUOTES}`).exec(raw);
+  const toolRe = new RegExp(`"tool"\\s*:\\s*${JSON_STRING_IN_QUOTES}`, 'g');
+  let lastTool: RegExpExecArray | null = null;
+  let m: RegExpExecArray | null;
+  while ((m = toolRe.exec(raw)) !== null) lastTool = m;
+  if (!lastTool) return undefined;
+  const tool = decodeJsonStringFragment(lastTool[1]);
+  const afterLastTool = raw.slice(lastTool.index);
+  const pathMatch = new RegExp(`"path"\\s*:\\s*${JSON_STRING_IN_QUOTES}`).exec(afterLastTool);
   if (!pathMatch) return { tool };
   return { tool, path: decodeJsonStringFragment(pathMatch[1]) };
 }
@@ -133,13 +137,16 @@ function decodeJsonStringFragment(s: string): string {
 }
 
 /** User nudge when a reply was length-truncated or abandoned mid-action. Exported for unit tests. */
+const INCOMPLETE_NUDGE_REASONING_HINT =
+  ' Do not repeat your analysis; keep any reasoning to a couple of sentences.';
+
 export function formatIncompleteActionNudge(raw: string, lengthTruncated: boolean): string {
   const target = extractAbandonedActionTarget(raw);
   if (target) {
     if (target.path) {
-      return `[System check] You were in the middle of ${target.tool} on \`${target.path}\` and the reply was cut off. Finish that exact action on \`${target.path}\` now, in one forge_action block. Do not move on to a different file or action until it is done.`;
+      return `[System check] You were in the middle of ${target.tool} on \`${target.path}\` and the reply was cut off. Finish that exact action on \`${target.path}\` now, in one forge_action block. Do not move on to a different file or action until it is done.${INCOMPLETE_NUDGE_REASONING_HINT}`;
     }
-    return `[System check] You were in the middle of ${target.tool} and the reply was cut off. Finish that exact ${target.tool} action now, in one forge_action block. Do not move on to a different action until it is done.`;
+    return `[System check] You were in the middle of ${target.tool} and the reply was cut off. Finish that exact ${target.tool} action now, in one forge_action block. Do not move on to a different action until it is done.${INCOMPLETE_NUDGE_REASONING_HINT}`;
   }
   const reason = lengthTruncated
     ? 'Your last reply was cut off by the output-length limit before you finished, so it was not a complete action or answer.'
