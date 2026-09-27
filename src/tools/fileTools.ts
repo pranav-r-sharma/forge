@@ -233,10 +233,50 @@ function applyReplaceAll(existing: string, search: string, replace: string, relP
   return { ok: true, newText: existing.split(search).join(replace), info: `Replaced ${count} occurrence${count === 1 ? '' : 's'} of the search text.` };
 }
 
+function countLeadingSpaces(line: string): number {
+  const m = /^[ \t]*/.exec(line);
+  return m ? m[0].length : 0;
+}
+
+/** Inclusive 1-based line range; `end` is the exclusive 0-based index into `split('\n')` (same as matchedLineRange elsewhere). */
+function fileLinesInMatchedRange(existing: string, matchedLineRange: { start: number; end: number }): string[] {
+  const lines = existing.split('\n');
+  return lines.slice(matchedLineRange.start - 1, matchedLineRange.end);
+}
+
+function matchedRegionEqualsReplace(
+  existing: string,
+  replace: string,
+  matchedLineRange?: { start: number; end: number },
+): boolean {
+  if (matchedLineRange === undefined) return false;
+  return fileLinesInMatchedRange(existing, matchedLineRange).join('\n') === replace;
+}
+
+function formatSearchFileLeadingSpaceHint(
+  existing: string,
+  search: string,
+  matchedLineRange: { start: number; end: number },
+): string {
+  const searchLines = search.split('\n');
+  const fileLines = fileLinesInMatchedRange(existing, matchedLineRange);
+  for (let i = 0; i < searchLines.length && i < fileLines.length; i++) {
+    if (
+      searchLines[i] !== fileLines[i] &&
+      normalizeLineForMatch(searchLines[i]) === normalizeLineForMatch(fileLines[i])
+    ) {
+      const lineNum = matchedLineRange.start + i;
+      return `line ${lineNum}: file has ${countLeadingSpaces(fileLines[i])} leading spaces, search has ${countLeadingSpaces(searchLines[i])}`;
+    }
+  }
+  return `line ${matchedLineRange.start}: file and search differ only in whitespace`;
+}
+
 function noChangeSearchReplaceResult(
   relPath: string,
   search: string,
   replace: string,
+  existing: string,
   matchedLineRange?: { start: number; end: number },
 ): ToolResult {
   if (search === replace) {
@@ -245,13 +285,21 @@ function noChangeSearchReplaceResult(
       content: `No changes — "search" and "replace" are identical, so there is nothing to change in ${relPath}.`,
     };
   }
+  if (matchedLineRange !== undefined && matchedRegionEqualsReplace(existing, replace, matchedLineRange)) {
+    const inclusiveEnd = matchedLineRange.end;
+    const hint = formatSearchFileLeadingSpaceHint(existing, search, matchedLineRange);
+    return {
+      ok: true,
+      content: `No changes — lines ${matchedLineRange.start}-${inclusiveEnd} of ${relPath} already contain your "replace" text exactly (your "search" used different whitespace than the file, e.g. ${hint}). Nothing to change.`,
+    };
+  }
   const matched =
     matchedLineRange !== undefined
       ? `your "search" matched lines ${matchedLineRange.start}-${matchedLineRange.end}, but `
       : '';
   return {
     ok: false,
-    content: `write_file made no change to ${relPath}: ${matched}after applying "replace" the file is byte-identical (the edit only differed in whitespace the tool could not apply). Resend with "content" for the whole file, or a search/replace whose lines differ in visible text.`,
+    content: `write_file made no change to ${relPath}: ${matched}after applying "replace" the file is byte-identical to before (the matched text would not alter the file). Resend with "content" for the whole file, or a search/replace whose lines differ in visible text.`,
   };
 }
 
@@ -345,7 +393,7 @@ export async function writeFileTool(args: Record<string, any>, ctx: ToolExecCont
 
   if (existing !== undefined && newText === existing) {
     if (srNoChange) {
-      return noChangeSearchReplaceResult(relPath, srNoChange.search, srNoChange.replace, srNoChange.matchedLineRange);
+      return noChangeSearchReplaceResult(relPath, srNoChange.search, srNoChange.replace, existing, srNoChange.matchedLineRange);
     }
     return { ok: true, content: `No changes — ${relPath} already matches the requested content.` };
   }

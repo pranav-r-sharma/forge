@@ -344,6 +344,23 @@ async function testAmbiguousSearchNamesLineNumbers() {
   ok(/line 1: alpha/.test(r.content) && /line 2: beta/.test(r.content) && /line 3: alpha/.test(r.content), 'shows each match line and the line before the second match');
 }
 
+async function testC2AlreadyContainsReplaceWhitespaceMessage() {
+  const file = `    try:
+        elif args.cmd == "demo":
+            demo_sequence(None)
+    except Exception as e:
+        error(str(e))
+`;
+  const search =
+    '        elif args.cmd == "demo":\n            demo_sequence(None)\n        except Exception as e:\n            error(str(e))';
+  const replace =
+    '        elif args.cmd == "demo":\n            demo_sequence(None)\n    except Exception as e:\n        error(str(e))';
+  const { ctx } = fileCtx(file);
+  const r = await writeFileTool({ path: 'inventory/cli.py', search, replace }, ctx);
+  ok(r.ok && /already contain your "replace" text exactly/.test(r.content), 'C2: file already matches replace');
+  ok(/line \d+: file has 4 leading spaces, search has 8/.test(r.content), 'C2: names except line with 4 vs 8 leading spaces');
+}
+
 async function main() {
   await testDoesNotDoubleIndentWhenSearchOmitsLeadingWhitespace();
   await testDoubleIndentAcrossIndentStyles();
@@ -358,6 +375,7 @@ async function main() {
   await testIndentOnlyFixesBadIndentOnFirstMatchedLineFuzzy();
   await testSearchReplaceIdenticalMessage();
   await testT09Cycle5CliExceptDedent();
+  await testC2AlreadyContainsReplaceWhitespaceMessage();
   await testCycle5IdenticalFourLineBlockMessage();
   await testAmbiguousSearchNamesLineNumbers();
   await testMultiEdit();
