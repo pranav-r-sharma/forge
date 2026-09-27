@@ -10,3 +10,9 @@ esbuild.js
 **/.eslintrc.json
 **/*.ts
 !dist/**
+_devtools/**
+.agent-bridge/**
+.forge/**
+*.vsix
+HANDOFF.md
+PROGRESS.md
