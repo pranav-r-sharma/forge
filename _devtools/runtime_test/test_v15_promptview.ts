@@ -54,7 +54,8 @@ function testHelpers() {
   ok(updateCharsPerToken(3, 10000, 4000) < 3 && updateCharsPerToken(3, 10000, 4000) > 2.5, 'chars/token moves gradually toward the observation (EMA), not in one jump');
   ok(updateCharsPerToken(3, 10000, 100) === 3, 'an implausible reading (100 chars/token) is rejected');
   ok(updateCharsPerToken(3, 10000, undefined) === 3, 'no token count → unchanged');
-  ok(singleMessageCapChars(32768) === 24576 && singleMessageCapChars(1000) === 12000 && singleMessageCapChars(10_000_000) === 120000, 'per-message cap: 25% of the window, floored/ceilinged');
+  ok(singleMessageCapChars(32768) === 24576 && singleMessageCapChars(1000) === 12000, 'per-message cap at default 25%: 25% of the window, floored/ceilinged for numCtx ≤ ~37k');
+  ok(singleMessageCapChars(10_000_000) === 7_500_000, 'per-message cap upper clamp scales with a very large context window');
   const big = 'y'.repeat(50_000);
   const a = capOversizedStable([sys, task, { role: 'user', content: big }], 20_000)[2].content;
   const b = capOversizedStable([sys, task, task, task, task, { role: 'user', content: big }], 20_000)[5].content;
@@ -189,7 +190,7 @@ async function testOldPersistedStateAndEdgeCases() {
   ok(noSystem.view.length === 2, 'a transcript without a system message (sub-agents) is fine');
   const huge = readConversation(2, 500_000);
   const rh = await updatePromptView(huge, undefined, { model: 'm', numCtx: 32768, ollama: fakeSummarizer() });
-  ok(rh.view.every((m, i) => i === 0 || m.content.length <= singleMessageCapChars(32768) + 400), 'a single enormous tool result is capped for the model, including the newest one');
+  ok(rh.view.every((m, i) => i === 0 || m.content.length <= singleMessageCapChars(32768, 25) + 400), 'a single enormous tool result is capped for the model, including the newest one');
 }
 
 // ----------------------------------------- through the REAL agent loop -----------------------------------------

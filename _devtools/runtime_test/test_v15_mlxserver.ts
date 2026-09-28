@@ -72,6 +72,15 @@ function testArgsAndResolution() {
   ok(a.join(' ') === '-m mlx_lm.server --model /m --host 127.0.0.1 --port 8123 --log-level WARNING', `argv is exactly the safe, loopback-only command (got ${a.join(' ')})`);
   ok(buildServerArgs({ port: 1, promptCacheBytes: 4 * 1024 ** 3 }, '/m').includes('--prompt-cache-bytes') && buildServerArgs({ port: 1, promptCacheBytes: 0 }, '/m').indexOf('--prompt-cache-bytes') === -1, 'a prompt-cache cap is passed only when set');
   ok(buildServerArgs({ port: 1, extraArgs: ['--prefill-step-size', '4096'] }, '/m').slice(-2).join(' ') === '--prefill-step-size 4096', 'harmless extra args are appended');
+  ok(
+    buildServerArgs({ port: 1, prefillStepSize: 2048, extraArgs: ['--prefill-step-size', '4096'] }, '/m').filter((a) => a === '--prefill-step-size').length === 1 &&
+      buildServerArgs({ port: 1, prefillStepSize: 2048, extraArgs: ['--prefill-step-size', '4096'] }, '/m').includes('2048'),
+    'dedicated prefillStepSize wins over the same flag in extraArgs'
+  );
+  ok(
+    buildServerArgs({ port: 1, promptCacheSize: 8, extraArgs: ['--prompt-cache-size', '99'] }, '/m').slice(-2).join(' ') === '--prompt-cache-size 8',
+    'dedicated promptCacheSize wins over the same flag in extraArgs'
+  );
   for (const bad of ['--trust-remote-code', '--host', '--host=0.0.0.0', '--port', '--model=/evil']) {
     let msg = '';
     try { buildServerArgs({ port: 1, extraArgs: [bad] }, '/m'); } catch (e: any) { msg = e instanceof MlxServerError ? e.message : 'wrong'; }
@@ -225,7 +234,7 @@ async function testMemoryGuard() {
 async function testEnsureFunction() {
   const calls: MlxServerConfig[] = [];
   const mgr: any = { ensure: async (c: MlxServerConfig) => { calls.push(c); } };
-  const base = { provider: 'mlx', mlxBaseUrl: 'http://127.0.0.1:8123', mlxModel: 'org/m', mlxPythonPath: '/py', mlxAutoStart: true, mlxPromptCacheGB: 4, mlxExtraArgs: ['--x'] };
+  const base = { provider: 'mlx', mlxBaseUrl: 'http://127.0.0.1:8123', mlxModel: 'org/m', mlxPythonPath: '/py', mlxAutoStart: true, mlxPromptCacheGB: 4, mlxPrefillStepSize: 0, mlxPromptCacheSize: 0, mlxExtraArgs: ['--x'] };
   let cfg = { ...base };
   const ensure = makeEnsureMlx(() => cfg, mgr, async () => false, (c) => c || 'python3');
   await ensure();

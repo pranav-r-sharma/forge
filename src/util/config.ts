@@ -20,6 +20,10 @@ export interface ForgeConfig {
   mlxAutoStart: boolean;
   /** Cap for the server's in-memory prompt cache, GB (0 = the server's default). */
   mlxPromptCacheGB: number;
+  /** mlx_lm.server --prefill-step-size when > 0 (0 = server default). */
+  mlxPrefillStepSize: number;
+  /** mlx_lm.server --prompt-cache-size when > 0 (0 = server default). */
+  mlxPromptCacheSize: number;
   mlxExtraArgs: string[];
   openaiCompatBaseUrl: string;
   ollamaBaseUrl: string;
@@ -36,6 +40,8 @@ export interface ForgeConfig {
   completionDebounceMs: number;
   contextChunkCount: number;
   maxContextFileKB: number;
+  /** Share of numCtx (percent) for the per-message char cap in the prompt view — see contextManager.singleMessageCapChars(). */
+  singleMessageSharePct: number;
   numCtx: number;
   keepAliveMinutes: number;
   /** Per-mode model overrides (Agent/Ask/Plan/Auto/Outcome) — see resolveModelForMode(). An empty/missing entry for a mode falls back to `chatModel`. */
@@ -144,6 +150,8 @@ export function getConfig(): ForgeConfig {
     mlxPythonPath: (cfg.get<string>('mlx.pythonPath') || '').trim(),
     mlxAutoStart: cfg.get<boolean>('mlx.autoStart') ?? true,
     mlxPromptCacheGB: cfg.get<number>('mlx.promptCacheGB') ?? 4,
+    mlxPrefillStepSize: Math.max(0, Math.floor(cfg.get<number>('mlx.prefillStepSize') ?? 0)),
+    mlxPromptCacheSize: Math.max(0, Math.floor(cfg.get<number>('mlx.promptCacheSize') ?? 0)),
     mlxExtraArgs: (cfg.get<string[]>('mlx.extraArgs') || []).filter((a) => typeof a === 'string'),
     openaiCompatBaseUrl: (cfg.get<string>('openaiCompat.baseUrl') || 'http://127.0.0.1:1234').replace(/\/+$/, ''),
     ollamaBaseUrl: (cfg.get<string>('ollamaBaseUrl') || 'http://localhost:11434').replace(/\/+$/, ''),
@@ -164,6 +172,7 @@ export function getConfig(): ForgeConfig {
     completionDebounceMs: cfg.get<number>('completionDebounceMs') ?? 250,
     contextChunkCount: cfg.get<number>('contextChunkCount') ?? 8,
     maxContextFileKB: cfg.get<number>('maxContextFileKB') ?? 200,
+    singleMessageSharePct: Math.min(80, Math.max(5, cfg.get<number>('singleMessageSharePct') ?? 25)),
     // 0 = let Ollama use its own (small, often silently-truncating) default.
     // Set this to your model's real max (check `ollama show <model>`) to stop
     // long agent sessions from quietly losing early context.
@@ -258,6 +267,11 @@ export const SETTINGS_PANEL_KEYS = [
   'webSearch.maxResults',
   'webSearch.respectRobotsTxt',
   'webSearch.searxngUrl',
+  'mlx.promptCacheGB',
+  'mlx.prefillStepSize',
+  'mlx.promptCacheSize',
+  'maxContextFileKB',
+  'singleMessageSharePct',
 ] as const;
 export type SettingsPanelKey = (typeof SETTINGS_PANEL_KEYS)[number];
 

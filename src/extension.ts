@@ -95,6 +95,8 @@ export async function activate(context: vscode.ExtensionContext) {
             e.affectsConfiguration('forge.mlx.baseUrl') ||
             e.affectsConfiguration('forge.mlx.pythonPath') ||
             e.affectsConfiguration('forge.mlx.promptCacheGB') ||
+            e.affectsConfiguration('forge.mlx.prefillStepSize') ||
+            e.affectsConfiguration('forge.mlx.promptCacheSize') ||
             e.affectsConfiguration('forge.mlx.extraArgs'))
         ) {
           void ensureMlx().catch((err) => logger.warn('MLX server restart after settings change failed', String(err)));

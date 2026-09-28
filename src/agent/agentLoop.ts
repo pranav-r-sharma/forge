@@ -514,7 +514,15 @@ export async function runAgentTurn(
     lastViewEvent = undefined;
     if (cfg.contextAppendOnly) {
       // Append-only path (v0.15.0 §2.1): nothing already sent is rewritten except in a deliberate, batched event — see updatePromptView().
-      const r = await updatePromptView(messages, compactionCache, { model, numCtx, ollama: deps.ollama, signal: cancellationToAbortSignal(cancellation), highWaterPct: cfg.contextHighWaterPct, lowWaterPct: cfg.contextLowWaterPct });
+      const r = await updatePromptView(messages, compactionCache, {
+        model,
+        numCtx,
+        ollama: deps.ollama,
+        signal: cancellationToAbortSignal(cancellation),
+        highWaterPct: cfg.contextHighWaterPct,
+        lowWaterPct: cfg.contextLowWaterPct,
+        singleMessageSharePct: cfg.singleMessageSharePct,
+      });
       compactionCache = r.state;
       lastViewEvent = r.event?.kind;
       lastEstTokens = r.estTokens;

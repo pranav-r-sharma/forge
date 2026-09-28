@@ -584,6 +584,12 @@
       ${settingRow('Require approval for commands', '', `<input id="set-requireApprovalForCommands" type="checkbox" ${s.requireApprovalForCommands ? 'checked' : ''} />`)}
       ${settingRow('Show brief status messages', 'e.g. "Reading foo.ts…" while the agent works.', `<input id="set-showStatusMessages" type="checkbox" ${s.showStatusMessages ? 'checked' : ''} />`)}
       ${settingRow('Loop detection (Auto/Outcome mode)', 'Stops the agent if it looks like it\'s repeating the same action in a loop. check_background_command is always exempt regardless of this setting. Turn off if it\'s incorrectly triggering on legitimately repetitive work.', `<input id="set-loopDetectionEnabled" type="checkbox" ${s.loopDetectionEnabled ? 'checked' : ''} />`)}
+      <div class="settings-section-title">Performance (MLX)</div>
+      ${settingRow('MLX prompt cache (GB)', 'In-memory prompt cache on mlx_lm.server (0 = server default). Restarts the managed MLX server when changed.', `<input id="set-mlx-promptCacheGB" type="number" min="0" step="0.5" value="${s.mlxPromptCacheGB}" />`)}
+      ${settingRow('MLX prefill step size', 'Tokens per prefill step (--prefill-step-size; 0 = server default). Restarts the managed MLX server when changed.', `<input id="set-mlx-prefillStepSize" type="number" min="0" step="256" value="${s.mlxPrefillStepSize}" />`)}
+      ${settingRow('MLX prompt cache entries', 'Max distinct cached prompts (--prompt-cache-size; 0 = server default). Restarts the managed MLX server when changed.', `<input id="set-mlx-promptCacheSize" type="number" min="0" step="1" value="${s.mlxPromptCacheSize}" />`)}
+      ${settingRow('Max file read size (KB)', 'Files larger than this are skipped for indexing and read_file. Applies on the next agent turn.', `<input id="set-maxContextFileKB" type="number" min="1" step="1" value="${s.maxContextFileKB}" />`)}
+      ${settingRow('Single-message context share (%)', 'Percent of the context window one tool result may use before trimming in the prompt view (5–80). Applies on the next agent turn.', `<input id="set-singleMessageSharePct" type="number" min="5" max="80" step="1" value="${s.singleMessageSharePct}" />`)}
       <div class="settings-section-title">Task ledger &amp; cost-aware planning</div>
       ${settingRow('Cost-aware task planning', 'Estimate each planned task\'s rough cost (cheap/moderate/expensive — the model\'s own estimate when it gives one, a free keyword heuristic otherwise) so an expensive plan can be flagged before it starts. Costs no extra model calls.', `<input id="set-costAwarePlanningEnabled" type="checkbox" ${s.costAwarePlanningEnabled ? 'checked' : ''} />`)}
       ${settingRow('Review expensive plans before starting', 'Pause for your approval when a plan\'s estimated cost crosses the threshold below. Agent mode only — Auto/Outcome never pause for approval by design, and post a non-blocking warning in the transcript instead.', `<input id="set-reviewExpensivePlansEnabled" type="checkbox" ${s.reviewExpensivePlansEnabled ? 'checked' : ''} />`)}
@@ -701,6 +707,18 @@
     document.getElementById('set-webSearchEnabled').addEventListener('change', (e) => {
       vscodeApi.postMessage({ type: 'updateSetting', key: 'webSearch.enabled', value: e.target.checked });
     });
+    for (const [id, key] of [
+      ['set-mlx-promptCacheGB', 'mlx.promptCacheGB'],
+      ['set-mlx-prefillStepSize', 'mlx.prefillStepSize'],
+      ['set-mlx-promptCacheSize', 'mlx.promptCacheSize'],
+      ['set-maxContextFileKB', 'maxContextFileKB'],
+      ['set-singleMessageSharePct', 'singleMessageSharePct'],
+    ]) {
+      document.getElementById(id).addEventListener('change', (e) => {
+        const num = parseFloat(e.target.value);
+        if (Number.isFinite(num)) vscodeApi.postMessage({ type: 'updateSetting', key, value: num });
+      });
+    }
     let searxngCommitTimer;
     document.getElementById('set-webSearchSearxngUrl').addEventListener('input', (e) => {
       clearTimeout(searxngCommitTimer);

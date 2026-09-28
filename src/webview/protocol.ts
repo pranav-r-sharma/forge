@@ -97,6 +97,11 @@ export interface SettingsSnapshot {
   webSearchSearxngUrl: string;
   /** Every known provider id + display name + whether it currently has usable credentials (a key stored in SecretStorage, or — for SearXNG — a configured instance URL). DuckDuckGo is always "configured" since it needs no credentials. Never includes the actual secret values. */
   webSearchProviders: { id: string; displayName: string; requiresApiKey: boolean; configured: boolean }[];
+  mlxPromptCacheGB: number;
+  mlxPrefillStepSize: number;
+  mlxPromptCacheSize: number;
+  maxContextFileKB: number;
+  singleMessageSharePct: number;
 }
 
 /** Item "ability to kill commands while they are running from the chat window" — see tools/backgroundProcessManager.ts. */

@@ -710,6 +710,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       webSearchRespectRobotsTxt: cfg.webSearchRespectRobotsTxt,
       webSearchSearxngUrl: cfg.webSearchSearxngUrl,
       webSearchProviders,
+      mlxPromptCacheGB: cfg.mlxPromptCacheGB,
+      mlxPrefillStepSize: cfg.mlxPrefillStepSize,
+      mlxPromptCacheSize: cfg.mlxPromptCacheSize,
+      maxContextFileKB: cfg.maxContextFileKB,
+      singleMessageSharePct: cfg.singleMessageSharePct,
     };
   }
 

@@ -27,6 +27,10 @@ export interface MlxServerConfig {
   port: number;
   /** Cap for the server's in-memory prompt cache, bytes (0/undefined = the server's default). */
   promptCacheBytes?: number;
+  /** mlx_lm.server --prefill-step-size when > 0. */
+  prefillStepSize?: number;
+  /** mlx_lm.server --prompt-cache-size when > 0. */
+  promptCacheSize?: number;
   extraArgs?: string[];
   startupTimeoutMs?: number;
 }
@@ -40,15 +44,39 @@ export class MlxServerError extends Error {
 
 const REFUSED_EXTRA_ARGS = ['--trust-remote-code', '--host', '--port', '--model'];
 
+/** Drops argv flags (and their following value tokens) that Forge sets via dedicated settings. */
+function dropExtraArgFlags(extraArgs: string[] | undefined, flags: Set<string>): string[] {
+  const out: string[] = [];
+  const src = extraArgs || [];
+  for (let i = 0; i < src.length; i++) {
+    const flag = src[i].split('=')[0];
+    if (flags.has(flag)) {
+      if (!src[i].includes('=') && i + 1 < src.length && !src[i + 1].startsWith('--')) i++;
+      continue;
+    }
+    out.push(src[i]);
+  }
+  return out;
+}
+
 /** Builds the argv for `python -m mlx_lm.server`. Pure. Throws if extra args try to weaken a safety rule or override a managed option. */
-export function buildServerArgs(cfg: Pick<MlxServerConfig, 'port' | 'promptCacheBytes' | 'extraArgs'>, resolvedModel: string): string[] {
-  for (const a of cfg.extraArgs || []) {
+export function buildServerArgs(
+  cfg: Pick<MlxServerConfig, 'port' | 'promptCacheBytes' | 'prefillStepSize' | 'promptCacheSize' | 'extraArgs'>,
+  resolvedModel: string
+): string[] {
+  const managed = new Set<string>();
+  if (cfg.prefillStepSize && cfg.prefillStepSize > 0) managed.add('--prefill-step-size');
+  if (cfg.promptCacheSize && cfg.promptCacheSize > 0) managed.add('--prompt-cache-size');
+  const extraArgs = dropExtraArgFlags(cfg.extraArgs, managed);
+  for (const a of extraArgs) {
     const flag = a.split('=')[0];
     if (REFUSED_EXTRA_ARGS.includes(flag)) throw new MlxServerError(`forge.mlx.extraArgs may not contain "${flag}" — Forge manages the model, host (127.0.0.1 only) and port itself, and never enables remote code.`);
   }
   const args = ['-m', 'mlx_lm.server', '--model', resolvedModel, '--host', '127.0.0.1', '--port', String(cfg.port), '--log-level', 'WARNING'];
   if (cfg.promptCacheBytes && cfg.promptCacheBytes > 0) args.push('--prompt-cache-bytes', String(Math.floor(cfg.promptCacheBytes)));
-  return [...args, ...(cfg.extraArgs || [])];
+  if (cfg.prefillStepSize && cfg.prefillStepSize > 0) args.push('--prefill-step-size', String(Math.floor(cfg.prefillStepSize)));
+  if (cfg.promptCacheSize && cfg.promptCacheSize > 0) args.push('--prompt-cache-size', String(Math.floor(cfg.promptCacheSize)));
+  return [...args, ...extraArgs];
 }
 
 /** Wraps mlxModels.resolveModelPath and maps failures to MlxServerError. */
@@ -186,7 +214,15 @@ export class MlxServerManager {
       libraryPathSetting: ctx.libraryPathSetting,
       extraFolders: ctx.extraFolders,
     });
-    const key = JSON.stringify([cfg.pythonPath, resolved, cfg.port, cfg.promptCacheBytes ?? 0, cfg.extraArgs ?? []]);
+    const key = JSON.stringify([
+      cfg.pythonPath,
+      resolved,
+      cfg.port,
+      cfg.promptCacheBytes ?? 0,
+      cfg.prefillStepSize ?? 0,
+      cfg.promptCacheSize ?? 0,
+      cfg.extraArgs ?? [],
+    ]);
     if (this._state === 'ready' && this.key === key && (this.external || (this.child && (await isHealthy(cfg.port))))) return;
     if (this._state !== 'stopped') await this.doStop(); // config changed or previous run died: start clean
     this._error = undefined;
@@ -334,6 +370,8 @@ export interface MlxEnsureConfig {
   mlxPythonPath: string;
   mlxAutoStart: boolean;
   mlxPromptCacheGB: number;
+  mlxPrefillStepSize: number;
+  mlxPromptCacheSize: number;
   mlxExtraArgs: string[];
   mlxModelLibraryPath?: string;
   mlxExtraModelFolders?: string[];
@@ -365,6 +403,8 @@ export function makeEnsureMlx(
       model: c.mlxModel,
       port: u.port,
       promptCacheBytes: c.mlxPromptCacheGB > 0 ? Math.floor(c.mlxPromptCacheGB * 1024 ** 3) : undefined,
+      prefillStepSize: c.mlxPrefillStepSize > 0 ? c.mlxPrefillStepSize : undefined,
+      promptCacheSize: c.mlxPromptCacheSize > 0 ? c.mlxPromptCacheSize : undefined,
       extraArgs: c.mlxExtraArgs,
     });
   };

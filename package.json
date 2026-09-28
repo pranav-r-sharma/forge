@@ -142,6 +142,18 @@
           "minimum": 0,
           "description": "Memory cap (GB) for the MLX server's prompt cache, which is what makes long agent sessions cheap (each step only processes its new text). 0 = the server's default (unbounded until memory pressure)."
         },
+        "forge.mlx.prefillStepSize": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "description": "Tokens processed per prefill step on the MLX server (mlx_lm.server --prefill-step-size). 0 = the server's default. Changing this restarts the managed MLX server."
+        },
+        "forge.mlx.promptCacheSize": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "description": "Maximum number of distinct cached prompts on the MLX server (--prompt-cache-size). 0 = the server's default. Changing this restarts the managed MLX server."
+        },
         "forge.mlx.extraArgs": {
           "type": "array",
           "items": { "type": "string" },
@@ -243,6 +255,13 @@
           "type": "number",
           "default": 200,
           "description": "Skip indexing/reading files larger than this size (KB) to keep context tight."
+        },
+        "forge.singleMessageSharePct": {
+          "type": "number",
+          "default": 25,
+          "minimum": 5,
+          "maximum": 80,
+          "description": "Percent of the context window a single tool result may occupy before it is trimmed in the prompt view sent to the model."
         },
         "forge.subAgentModel": {
           "type": "string",

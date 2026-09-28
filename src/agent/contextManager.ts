@@ -240,8 +240,11 @@ export function updateCharsPerToken(prev: number | undefined, chars: number, tok
 }
 
 /** Largest single message (chars) the model will see. Position-independent and independent of the learned chars/token, so it never changes for a message already sent. */
-export function singleMessageCapChars(numCtx: number): number {
-  return clamp(Math.floor((numCtx > 0 ? numCtx : 8192) * 0.25 * CAP_CHARS_PER_TOKEN), 12_000, 120_000);
+export function singleMessageCapChars(numCtx: number, sharePct = 25): number {
+  const n = numCtx > 0 ? numCtx : 8192;
+  const pct = clamp(sharePct, 5, 80) / 100;
+  const upper = Math.max(120_000, Math.floor(n * CAP_CHARS_PER_TOKEN * 0.8));
+  return clamp(Math.floor(n * pct * CAP_CHARS_PER_TOKEN), 12_000, upper);
 }
 
 /** Truncates any oversized non-system message the same way regardless of where it sits (unlike hardCapOversizedMessages, which exempts the newest two and so rewrites them later). */
@@ -347,6 +350,7 @@ export interface PromptViewOptions {
   signal?: AbortSignal;
   highWaterPct?: number;
   lowWaterPct?: number;
+  singleMessageSharePct?: number;
 }
 
 export interface PromptViewResult {
@@ -368,7 +372,7 @@ const SUMMARY_SYSTEM =
 export async function updatePromptView(archival: ChatMessage[], stateIn: CompactionCache | PromptViewState | undefined, o: PromptViewOptions): Promise<PromptViewResult> {
   const st = normalizeState(stateIn);
   const cpt = st.cpt && st.cpt > 0 ? st.cpt : DEFAULT_CHARS_PER_TOKEN;
-  const capChars = singleMessageCapChars(o.numCtx);
+  const capChars = singleMessageCapChars(o.numCtx, o.singleMessageSharePct ?? 25);
   const { highTokens, lowTokens } = waterMarks(o.numCtx, o.highWaterPct, o.lowWaterPct);
   const stateOut = (masked: number[], throughIndex: number, summary: string): PromptViewState => ({ throughIndex, summary, maskedIdx: masked, cpt: st.cpt });
   const build = (masked: number[], throughIndex: number, summary: string): ChatMessage[] => {
