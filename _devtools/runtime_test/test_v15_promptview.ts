@@ -74,6 +74,21 @@ function testStaleRules() {
   const sup = [sys, task, { role: 'assistant', content: readCall('a.txt') } as ChatMessage, { role: 'user', content: result('a.txt', 50) } as ChatMessage, { role: 'assistant', content: readCall('a.txt') } as ChatMessage, { role: 'user', content: result('a.txt', 50) } as ChatMessage];
   const ss = staleReadIndices(sup);
   ok(ss.length === 1 && ss[0].idx === 3 && /newer read/.test(ss[0].reason), 'an earlier read superseded by a later read of the same file is stale');
+  const chunked: ChatMessage[] = [sys, task];
+  for (const [s, e] of [[1, 272], [273, 560], [560, 808], [808, 952]] as const) {
+    chunked.push({ role: 'assistant', content: readCall('big.ts', { start_line: s, end_line: e }) }, { role: 'user', content: result('big.ts', 80) });
+  }
+  const chunkedStale = staleReadIndices(chunked, 10);
+  ok(!chunkedStale.some((x) => /newer read/.test(x.reason)), 'chunked reads of one file are not masked as superseded by a later non-overlapping chunk');
+  const reread = [
+    sys, task,
+    { role: 'assistant', content: readCall('a.txt', { start_line: 10, end_line: 50 }) } as ChatMessage,
+    { role: 'user', content: result('a.txt', 50) } as ChatMessage,
+    { role: 'assistant', content: readCall('a.txt', { start_line: 10, end_line: 50 }) } as ChatMessage,
+    { role: 'user', content: result('a.txt', 50) } as ChatMessage,
+  ];
+  const rereadStale = staleReadIndices(reread, 10);
+  ok(rereadStale.length === 1 && rereadStale[0].idx === 3 && /newer read/.test(rereadStale[0].reason), 'a full re-read of the same line range IS superseded');
   const err = [sys, task, { role: 'assistant', content: readCall('gone.txt') } as ChatMessage, { role: 'user', content: '[Tool "read_file" result]\nFile not found: gone.txt' } as ChatMessage];
   ok(staleReadIndices(err, 0).length === 1, 'a read result (even an error text) is a candidate only via the same rules');
   const already = readConversation(10, 100).map((m, i) => (i === 3 ? { ...m, content: '[Tool "read_file" result — superseded]\nf0.txt: x' } : m));

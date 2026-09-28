@@ -12,12 +12,14 @@
  * could burn a very long time doing nothing useful. The loop detector is
  * the thing that actually notices and stops that, rather than a raw counter.
  *
- * Two independent signals, either one trips it:
+ * Three independent signals, any one trips it:
  * 1. The exact same signature N times in a row (`consecutiveLimit`) — the
  *    model is repeating itself verbatim.
  * 2. The exact same signature appears >= `windowLimit` times within the
  *    last `windowSize` calls — it keeps coming back to the same failing
  *    move even if something else happens in between.
+ * 3. The last 16 signatures use at most four distinct values — the model is
+ *    cycling through the same few calls (e.g. four chunked reads on repeat).
  */
 export interface LoopDetectorOptions {
   consecutiveLimit?: number;
@@ -29,10 +31,16 @@ export interface LoopCheckResult {
   looping: boolean;
   reason?: string;
   occurrences?: number;
+  /** When set, use this key for warn-once-then-stop (e.g. cycle detection across rotating signatures). */
+  warnSignature?: string;
 }
+
+const CYCLE_HISTORY_SIZE = 16;
+const CYCLE_MAX_DISTINCT = 4;
 
 export class LoopDetector {
   private history: string[] = [];
+  private cycleHistory: string[] = [];
   private readonly consecutiveLimit: number;
   private readonly windowSize: number;
   private readonly windowLimit: number;
@@ -57,6 +65,8 @@ export class LoopDetector {
   record(signature: string): LoopCheckResult {
     this.history.push(signature);
     if (this.history.length > this.windowSize) this.history = this.history.slice(-this.windowSize);
+    this.cycleHistory.push(signature);
+    if (this.cycleHistory.length > CYCLE_HISTORY_SIZE) this.cycleHistory = this.cycleHistory.slice(-CYCLE_HISTORY_SIZE);
 
     let consecutive = 0;
     for (let i = this.history.length - 1; i >= 0 && this.history[i] === signature; i--) consecutive++;
@@ -77,11 +87,25 @@ export class LoopDetector {
       };
     }
 
+    if (this.cycleHistory.length >= CYCLE_HISTORY_SIZE) {
+      const distinct = [...new Set(this.cycleHistory)];
+      if (distinct.length <= CYCLE_MAX_DISTINCT) {
+        const warnSignature = `cycle:${distinct.slice().sort().join('|')}`;
+        return {
+          looping: true,
+          occurrences: this.cycleHistory.length,
+          reason: 'cycling through the same few calls',
+          warnSignature,
+        };
+      }
+    }
+
     return { looping: false };
   }
 
   reset() {
     this.history = [];
+    this.cycleHistory = [];
     this.warnedSignatures.clear();
   }
 }

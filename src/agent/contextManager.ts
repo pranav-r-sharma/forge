@@ -41,6 +41,59 @@ function clamp(n: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, n));
 }
 
+const WHOLE_FILE_END = Number.MAX_SAFE_INTEGER;
+
+/** Line range from read_file args; both bounds omitted = whole file [1, ∞). */
+export function readRangeFromArgs(args: Record<string, unknown> | undefined): { start: number; end: number } {
+  const hasStart = args?.start_line !== undefined && args?.start_line !== null && args?.start_line !== '';
+  const hasEnd = args?.end_line !== undefined && args?.end_line !== null && args?.end_line !== '';
+  if (!hasStart && !hasEnd) return { start: 1, end: WHOLE_FILE_END };
+  const start = hasStart ? Math.max(1, Math.floor(Number(args!.start_line))) : 1;
+  const end = hasEnd ? Math.max(start, Math.floor(Number(args!.end_line))) : WHOLE_FILE_END;
+  return { start, end };
+}
+
+/** True when a later read of the same path fully covers an earlier read's range. */
+export function laterReadCoversEarlier(
+  later: { start: number; end: number },
+  earlier: { start: number; end: number }
+): boolean {
+  return later.start <= earlier.start && later.end >= earlier.end;
+}
+
+interface IndexedRead {
+  path: string;
+  resultIdx: number;
+  start: number;
+  end: number;
+}
+
+function collectReadFileEntries(messages: ChatMessage[]): IndexedRead[] {
+  const reads: IndexedRead[] = [];
+  for (let i = 0; i < messages.length; i++) {
+    const m = messages[i];
+    if (m.role !== 'assistant') continue;
+    const call = parseToolCall(m.content);
+    if (!call) continue;
+    const path: string | undefined = call.args?.path ?? call.args?.file;
+    if (!path) continue;
+    if (call.tool === 'read_file' && messages[i + 1]?.role === 'user') {
+      const { start, end } = readRangeFromArgs(call.args as Record<string, unknown>);
+      reads.push({ path, resultIdx: i + 1, start, end });
+    }
+  }
+  return reads;
+}
+
+function isSupersededByLaterRead(reads: IndexedRead[], readIndex: number): boolean {
+  const r = reads[readIndex];
+  for (let j = readIndex + 1; j < reads.length; j++) {
+    if (reads[j].path !== r.path) continue;
+    if (laterReadCoversEarlier(reads[j], r)) return true;
+  }
+  return false;
+}
+
 /**
  * Returns a NEW array with stale `read_file` results replaced by short
  * placeholders — never mutates `messages`. A read is stale if: the same
@@ -52,7 +105,7 @@ export function pruneStaleReadsView(messages: ChatMessage[]): ChatMessage[] {
   const out = messages.map((m) => ({ ...m }));
 
   const writeIdxByPath = new Map<string, number[]>();
-  const reads: { path: string; resultIdx: number }[] = [];
+  const reads = collectReadFileEntries(out);
 
   for (let i = 0; i < out.length; i++) {
     const m = out[i];
@@ -61,17 +114,12 @@ export function pruneStaleReadsView(messages: ChatMessage[]): ChatMessage[] {
     if (!call) continue;
     const path: string | undefined = call.args?.path ?? call.args?.file;
     if (!path) continue;
-    if (call.tool === 'read_file' && out[i + 1]?.role === 'user') {
-      reads.push({ path, resultIdx: i + 1 });
-    } else if (call.tool === 'write_file') {
+    if (call.tool === 'write_file') {
       const list = writeIdxByPath.get(path) || [];
       list.push(i);
       writeIdxByPath.set(path, list);
     }
   }
-
-  const latestReadIdxByPath = new Map<string, number>();
-  for (const r of reads) latestReadIdxByPath.set(r.path, r.resultIdx); // last write in iteration order wins = latest read
 
   const toolResultIndices: number[] = [];
   for (let i = 0; i < out.length; i++) {
@@ -79,9 +127,10 @@ export function pruneStaleReadsView(messages: ChatMessage[]): ChatMessage[] {
   }
   const protectedResultIdx = new Set(toolResultIndices.slice(-KEEP_RECENT_TOOL_RESULTS));
 
-  for (const r of reads) {
+  for (let ri = 0; ri < reads.length; ri++) {
+    const r = reads[ri];
     const laterWrite = (writeIdxByPath.get(r.path) || []).some((wi) => wi > r.resultIdx);
-    const superseded = latestReadIdxByPath.get(r.path) !== r.resultIdx;
+    const superseded = isSupersededByLaterRead(reads, ri);
     const old = !protectedResultIdx.has(r.resultIdx);
     if (!laterWrite && !superseded && !old) continue;
     const reason = laterWrite
@@ -268,7 +317,7 @@ export interface StaleRead {
 /** Same staleness rules as pruneStaleReadsView (written after, superseded by a newer read, or older than the last KEEP_RECENT_TOOL_RESULTS results) — but returns indices instead of rewriting, so callers can decide WHEN to apply them. */
 export function staleReadIndices(messages: ChatMessage[], keepRecent: number = KEEP_RECENT_TOOL_RESULTS): StaleRead[] {
   const writeIdxByPath = new Map<string, number[]>();
-  const reads: { path: string; resultIdx: number }[] = [];
+  const reads = collectReadFileEntries(messages);
   for (let i = 0; i < messages.length; i++) {
     const m = messages[i];
     if (m.role !== 'assistant') continue;
@@ -276,23 +325,21 @@ export function staleReadIndices(messages: ChatMessage[], keepRecent: number = K
     if (!call) continue;
     const path: string | undefined = call.args?.path ?? call.args?.file;
     if (!path) continue;
-    if (call.tool === 'read_file' && messages[i + 1]?.role === 'user') reads.push({ path, resultIdx: i + 1 });
-    else if (call.tool === 'write_file') {
+    if (call.tool === 'write_file') {
       const list = writeIdxByPath.get(path) || [];
       list.push(i);
       writeIdxByPath.set(path, list);
     }
   }
-  const latestReadIdxByPath = new Map<string, number>();
-  for (const r of reads) latestReadIdxByPath.set(r.path, r.resultIdx);
   const toolResultIndices: number[] = [];
   for (let i = 0; i < messages.length; i++) if (messages[i].role === 'user' && /^\[Tool "/.test(messages[i].content)) toolResultIndices.push(i);
   const protectedIdx = new Set(keepRecent > 0 ? toolResultIndices.slice(-keepRecent) : []);
   const out: StaleRead[] = [];
-  for (const r of reads) {
+  for (let ri = 0; ri < reads.length; ri++) {
+    const r = reads[ri];
     if (!/^\[Tool "read_file" result\]/.test(messages[r.resultIdx].content)) continue; // already a stub, or an error result
     const laterWrite = (writeIdxByPath.get(r.path) || []).some((wi) => wi > r.resultIdx);
-    const superseded = latestReadIdxByPath.get(r.path) !== r.resultIdx;
+    const superseded = isSupersededByLaterRead(reads, ri);
     const old = !protectedIdx.has(r.resultIdx);
     if (!laterWrite && !superseded && !old) continue;
     out.push({ idx: r.resultIdx, path: r.path, reason: laterWrite ? 'the file was written after this read' : superseded ? 'a newer read of this file exists later in the conversation' : 'older tool result, dropped to save context' });

@@ -1048,7 +1048,26 @@ export async function runAgentTurn(
     const contentWithUnknownNote = unknownArgNote
       ? `${unknownArgNote}\n${result.content}`
       : result.content;
-    const resultContentForModel = critique ? `${contentWithUnknownNote}\n\n[Self-critique] ${critique}` : contentWithUnknownNote;
+    let redundantReadNote: string | undefined;
+    const argPathForCoverage: unknown = call.args?.path ?? call.args?.file;
+    if (call.tool === 'read_file' && result.ok && typeof argPathForCoverage === 'string') {
+      const num = (v: unknown) => (v === undefined || v === null || v === '' ? undefined : Number(v));
+      const { redundant } = readCoverage.note({
+        path: argPathForCoverage,
+        startLine: num(call.args.start_line),
+        endLine: num(call.args.end_line),
+      });
+      if (redundant) {
+        redundantReadNote =
+          'Note: you already read these lines earlier in this turn. Use what you have; if you have read enough, write your answer now.';
+      }
+    } else if (call.tool === 'write_file' && result.ok && typeof argPathForCoverage === 'string') {
+      readCoverage.invalidate(argPathForCoverage);
+    } else if (call.tool === 'run_command') {
+      readCoverage.clear();
+    }
+    const contentWithRedundantNote = redundantReadNote ? `${contentWithUnknownNote}\n\n${redundantReadNote}` : contentWithUnknownNote;
+    const resultContentForModel = critique ? `${contentWithRedundantNote}\n\n[Self-critique] ${critique}` : contentWithRedundantNote;
 
     emit({
       type: 'tool_result',
@@ -1067,18 +1086,9 @@ export async function runAgentTurn(
 
     if (call.tool === 'run_command') failedRunsInARow = result.ok ? 0 : failedRunsInARow + 1;
 
-    // Trace + redundant-read detection (measurement only).
+    // Trace redundant-read flag (coverage updated above when building the tool result).
     try {
-      let redundantRead: boolean | undefined;
-      const argPath: unknown = call.args?.path ?? call.args?.file;
-      if (call.tool === 'read_file' && result.ok && typeof argPath === 'string') {
-        const num = (v: unknown) => (v === undefined || v === null || v === '' ? undefined : Number(v));
-        redundantRead = readCoverage.note({ path: argPath, startLine: num(call.args.start_line), endLine: num(call.args.end_line) }).redundant;
-      } else if (call.tool === 'write_file' && result.ok && typeof argPath === 'string') {
-        readCoverage.invalidate(argPath);
-      } else if (call.tool === 'run_command') {
-        readCoverage.clear(); // a command may have changed any file
-      }
+      const redundantRead = redundantReadNote !== undefined;
       traceIter({
         tool: call.tool,
         argsHash: argsHash(call.args),
@@ -1148,8 +1158,9 @@ export function checkLoop(
   const check = detector.record(signature);
   if (!check.looping) return false;
   const occurrences = check.occurrences ?? 0;
-  if (!detector.hasWarnedForSignature(signature)) {
-    detector.markWarnedForSignature(signature);
+  const warnKey = check.warnSignature ?? signature;
+  if (!detector.hasWarnedForSignature(warnKey)) {
+    detector.markWarnedForSignature(warnKey);
     const warn = formatLoopWarningMessage(
       tool,
       args,

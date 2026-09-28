@@ -42,6 +42,18 @@ function ok(cond: boolean, label: string) {
   const d3 = new LoopDetector();
   const distinct = d3.record(signatureForStep('write_file', { path: 'x.ts', content: '1' }, true, 'Updated x.ts.'));
   ok(!distinct.looping, 'a single call never looks like a loop');
+
+  const d4 = new LoopDetector({ consecutiveLimit: 100, windowSize: 8, windowLimit: 100 });
+  const cA = signatureForStep('read_file', { path: 'f.ts', start_line: 1, end_line: 272 }, true, 'chunk A');
+  const cB = signatureForStep('read_file', { path: 'f.ts', start_line: 273, end_line: 560 }, true, 'chunk B');
+  const cC = signatureForStep('read_file', { path: 'f.ts', start_line: 560, end_line: 808 }, true, 'chunk C');
+  const cD = signatureForStep('read_file', { path: 'f.ts', start_line: 808, end_line: 952 }, true, 'chunk D');
+  let cycleLast;
+  for (let i = 0; i < 15; i++) cycleLast = d4.record([cA, cB, cC, cD][i % 4]);
+  ok(!cycleLast!.looping, '15 steps of a 4-cycle does not trip before the 16th');
+  cycleLast = d4.record(cA);
+  ok(cycleLast!.looping === true && /cycling through the same few calls/.test(cycleLast!.reason ?? ''), 'a 4-call cycle trips the loop detector on the 16th step');
+  ok(!!cycleLast!.warnSignature?.startsWith('cycle:'), 'cycle detection uses a stable warn signature');
 }
 
 // ---------- checkpoints ----------
