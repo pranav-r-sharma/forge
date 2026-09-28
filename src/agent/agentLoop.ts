@@ -1095,9 +1095,10 @@ export async function runAgentTurn(
     }
   }
 
+  const iterationSetting = autoMode ? 'forge.autoModeMaxIterations' : 'forge.maxAgentIterations';
   emit({
     type: 'error',
-    message: `Stopped after ${maxIterations} steps without a final answer. You can ask me to continue.`,
+    message: `Stopped after ${maxIterations} steps without a final answer (cap: ${iterationSetting}). Raise that setting in the Forge Settings panel or settings.json, then ask me to continue.`,
   });
   emit({ type: 'done' });
   return { messages, compactionCache };

@@ -233,6 +233,8 @@ export async function setCompletionModel(model: string) {
  */
 export const SETTINGS_PANEL_KEYS = [
   'numCtx',
+  'maxAgentIterations',
+  'autoModeMaxIterations',
   'temperature',
   'requireApprovalForWrites',
   'requireApprovalForCommands',
@@ -262,7 +264,12 @@ export type SettingsPanelKey = (typeof SETTINGS_PANEL_KEYS)[number];
 /** Generic setting writer backing the Settings panel — see SETTINGS_PANEL_KEYS. */
 export async function setForgeSetting(key: string, value: unknown): Promise<boolean> {
   if (!(SETTINGS_PANEL_KEYS as readonly string[]).includes(key)) return false;
-  await vscode.workspace.getConfiguration('forge').update(key, value, vscode.ConfigurationTarget.Global);
+  const cfg = vscode.workspace.getConfiguration('forge');
+  let storageKey: string = key;
+  if (key === 'numCtx' && parseProviderId(cfg.get<string>('provider')) !== 'ollama') {
+    storageKey = 'mlx.contextTokens';
+  }
+  await cfg.update(storageKey, value, vscode.ConfigurationTarget.Global);
   return true;
 }
 

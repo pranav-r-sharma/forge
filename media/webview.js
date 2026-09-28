@@ -577,7 +577,7 @@
       <div id="settings-numctx-suggestion-host">${renderNumCtxSuggestionHtml()}</div>
       ${sessionModelSettingRow()}
       <div class="settings-section-title">Global defaults</div>
-      ${settingRow('Context window (forge.numCtx)', 'Applies to every chat without its own override.', `<input id="set-numCtx" type="number" min="512" step="512" value="${s.numCtx}" />`)}
+      ${settingRow('Context window (global)', 'Applies to all chats that do not have their own context override. For MLX and OpenAI-compatible runtimes this is forge.mlx.contextTokens; for Ollama it is forge.numCtx.', `<input id="set-numCtx" type="number" min="512" step="512" value="${s.numCtx}" />`)}
       ${settingRow('Temperature', '', `<input id="set-temperature" type="number" min="0" max="2" step="0.1" value="${s.temperature}" />`)}
       ${settingRow('Keep model loaded (minutes)', '-1 = never unload between messages, 0 = Ollama default (~5 min).', `<input id="set-keepAliveMinutes" type="number" step="1" value="${s.keepAliveMinutes}" />`)}
       ${settingRow('Require approval for file edits', '', `<input id="set-requireApprovalForWrites" type="checkbox" ${s.requireApprovalForWrites ? 'checked' : ''} />`)}
@@ -603,6 +603,8 @@
         `<select id="set-subAgentModel"><option value="">(same as parent)</option>${state.models.map((m) => `<option value="${escapeAttr(m.name)}" ${m.name === s.subAgentModel ? 'selected' : ''}>${escapeHtml(m.name)}</option>`).join('')}</select>`
       )}
       ${settingRow('Sub-agent max steps', 'Tool-call cap per sub-agent task.', `<input id="set-subAgentMaxIterations" type="number" min="1" step="1" value="${s.subAgentMaxIterations}" />`)}
+      ${settingRow('Agent max steps (Agent/Ask/Plan)', 'Tool-call step cap per normal (non-Auto) agent turn — forge.maxAgentIterations.', `<input id="set-maxAgentIterations" type="number" min="1" step="1" value="${s.maxAgentIterations}" />`)}
+      ${settingRow('Agent max steps (Auto/Outcome)', 'Tool-call step cap per Auto/Outcome turn — forge.autoModeMaxIterations.', `<input id="set-autoModeMaxIterations" type="number" min="1" step="1" value="${s.autoModeMaxIterations}" />`)}
       ${settingRow('Max sub-agent nesting depth', 'How many levels deep a sub-agent may spawn further sub-agents.', `<input id="set-maxSubAgentDepth" type="number" min="1" max="4" step="1" value="${s.maxSubAgentDepth}" />`)}
       <div class="settings-section-title">Web search</div>
       ${settingRow('Enable web search', 'Off by default — this is the one Forge feature that sends data outside your machine (a search query has to reach a provider; fetched pages come from third-party servers).', `<input id="set-webSearchEnabled" type="checkbox" ${s.webSearchEnabled ? 'checked' : ''} />`)}
@@ -641,7 +643,7 @@
         vscodeApi.postMessage({ type: 'setSessionNumCtx', numCtx: v });
       });
     }
-    for (const key of ['numCtx', 'temperature', 'keepAliveMinutes', 'subAgentMaxIterations', 'maxSubAgentDepth']) {
+    for (const key of ['numCtx', 'temperature', 'keepAliveMinutes', 'subAgentMaxIterations', 'maxAgentIterations', 'autoModeMaxIterations', 'maxSubAgentDepth']) {
       document.getElementById(`set-${key}`).addEventListener('change', (e) => {
         const num = parseFloat(e.target.value);
         if (Number.isFinite(num)) vscodeApi.postMessage({ type: 'updateSetting', key, value: num });

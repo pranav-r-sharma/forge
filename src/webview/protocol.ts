@@ -69,6 +69,8 @@ export interface SessionState {
 /** Snapshot of the settings the in-webview Settings panel can read/write (item "a new setting pane") — see util/config.ts's SETTINGS_PANEL_KEYS. */
 export interface SettingsSnapshot {
   numCtx: number;
+  maxAgentIterations: number;
+  autoModeMaxIterations: number;
   temperature: number;
   requireApprovalForWrites: boolean;
   requireApprovalForCommands: boolean;

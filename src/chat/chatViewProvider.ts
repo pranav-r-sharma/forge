@@ -685,6 +685,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     );
     return {
       numCtx: cfg.numCtx,
+      maxAgentIterations: cfg.maxAgentIterations,
+      autoModeMaxIterations: cfg.autoModeMaxIterations,
       temperature: cfg.temperature,
       requireApprovalForWrites: cfg.requireApprovalForWrites,
       requireApprovalForCommands: cfg.requireApprovalForCommands,

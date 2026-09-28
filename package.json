@@ -181,7 +181,8 @@
         "forge.maxAgentIterations": {
           "type": "number",
           "default": 200,
-          "description": "Maximum tool-call steps per turn in Agent/Ask/Plan mode before Forge stops and asks you to continue. The loop detector (always on) is the real safety net against thrashing now, so this just bounds a single very long turn — raise it if you hit it on legitimately long tasks."
+          "minimum": 1,
+          "description": "Tool-call step cap per normal (non-auto) agent turn in Agent/Ask/Plan mode before Forge stops and asks you to continue. The loop detector is the real safety net against thrashing; raise this if you hit the cap on legitimately long tasks."
         },
         "forge.autoModeMaxIterations": {
           "type": "number",
