@@ -70,7 +70,12 @@ Then 0.15.0 items (see "Suggested release slicing" in the plan) once Phase 0 num
 **Superseding owner decision (2026-09-27): MLX is the actual direction — switch to it now, no more benchmark runs for the moment.** Changed `forge.provider`'s packaged default in `package.json` from `"ollama"` to `"mlx"` (also updated the doc comment in `src/util/config.ts`). Also activated it for real, live usage: added `forge.provider: "mlx"`, `forge.mlx.model` (the 4-bit snapshot, per the C2 decision above), and `forge.mlx.pythonPath` (pointing at the existing, already-approved `_devtools/mlx-venv` — no new install) to the owner's real VS Code user settings (`~/Library/Application Support/Code/User/settings.json`, outside this repo). `npm run typecheck && npm test && npm run compile`: clean (37/37, 1,338 checks) — the one test that checks a "default" provider value (`test_v15_factory.ts`) tests `parseProviderId`'s own unset/garbled-input fallback (a separate, intentional safety net, unrelated to the packaged schema default), so it was correctly unaffected. **Known gap:** `~/.forge/mlx-venv` (the fallback path `resolvePython()` uses when `forge.mlx.pythonPath` is empty, for use in *other* workspaces) does not exist yet — reusing this repo's dev venv works today via the explicit path, but is coupled to this checkout; creating a dedicated `~/.forge/mlx-venv` would be a *new* install and needs the owner's go-ahead first (standing rule 3), not done here.
 
 ## Next
-Validate harness fixes on **t09 cycle 6** in a **new sitting** (owner approval required — 5 t09 cycles already this sitting). Optional live run: `_devtools/e2e/tasks/t11-checklist` (not run in bridge task F). Ollama model switching deferred by owner.
+Owner review: requirements A/B (`_devtools/bench/results/2026-09-30-requirements-ab.md`) — req-on slower on t11/t09, 8/8 pass, 0 false-done; consider default `forge.requirements.enabled` vs task class. Optional: t09 cycle 6 for non-checklist harness fixes (separate from this A/B).
+
+## Task H — requirements A/B (2026-09-30, bridge)
+- Live 2×2 matrix: **t11-checklist**, **t09-harder-build** × `forge.requirements.enabled` on/off, gpt-oss-20b MXFP4-Q8 MLX, M5 32 GB.
+- **8/8 grader pass**, **0 false-done**; req-on: +2 nudges/run, lower cache hit, longer wall (t11 ~2×, t09 ~3.7× vs off).
+- Report: `_devtools/bench/results/2026-09-30-requirements-ab.md`; raw `req-ab-*` under `_devtools/e2e/results/`. Runner: `--requirements` on `run_task.ts`.
 
 ## Requirements checklist (2026-09-30)
 

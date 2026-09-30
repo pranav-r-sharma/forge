@@ -2,7 +2,7 @@
 // It reuses the fs-backed vscode stub, so nothing here needs VS Code. Writes a JSON result + a per-iteration trace.
 //
 // usage: node _devtools/run-ts.js _devtools/bench/run_task.ts --task t01-fix-bug --provider mlx --model <snapshot-dir> --out <result.json>
-//          [--thinking default|off|on] [--ctx 32768] [--max-iters 40] [--timeout-s 900] [--append-only true|false] [--port 8126] [--keep]
+//          [--thinking default|off|on] [--ctx 32768] [--max-iters 40] [--timeout-s 900] [--append-only true|false] [--requirements true|false] [--port 8126] [--keep]
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -21,6 +21,7 @@ import { MlxServerManager } from '../../src/llm/mlxServer';
 import { HwSampler, readMemorySample } from '../../src/util/hwSampler';
 import { keywordCodebaseSearch } from '../../src/indexing/keywordSearch';
 import { detectEnvironment, renderEnvironment } from '../../src/agent/environment';
+import { extractRequirementsFromUserMessage, updateRequirementsFromMessages } from '../../src/agent/requirements';
 import { AgentEvent } from '../../src/agent/types';
 import { LlmProvider } from '../../src/llm/provider';
 
@@ -42,6 +43,7 @@ async function main() {
   const maxIters = Number(arg('max-iters', '40'));
   const timeoutS = Number(arg('timeout-s', '900'));
   const appendOnly = arg('append-only', 'true') === 'true';
+  const requirementsEnabled = arg('requirements', 'true') === 'true';
   const port = Number(arg('port', '8126'));
   const taskDir = path.join(repoRoot, '_devtools', 'e2e', 'tasks', taskId);
   const meta = JSON.parse(fs.readFileSync(path.join(taskDir, 'meta.json'), 'utf8'));
@@ -55,9 +57,15 @@ async function main() {
     'forge.temperature': 0, 'forge.thinking': thinking, 'forge.provider': provider === 'mlx' ? 'mlx' : 'ollama', 'forge.mlx.contextTokens': ctx, 'forge.numCtx': ctx,
     'forge.maxAgentIterations': maxIters, 'forge.autoModeMaxIterations': maxIters, 'forge.context.appendOnly': appendOnly,
     'forge.loopDetection.enabled': true, 'forge.terseSteps': arg('terse', 'true') === 'true',
+    'forge.requirements.enabled': requirementsEnabled,
   });
 
-  const result: any = { task: taskId, provider, model: path.basename(model), thinking, ctx, appendOnly, maxIters, timeoutS, startedAt: new Date().toISOString(), hardware: 'Apple M5, 32 GB' };
+  const memBefore = await readMemorySample();
+  const result: any = {
+    task: taskId, provider, model: path.basename(model), thinking, ctx, appendOnly, requirementsEnabled, maxIters, timeoutS,
+    startedAt: new Date().toISOString(), hardware: 'Apple M5, 32 GB',
+    memoryBeforeGB: memBefore ? { used: memBefore.usedGB, available: memBefore.availableGB, swapGB: memBefore.swapGB } : null,
+  };
   const outDir = path.dirname(outFile);
   fs.mkdirSync(outDir, { recursive: true });
   const tracePath = outFile.replace(/\.json$/, '.trace.jsonl');
@@ -176,6 +184,19 @@ async function main() {
   const hw = recs.map((r) => r.hw).filter(Boolean);
   result.hw = { minAvailableGB: Math.min(...hw.map((h: any) => h.availableGB ?? 1e9)), maxSwapGB: Math.max(0, ...hw.map((h: any) => h.swapGB ?? 0)), gpuPeakPct: Math.max(0, ...hw.map((h: any) => h.gpuPeakPct ?? 0)) };
   result.tracePath = path.relative(repoRoot, tracePath);
+  result.requirementsNudges = recs.filter((r) => r.note === 'requirements-gate-nudge').length;
+  if (requirementsEnabled && lastMessages.length > 0) {
+    let reqState = extractRequirementsFromUserMessage(taskText);
+    reqState = updateRequirementsFromMessages(reqState, lastMessages as any);
+    const open = reqState.items.filter((it) => it.status === 'open' || it.status === 'unverified').length;
+    const done = reqState.items.filter((it) => it.status === 'done').length;
+    result.requirementsFinal = { total: reqState.items.length, done, open, declined: reqState.items.filter((it) => it.status === 'declined').length };
+  } else {
+    result.requirementsFinal = null;
+  }
+  result.falseDone = !result.pass && Boolean(finalText.trim()) && !result.agentError && !result.timedOut && !result.crash;
+  const memAfter = await readMemorySample();
+  result.memoryAfterGB = memAfter ? { used: memAfter.usedGB, available: memAfter.availableGB, swapGB: memAfter.swapGB } : null;
   fs.writeFileSync(outFile, JSON.stringify(result, null, 2));
   fs.writeFileSync(outFile.replace(/\.json$/, '.messages.json'), JSON.stringify(lastMessages, null, 2));
   } finally {

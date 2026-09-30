@@ -1,0 +1,65 @@
+{
+  "task": "t09-harder-build",
+  "provider": "mlx",
+  "model": "773a7da77e569019bb0fd17a554b263738d669a3",
+  "thinking": "auto",
+  "ctx": 32768,
+  "appendOnly": true,
+  "requirementsEnabled": false,
+  "maxIters": 80,
+  "timeoutS": 1200,
+  "startedAt": "2026-09-30T17:40:29.730Z",
+  "hardware": "Apple M5, 32 GB",
+  "memoryBeforeGB": {
+    "used": 8.2,
+    "available": 23.8
+  },
+  "serverReadyS": 2.596,
+  "wallS": 237.762,
+  "checkExit": 0,
+  "checkOutput": "",
+  "protectedTouched": [],
+  "filesChanged": [
+    "inventory/cli.py",
+    "inventory/models.py",
+    "inventory/reports.py",
+    "inventory/rules.py",
+    "inventory/services.py",
+    "inventory/storage.py",
+    "main.py",
+    "testdb.json"
+  ],
+  "pass": true,
+  "finalText": "All required CLI commands run correctly. The library functions as specified.",
+  "iterations": 53,
+  "tools": {
+    "list_dir": 1,
+    "write_file": 11,
+    "run_command": 11,
+    "read_file": 2
+  },
+  "toolFailures": 3,
+  "redundantReads": 0,
+  "reads": 2,
+  "viewEvents": 0,
+  "modelS": 468.47,
+  "toolS": 0.48,
+  "tokensEvaluated": 27346,
+  "tokensCached": 487987,
+  "cacheHitPct": 94.7,
+  "evalTokens": 12366,
+  "promptCharsMax": 55643,
+  "hw": {
+    "minAvailableGB": 8,
+    "maxSwapGB": 2.7,
+    "gpuPeakPct": 100
+  },
+  "tracePath": "_devtools/e2e/results/req-ab-t09-req-off-r1.trace.jsonl",
+  "requirementsNudges": 0,
+  "requirementsFinal": null,
+  "falseDone": false,
+  "memoryAfterGB": {
+    "used": 24,
+    "available": 8
+  }
+}
