@@ -36,11 +36,17 @@ export interface TraceRecord {
   modelMs: number;
   /** Prompt tokens the runtime reports it actually EVALUATED (a cache hit makes this smaller than what was sent). */
   promptTokens?: number;
+  /** Full prompt size in tokens when the runtime reports it (evaluated + cached). */
+  promptTotalTokens?: number;
   /** Prompt tokens the runtime served from its prompt cache (MLX server: usage.prompt_tokens_details.cached_tokens). With promptTokens gives the TRUE cache-hit rate. */
   cachedTokens?: number;
+  /** Estimated tokens in the sent prompt (from chars/token); used with promptTokens on Ollama when cached_tokens is not reported. */
+  promptSentTokens?: number;
   evalTokens?: number;
   tokPerSec?: number;
   promptEvalMs?: number;
+  /** Prefill throughput from evaluated prompt tokens and promptEvalMs (runtime-reported or TTFT-approximated). */
+  prefillTokPerSec?: number;
   loadMs?: number;
   /** 'length' = the reply was cut off by the output limit (incomplete). */
   finishReason?: string;
@@ -99,6 +105,33 @@ function stableStringify(v: any): string {
 }
 
 /** Pulls the file path and line range out of a tool call's args for the trace (paths and numbers only — no content). */
+/** Derives trace-ready prompt-cache metrics from runtime metrics + an optional sent-token estimate. */
+export function promptCacheMetricsForTrace(
+  m: { promptTokens?: number; cachedTokens?: number; promptTotalTokens?: number; promptEvalDurationMs?: number } | undefined,
+  estPromptTokens?: number
+): Pick<TraceRecord, 'promptTokens' | 'promptTotalTokens' | 'cachedTokens' | 'promptSentTokens' | 'prefillTokPerSec'> {
+  if (!m) return {};
+  const evaluated = m.promptTokens;
+  const cached = m.cachedTokens;
+  const total = m.promptTotalTokens ?? (evaluated !== undefined && cached !== undefined ? evaluated + cached : undefined);
+  const sent = estPromptTokens;
+  const cachedOut =
+    cached ??
+    (sent !== undefined && evaluated !== undefined && sent > evaluated ? sent - evaluated : undefined);
+  const prefillMs = m.promptEvalDurationMs;
+  const prefillTokPerSec =
+    evaluated !== undefined && prefillMs !== undefined && prefillMs > 0
+      ? Math.round((evaluated / (prefillMs / 1000)) * 10) / 10
+      : undefined;
+  return {
+    promptTokens: evaluated,
+    promptTotalTokens: total,
+    cachedTokens: cachedOut,
+    promptSentTokens: sent,
+    prefillTokPerSec,
+  };
+}
+
 export function describeArgsForTrace(tool: string, args: Record<string, any> | undefined): { path?: string; range?: string } {
   const a = args || {};
   const p = typeof a.path === 'string' ? a.path : typeof a.file === 'string' ? a.file : undefined;

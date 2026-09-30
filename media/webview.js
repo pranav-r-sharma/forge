@@ -473,6 +473,10 @@
     'mlx.promptCacheGB': 'set-mlx-promptCacheGB',
     'mlx.prefillStepSize': 'set-mlx-prefillStepSize',
     'mlx.promptCacheSize': 'set-mlx-promptCacheSize',
+    'mlx.decodeConcurrency': 'set-mlx-decodeConcurrency',
+    'mlx.promptConcurrency': 'set-mlx-promptConcurrency',
+    'mlx.numDraftTokens': 'set-mlx-numDraftTokens',
+    'ollama.numBatch': 'set-ollama-numBatch',
     maxOutputTokens: 'set-maxOutputTokens',
     maxOutputTokensCeiling: 'set-maxOutputTokensCeiling',
     keepAliveMinutes: 'set-keepAliveMinutes',
@@ -525,6 +529,10 @@
           'mlx.promptCacheGB': cur.mlxPromptCacheGB,
           'mlx.prefillStepSize': cur.mlxPrefillStepSize,
           'mlx.promptCacheSize': cur.mlxPromptCacheSize,
+          'mlx.decodeConcurrency': cur.mlxDecodeConcurrency,
+          'mlx.promptConcurrency': cur.mlxPromptConcurrency,
+          'mlx.numDraftTokens': cur.mlxNumDraftTokens,
+          'ollama.numBatch': cur.ollamaNumBatch,
           maxOutputTokens: cur.maxOutputTokens,
           maxOutputTokensCeiling: cur.maxOutputTokensCeiling,
           keepAliveMinutes: cur.keepAliveMinutes,
@@ -676,6 +684,21 @@
       ${settingRowWithReco('mlx.promptCacheGB', 'MLX prompt cache (GB)', 'In-memory prompt cache on mlx_lm.server (0 = server default). Restarts the managed MLX server when changed.', `<input id="set-mlx-promptCacheGB" type="number" min="0" step="0.5" value="${s.mlxPromptCacheGB}" />`)}
       ${settingRowWithReco('mlx.prefillStepSize', 'MLX prefill step size', 'Tokens per prefill step (--prefill-step-size; 0 = server default). Restarts the managed MLX server when changed.', `<input id="set-mlx-prefillStepSize" type="number" min="0" step="256" value="${s.mlxPrefillStepSize}" />`)}
       ${settingRowWithReco('mlx.promptCacheSize', 'MLX prompt cache entries', 'Max distinct cached prompts (--prompt-cache-size; 0 = server default). Restarts the managed MLX server when changed.', `<input id="set-mlx-promptCacheSize" type="number" min="0" step="1" value="${s.mlxPromptCacheSize}" />`)}
+      ${settingRowWithReco('mlx.decodeConcurrency', 'MLX decode concurrency', 'Parallel decode slots (--decode-concurrency; 0 = server default 32). Restarts the managed MLX server when changed.', `<input id="set-mlx-decodeConcurrency" type="number" min="0" step="1" value="${s.mlxDecodeConcurrency}" />`)}
+      ${settingRowWithReco('mlx.promptConcurrency', 'MLX prompt concurrency', 'Parallel prefill slots (--prompt-concurrency; 0 = server default 8). Restarts the managed MLX server when changed.', `<input id="set-mlx-promptConcurrency" type="number" min="0" step="1" value="${s.mlxPromptConcurrency}" />`)}
+      ${settingRow(
+        'MLX draft model (speculative decoding)',
+        'Optional smaller model for mlx_lm.server --draft-model. Off when blank. Pick from your MLX library or set forge.mlx.draftModel in settings.json.',
+        `<select id="set-mlx-draftModel"><option value="">(off)</option>${state.models.map((m) => `<option value="${escapeAttr(m.name)}" ${m.name === (s.mlxDraftModel || '') ? 'selected' : ''}>${escapeHtml(m.name)}</option>`).join('')}</select>`
+      )}
+      ${settingRowWithReco('mlx.numDraftTokens', 'MLX draft tokens', 'Draft tokens per step when a draft model is set (--num-draft-tokens; 0 = server default 3). Restarts the managed MLX server when changed.', `<input id="set-mlx-numDraftTokens" type="number" min="0" step="1" value="${s.mlxNumDraftTokens}" />`)}
+      <div class="settings-section-title">Performance (Ollama)</div>
+      ${settingRowWithReco('ollama.numBatch', 'Ollama prefill batch (num_batch)', 'Sent as options.num_batch on each chat request (0 = Ollama default). Forge does not start Ollama — only per-request options apply.', `<input id="set-ollama-numBatch" type="number" min="0" step="32" value="${s.ollamaNumBatch}" />`)}
+      ${settingRow(
+        'Ollama server env (manual)',
+        'Flash attention and KV cache type are set on the Ollama process, not by Forge. Before starting Ollama: launchctl setenv OLLAMA_FLASH_ATTENTION 1 and launchctl setenv OLLAMA_KV_CACHE_TYPE q8_0 (no sudo), then restart ollama serve from that shell session.',
+        '<div class="setting-hint">These variables apply to how you launch Ollama; Forge cannot change them for an existing Ollama you did not start.</div>'
+      )}
       ${settingRowWithReco('maxContextFileKB', 'Max file read size (KB)', 'Files larger than this are skipped for indexing and read_file. Applies on the next agent turn.', `<input id="set-maxContextFileKB" type="number" min="1" step="1" value="${s.maxContextFileKB}" />`)}
       ${settingRow('Single-message context share (%)', 'Percent of the context window one tool result may use before trimming in the prompt view (5–80). Applies on the next agent turn.', `<input id="set-singleMessageSharePct" type="number" min="5" max="80" step="1" value="${s.singleMessageSharePct}" />`)}
       <div class="settings-section-title">Task ledger &amp; cost-aware planning</div>
@@ -795,10 +818,17 @@
     document.getElementById('set-webSearchEnabled').addEventListener('change', (e) => {
       vscodeApi.postMessage({ type: 'updateSetting', key: 'webSearch.enabled', value: e.target.checked });
     });
+    document.getElementById('set-mlx-draftModel').addEventListener('change', (e) => {
+      vscodeApi.postMessage({ type: 'updateSetting', key: 'mlx.draftModel', value: e.target.value });
+    });
     for (const [id, key] of [
       ['set-mlx-promptCacheGB', 'mlx.promptCacheGB'],
       ['set-mlx-prefillStepSize', 'mlx.prefillStepSize'],
       ['set-mlx-promptCacheSize', 'mlx.promptCacheSize'],
+      ['set-mlx-decodeConcurrency', 'mlx.decodeConcurrency'],
+      ['set-mlx-promptConcurrency', 'mlx.promptConcurrency'],
+      ['set-mlx-numDraftTokens', 'mlx.numDraftTokens'],
+      ['set-ollama-numBatch', 'ollama.numBatch'],
       ['set-maxContextFileKB', 'maxContextFileKB'],
       ['set-singleMessageSharePct', 'singleMessageSharePct'],
     ]) {

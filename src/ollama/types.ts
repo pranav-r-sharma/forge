@@ -110,6 +110,8 @@ export interface ChatRequestOptions {
   stop?: string[];
   /** Context window size to request from Ollama (options.num_ctx). Omitted = server default. */
   numCtx?: number;
+  /** Ollama options.num_batch — prefill batch size (0/omitted = server default). */
+  numBatch?: number;
   /** Minutes to keep the model resident after this call, or -1 for indefinitely, 0 to unload immediately. Omitted = server default (~5 min). */
   keepAliveMinutes?: number;
   /** Called once with perf metrics parsed from the final stream chunk, if the server reported them. */
@@ -134,6 +136,7 @@ export interface GenerateRequestOptions {
   stop?: string[];
   raw?: boolean;
   numCtx?: number;
+  numBatch?: number;
   keepAliveMinutes?: number;
   onMetrics?: (metrics: OllamaCallMetrics) => void;
 }

@@ -31,6 +31,14 @@ export interface MlxServerConfig {
   prefillStepSize?: number;
   /** mlx_lm.server --prompt-cache-size when > 0. */
   promptCacheSize?: number;
+  /** mlx_lm.server --decode-concurrency when > 0. */
+  decodeConcurrency?: number;
+  /** mlx_lm.server --prompt-concurrency when > 0. */
+  promptConcurrency?: number;
+  /** Resolved local path or cached repo id for --draft-model (speculative decoding). */
+  draftModel?: string;
+  /** mlx_lm.server --num-draft-tokens when draftModel is set and > 0. */
+  numDraftTokens?: number;
   extraArgs?: string[];
   startupTimeoutMs?: number;
 }
@@ -61,12 +69,29 @@ function dropExtraArgFlags(extraArgs: string[] | undefined, flags: Set<string>):
 
 /** Builds the argv for `python -m mlx_lm.server`. Pure. Throws if extra args try to weaken a safety rule or override a managed option. */
 export function buildServerArgs(
-  cfg: Pick<MlxServerConfig, 'port' | 'promptCacheBytes' | 'prefillStepSize' | 'promptCacheSize' | 'extraArgs'>,
+  cfg: Pick<
+    MlxServerConfig,
+    | 'port'
+    | 'promptCacheBytes'
+    | 'prefillStepSize'
+    | 'promptCacheSize'
+    | 'decodeConcurrency'
+    | 'promptConcurrency'
+    | 'draftModel'
+    | 'numDraftTokens'
+    | 'extraArgs'
+  >,
   resolvedModel: string
 ): string[] {
   const managed = new Set<string>();
   if (cfg.prefillStepSize && cfg.prefillStepSize > 0) managed.add('--prefill-step-size');
   if (cfg.promptCacheSize && cfg.promptCacheSize > 0) managed.add('--prompt-cache-size');
+  if (cfg.decodeConcurrency && cfg.decodeConcurrency > 0) managed.add('--decode-concurrency');
+  if (cfg.promptConcurrency && cfg.promptConcurrency > 0) managed.add('--prompt-concurrency');
+  if (cfg.draftModel) {
+    managed.add('--draft-model');
+    managed.add('--num-draft-tokens');
+  }
   const extraArgs = dropExtraArgFlags(cfg.extraArgs, managed);
   for (const a of extraArgs) {
     const flag = a.split('=')[0];
@@ -76,6 +101,12 @@ export function buildServerArgs(
   if (cfg.promptCacheBytes && cfg.promptCacheBytes > 0) args.push('--prompt-cache-bytes', String(Math.floor(cfg.promptCacheBytes)));
   if (cfg.prefillStepSize && cfg.prefillStepSize > 0) args.push('--prefill-step-size', String(Math.floor(cfg.prefillStepSize)));
   if (cfg.promptCacheSize && cfg.promptCacheSize > 0) args.push('--prompt-cache-size', String(Math.floor(cfg.promptCacheSize)));
+  if (cfg.decodeConcurrency && cfg.decodeConcurrency > 0) args.push('--decode-concurrency', String(Math.floor(cfg.decodeConcurrency)));
+  if (cfg.promptConcurrency && cfg.promptConcurrency > 0) args.push('--prompt-concurrency', String(Math.floor(cfg.promptConcurrency)));
+  if (cfg.draftModel) {
+    args.push('--draft-model', cfg.draftModel);
+    if (cfg.numDraftTokens && cfg.numDraftTokens > 0) args.push('--num-draft-tokens', String(Math.floor(cfg.numDraftTokens)));
+  }
   return [...args, ...extraArgs];
 }
 
@@ -214,6 +245,12 @@ export class MlxServerManager {
       libraryPathSetting: ctx.libraryPathSetting,
       extraFolders: ctx.extraFolders,
     });
+    const draftResolved = cfg.draftModel
+      ? resolveModelForServer(cfg.draftModel, {
+          libraryPathSetting: ctx.libraryPathSetting,
+          extraFolders: ctx.extraFolders,
+        })
+      : '';
     const key = JSON.stringify([
       cfg.pythonPath,
       resolved,
@@ -221,6 +258,10 @@ export class MlxServerManager {
       cfg.promptCacheBytes ?? 0,
       cfg.prefillStepSize ?? 0,
       cfg.promptCacheSize ?? 0,
+      cfg.decodeConcurrency ?? 0,
+      cfg.promptConcurrency ?? 0,
+      draftResolved,
+      cfg.numDraftTokens ?? 0,
       cfg.extraArgs ?? [],
     ]);
     if (this._state === 'ready' && this.key === key && (this.external || (this.child && (await isHealthy(cfg.port))))) return;
@@ -241,7 +282,7 @@ export class MlxServerManager {
       return;
     }
 
-    const args = buildServerArgs(cfg, resolved); // throws on unsafe extra args
+    const args = buildServerArgs({ ...cfg, draftModel: draftResolved || undefined }, resolved); // throws on unsafe extra args
     const need = modelWeightsBytes(resolved) / 1024 ** 3;
     const avail = await (this.deps.availableGB?.() ?? Promise.resolve(undefined)).catch(() => undefined);
     if (avail !== undefined && need > 0 && avail < need * 1.15 + 1.5) {
@@ -372,6 +413,10 @@ export interface MlxEnsureConfig {
   mlxPromptCacheGB: number;
   mlxPrefillStepSize: number;
   mlxPromptCacheSize: number;
+  mlxDecodeConcurrency: number;
+  mlxPromptConcurrency: number;
+  mlxDraftModel: string;
+  mlxNumDraftTokens: number;
   mlxExtraArgs: string[];
   mlxModelLibraryPath?: string;
   mlxExtraModelFolders?: string[];
@@ -405,6 +450,10 @@ export function makeEnsureMlx(
       promptCacheBytes: c.mlxPromptCacheGB > 0 ? Math.floor(c.mlxPromptCacheGB * 1024 ** 3) : undefined,
       prefillStepSize: c.mlxPrefillStepSize > 0 ? c.mlxPrefillStepSize : undefined,
       promptCacheSize: c.mlxPromptCacheSize > 0 ? c.mlxPromptCacheSize : undefined,
+      decodeConcurrency: c.mlxDecodeConcurrency > 0 ? c.mlxDecodeConcurrency : undefined,
+      promptConcurrency: c.mlxPromptConcurrency > 0 ? c.mlxPromptConcurrency : undefined,
+      draftModel: (c.mlxDraftModel || '').trim() || undefined,
+      numDraftTokens: (c.mlxDraftModel || '').trim() && (c.mlxNumDraftTokens ?? 0) > 0 ? c.mlxNumDraftTokens : undefined,
       extraArgs: c.mlxExtraArgs,
     });
   };

@@ -299,6 +299,14 @@ Standing rule 10 (M5 Max 128 GB): raised work-limiting defaults; added `forge.ma
 
 Unchanged (safety): loop detection, truncation nudge count (3), `HARD_MAX_SUBAGENT_DEPTH`, approval guards, `MAX_EDITS_PER_CALL`, background concurrency.
 
+## Caching + speed settings (2026-09-30)
+
+**Prompt-prefix stability:** volatile turn context (memory, project log, milestones, task ledger) stays in `buildTurnContextPrefix()` on the user message, not `buildSystemPrompt()`. MCP tools in the system prompt are sorted by name so discovery order does not invalidate the prefix. `src/agent/promptPrefix.ts` + `test_v15_prompt_prefix.ts` assert consecutive append-only agent steps extend the same byte prefix.
+
+**New settings:** `forge.mlx.decodeConcurrency`, `forge.mlx.promptConcurrency`, `forge.mlx.draftModel`, `forge.mlx.numDraftTokens` (managed `mlx_lm.server` argv; draft off when empty); `forge.ollama.numBatch` (per-request `options.num_batch`). Settings panel + `SETTINGS_PANEL_KEYS` + `recommend()` reasons. Ollama flash-attention / KV-cache env vars documented in panel only (no sudo; Forge does not start Ollama).
+
+**Traces:** `promptTotalTokens`, `promptSentTokens`, `prefillTokPerSec`, improved `cachedTokens` via `promptCacheMetricsForTrace()` (Ollama: estimated cache from `estPromptTokens` − `prompt_eval_count` when server omits cached).
+
 ## Machine profile + recommended settings (2026-09-30)
 
 **Machine profile** (`src/util/hwSampler.ts` `readMachineProfile`): read-only sysctl/vm_stat/ioreg — `hw.memsize`, `machdep.cpu.brand_string`, `hw.perflevel0/1.physicalcpu`, memory pressure/swap/available, GPU util + in-use GB, `iogpu.wired_limit_mb` (0 → budget uses documented ~75% of RAM assumption). Optional resident model size from `ps()`.

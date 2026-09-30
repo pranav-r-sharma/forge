@@ -24,7 +24,17 @@ export interface ForgeConfig {
   mlxPrefillStepSize: number;
   /** mlx_lm.server --prompt-cache-size when > 0 (0 = server default). */
   mlxPromptCacheSize: number;
+  /** mlx_lm.server --decode-concurrency when > 0 (0 = server default). */
+  mlxDecodeConcurrency: number;
+  /** mlx_lm.server --prompt-concurrency when > 0 (0 = server default). */
+  mlxPromptConcurrency: number;
+  /** Smaller MLX model for speculative decoding (--draft-model). Empty = off. */
+  mlxDraftModel: string;
+  /** mlx_lm.server --num-draft-tokens when mlxDraftModel is set (0 = server default). */
+  mlxNumDraftTokens: number;
   mlxExtraArgs: string[];
+  /** Ollama options.num_batch per chat request (0 = server default). */
+  ollamaNumBatch: number;
   openaiCompatBaseUrl: string;
   ollamaBaseUrl: string;
   chatModel: string;
@@ -154,7 +164,12 @@ export function getConfig(): ForgeConfig {
     mlxPromptCacheGB: cfg.get<number>('mlx.promptCacheGB') ?? 32,
     mlxPrefillStepSize: Math.max(0, Math.floor(cfg.get<number>('mlx.prefillStepSize') ?? 0)),
     mlxPromptCacheSize: Math.max(0, Math.floor(cfg.get<number>('mlx.promptCacheSize') ?? 0)),
+    mlxDecodeConcurrency: Math.max(0, Math.floor(cfg.get<number>('mlx.decodeConcurrency') ?? 0)),
+    mlxPromptConcurrency: Math.max(0, Math.floor(cfg.get<number>('mlx.promptConcurrency') ?? 0)),
+    mlxDraftModel: (cfg.get<string>('mlx.draftModel') || '').trim(),
+    mlxNumDraftTokens: Math.max(0, Math.floor(cfg.get<number>('mlx.numDraftTokens') ?? 0)),
     mlxExtraArgs: (cfg.get<string[]>('mlx.extraArgs') || []).filter((a) => typeof a === 'string'),
+    ollamaNumBatch: Math.max(0, Math.floor(cfg.get<number>('ollama.numBatch') ?? 0)),
     openaiCompatBaseUrl: (cfg.get<string>('openaiCompat.baseUrl') || 'http://127.0.0.1:1234').replace(/\/+$/, ''),
     ollamaBaseUrl: (cfg.get<string>('ollamaBaseUrl') || 'http://localhost:11434').replace(/\/+$/, ''),
     chatModel: cfg.get<string>('chatModel') || '',
@@ -287,6 +302,11 @@ export const SETTINGS_PANEL_KEYS = [
   'mlx.promptCacheGB',
   'mlx.prefillStepSize',
   'mlx.promptCacheSize',
+  'mlx.decodeConcurrency',
+  'mlx.promptConcurrency',
+  'mlx.draftModel',
+  'mlx.numDraftTokens',
+  'ollama.numBatch',
   'maxContextFileKB',
   'singleMessageSharePct',
   'maxOutputTokens',

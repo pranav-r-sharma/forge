@@ -154,6 +154,29 @@
           "minimum": 0,
           "description": "Maximum number of distinct cached prompts on the MLX server (--prompt-cache-size). 0 = the server's default. Changing this restarts the managed MLX server."
         },
+        "forge.mlx.decodeConcurrency": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "description": "Parallel decode slots on mlx_lm.server (--decode-concurrency). 0 = the server's default (32). Higher values can improve throughput on a large Mac when several requests batch. Restarts the managed MLX server when changed."
+        },
+        "forge.mlx.promptConcurrency": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "description": "Parallel prompt/prefill slots on mlx_lm.server (--prompt-concurrency). 0 = the server's default (8). Restarts the managed MLX server when changed."
+        },
+        "forge.mlx.draftModel": {
+          "type": "string",
+          "default": "",
+          "description": "Optional smaller MLX model for speculative decoding (--draft-model). Empty = off. Use a local folder or a Hugging Face repo id already in your MLX model library. Restarts the managed MLX server when changed."
+        },
+        "forge.mlx.numDraftTokens": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "description": "Draft tokens per step when forge.mlx.draftModel is set (--num-draft-tokens). 0 = the server's default (3). Restarts the managed MLX server when changed."
+        },
         "forge.mlx.extraArgs": {
           "type": "array",
           "items": { "type": "string" },
@@ -215,6 +238,12 @@
           "type": "number",
           "default": -1,
           "description": "Minutes Ollama keeps a model loaded in memory after a request. -1 = never unload between messages (avoids a full reload + KV-cache rebuild every time you pause to think — set via Ollama's per-request keep_alive, which works regardless of how the Ollama server itself was launched). 0 = Ollama's own default (~5 min idle unload)."
+        },
+        "forge.ollama.numBatch": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "description": "Ollama options.num_batch sent on each chat request — prefill batch size (tokens processed together during prompt evaluation). 0 = Ollama's default. Larger values can speed long prompts on a Mac with plenty of unified memory."
         },
         "forge.requireApprovalForWrites": {
           "type": "boolean",

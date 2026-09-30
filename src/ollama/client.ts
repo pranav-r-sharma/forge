@@ -100,6 +100,7 @@ export class OllamaClient implements LlmProvider {
       options: {
         temperature: opts.temperature ?? 0.2,
         ...(opts.numCtx ? { num_ctx: opts.numCtx } : {}),
+        ...(opts.numBatch ? { num_batch: opts.numBatch } : {}),
         ...(opts.maxTokens ? { num_predict: opts.maxTokens } : {}),
         ...(opts.stop ? { stop: opts.stop } : {}),
       },
@@ -153,6 +154,7 @@ export class OllamaClient implements LlmProvider {
       options: {
         temperature: opts.temperature ?? 0.1,
         ...(opts.numCtx ? { num_ctx: opts.numCtx } : {}),
+        ...(opts.numBatch ? { num_batch: opts.numBatch } : {}),
         ...(opts.maxTokens ? { num_predict: opts.maxTokens } : {}),
         ...(opts.stop ? { stop: opts.stop } : {}),
       },

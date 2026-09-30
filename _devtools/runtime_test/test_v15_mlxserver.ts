@@ -81,6 +81,10 @@ function testArgsAndResolution() {
     buildServerArgs({ port: 1, promptCacheSize: 8, extraArgs: ['--prompt-cache-size', '99'] }, '/m').slice(-2).join(' ') === '--prompt-cache-size 8',
     'dedicated promptCacheSize wins over the same flag in extraArgs'
   );
+  const perf = buildServerArgs({ port: 1, decodeConcurrency: 48, promptConcurrency: 12, draftModel: '/draft', numDraftTokens: 5 }, '/m');
+  ok(perf.includes('--decode-concurrency') && perf.includes('48') && perf.includes('--prompt-concurrency') && perf.includes('12'), 'decode/prompt concurrency flags pass through when set');
+  ok(perf.includes('--draft-model') && perf.includes('/draft') && perf.slice(-2).join(' ') === '--num-draft-tokens 5', 'draft model and num-draft-tokens pass when draft model is set');
+  ok(!buildServerArgs({ port: 1, numDraftTokens: 9 }, '/m').includes('--draft-model'), 'num-draft-tokens is omitted without a draft model');
   for (const bad of ['--trust-remote-code', '--host', '--host=0.0.0.0', '--port', '--model=/evil']) {
     let msg = '';
     try { buildServerArgs({ port: 1, extraArgs: [bad] }, '/m'); } catch (e: any) { msg = e instanceof MlxServerError ? e.message : 'wrong'; }

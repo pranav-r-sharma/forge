@@ -100,6 +100,11 @@ export interface SettingsSnapshot {
   mlxPromptCacheGB: number;
   mlxPrefillStepSize: number;
   mlxPromptCacheSize: number;
+  mlxDecodeConcurrency: number;
+  mlxPromptConcurrency: number;
+  mlxDraftModel: string;
+  mlxNumDraftTokens: number;
+  ollamaNumBatch: number;
   maxContextFileKB: number;
   singleMessageSharePct: number;
   maxOutputTokens: number;

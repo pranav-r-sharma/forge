@@ -7,6 +7,10 @@ export interface RecommendSettingsInput {
   mlxPromptCacheGB: number;
   mlxPromptCacheSize: number;
   mlxPrefillStepSize: number;
+  mlxDecodeConcurrency: number;
+  mlxPromptConcurrency: number;
+  mlxNumDraftTokens: number;
+  ollamaNumBatch: number;
   maxOutputTokens: number;
   maxOutputTokensCeiling: number;
   keepAliveMinutes: number;
@@ -133,6 +137,47 @@ export function recommend(profile: MachineProfile, current: RecommendSettingsInp
       ? 'Smaller prefill steps reduce peak memory spikes while the machine is under pressure.'
       : 'Larger prefill steps improve throughput when plenty of unified memory is free.',
     current.mlxPrefillStepSize
+  );
+
+  const decodeConc = budget.tight ? 16 : budget.kvBudgetGB > 40 ? 64 : 32;
+  pushReco(
+    out,
+    'mlx.decodeConcurrency',
+    decodeConc,
+    budget.tight
+      ? 'Fewer parallel decode slots when memory is tight avoids spikes during batched work.'
+      : 'More decode concurrency lets mlx_lm.server work through batched agent steps faster on a large Mac.',
+    current.mlxDecodeConcurrency
+  );
+
+  const promptConc = budget.tight ? 4 : budget.kvBudgetGB > 40 ? 16 : 8;
+  pushReco(
+    out,
+    'mlx.promptConcurrency',
+    promptConc,
+    budget.tight
+      ? 'Lower prompt concurrency reduces simultaneous prefills when RAM is scarce.'
+      : 'Higher prompt concurrency improves prefill throughput when unified memory is plentiful.',
+    current.mlxPromptConcurrency
+  );
+
+  pushReco(
+    out,
+    'mlx.numDraftTokens',
+    current.mlxNumDraftTokens > 0 ? current.mlxNumDraftTokens : 4,
+    'When forge.mlx.draftModel is set, 3–6 draft tokens per step is a typical starting point; raise only if the draft model keeps up.',
+    current.mlxNumDraftTokens
+  );
+
+  const numBatch = budget.tight ? 256 : ctxFromMem >= 65536 ? 1024 : 512;
+  pushReco(
+    out,
+    'ollama.numBatch',
+    numBatch,
+    budget.tight
+      ? 'A smaller num_batch lowers peak memory during Ollama prefill when the machine is under pressure.'
+      : 'A larger num_batch speeds long prompt evaluation on Ollama when you have headroom.',
+    current.ollamaNumBatch
   );
 
   const autoOut = resolveEffectiveMaxOutputTokens(0, ctxFromMem, 0);

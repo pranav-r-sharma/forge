@@ -1,5 +1,5 @@
 import { ReadCoverage } from './readCoverage';
-import { TraceWriter, TraceInput, argsHash, describeArgsForTrace, hwForTrace } from './traceLog';
+import { TraceWriter, TraceInput, argsHash, describeArgsForTrace, hwForTrace, promptCacheMetricsForTrace } from './traceLog';
 import type { HwSnapshot } from '../util/hwSampler';
 import * as vscode from 'vscode';
 import { keepAliveOpt } from '../ollama/client';
@@ -574,8 +574,7 @@ export async function runAgentTurn(
         viewEvent: iterState.viewEvent,
         estPromptTokens: iterState.estPromptTokens,
         modelMs: iterState.modelMs,
-        promptTokens: m?.promptTokens,
-        cachedTokens: m?.cachedTokens,
+        ...promptCacheMetricsForTrace(m, iterState.estPromptTokens),
         evalTokens: m?.evalTokens,
         tokPerSec: m?.tokensPerSecond,
         promptEvalMs: m?.promptEvalDurationMs,
@@ -624,6 +623,7 @@ export async function runAgentTurn(
         temperature: cfg.temperature,
         signal: cancellationToAbortSignal(cancellation),
         numCtx,
+        numBatch: cfg.ollamaNumBatch > 0 ? cfg.ollamaNumBatch : undefined,
         keepAliveMinutes: keepAliveOpt(cfg.keepAliveMinutes),
         format: structuredOutputEnabled ? STRUCTURED_RESPONSE_SCHEMA : undefined,
         thinking: thinkingForStep(cfg.thinking, failedRunsInARow),
@@ -1088,7 +1088,6 @@ export async function runAgentTurn(
 
     // Trace redundant-read flag (coverage updated above when building the tool result).
     try {
-      const redundantRead = redundantReadNote !== undefined;
       traceIter({
         tool: call.tool,
         argsHash: argsHash(call.args),
@@ -1096,7 +1095,7 @@ export async function runAgentTurn(
         ok: result.ok,
         toolMs: Date.now() - toolStartedAt,
         resultChars: result.content.length,
-        redundantRead,
+        ...(call.tool === 'read_file' ? { redundantRead: redundantReadNote !== undefined } : {}),
       });
     } catch {
       /* never let tracing break a turn */

@@ -9,7 +9,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { ReadCoverage } from '../../src/agent/readCoverage';
-import { TraceWriter, argsHash, describeArgsForTrace, tracePathFor, hwForTrace } from '../../src/agent/traceLog';
+import { TraceWriter, argsHash, describeArgsForTrace, tracePathFor, hwForTrace, promptCacheMetricsForTrace } from '../../src/agent/traceLog';
 import { runAgentTurn } from '../../src/agent/agentLoop';
 import { ApprovalBroker } from '../../src/agent/approvalBroker';
 import { PendingEditManager } from '../../src/tools/editApply';
@@ -164,6 +164,9 @@ async function testAgentLoopTrace() {
   ok(rec.every((r) => r.sessionId === 'sessX' && r.depth === 0 && r.mode === 'auto' && r.model === 'fake'), 'session, depth, mode and model recorded on every record');
   ok(rec[0].promptTokens === 101 && rec[0].evalTokens === 10 && rec[0].tokPerSec === 20 && rec[0].promptEvalMs === 50, `model metrics from the runtime are captured (got ${JSON.stringify({ p: rec[0].promptTokens, e: rec[0].evalTokens, t: rec[0].tokPerSec, pe: rec[0].promptEvalMs })})`);
   ok(rec[0].cachedTokens === 900, 'server-reported cached prompt tokens are captured in the trace');
+  const pcm = promptCacheMetricsForTrace({ promptTokens: 100, cachedTokens: 900, promptEvalDurationMs: 50 });
+  ok(pcm.promptTotalTokens === 1000 && pcm.prefillTokPerSec === 2000, 'promptCacheMetricsForTrace derives total tokens and prefill tok/s');
+  ok(rec[0].prefillTokPerSec !== undefined && rec[0].prefillTokPerSec > 0, 'trace records prefill tok/s');
   ok(rec.every((r) => typeof r.modelMs === 'number' && r.modelMs >= 0 && r.promptChars > 0 && r.promptMsgs >= 2), 'model time and prompt size recorded every iteration');
   ok(rec.slice(0, 5).every((r) => typeof r.toolMs === 'number' && typeof r.resultChars === 'number' && r.ok === true), 'tool time, result size and ok recorded for every tool call');
   ok(rec[0].argsHash === rec[1].argsHash && rec[0].argsHash !== rec[2].argsHash, 'identical calls share an args hash; a different range does not');

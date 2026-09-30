@@ -59,7 +59,10 @@ export function buildSystemPrompt(
 ): string {
   const allowed = new Set(toolsAllowedInMode(mode));
   const visibleTools = TOOL_SPECS.filter((t) => allowed.has(t.name));
-  const mcpToolsVisible = mode === 'ask' || mode === 'plan' ? [] : extra?.mcpTools || [];
+  const mcpToolsVisible =
+    mode === 'ask' || mode === 'plan'
+      ? []
+      : [...(extra?.mcpTools || [])].sort((a, b) => a.name.localeCompare(b.name));
   const toolDocLines = [
     ...visibleTools.map((t) => `- ${t.name}: ${t.describe}\n  example: ${JSON.stringify({ tool: t.name, args: t.exampleArgs })}`),
     ...mcpToolsVisible.map((t) => `- ${t.name}: ${t.describe}\n  example: ${JSON.stringify({ tool: t.name, args: t.exampleArgs })}`),
