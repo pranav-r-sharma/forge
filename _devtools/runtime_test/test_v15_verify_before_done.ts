@@ -6,6 +6,7 @@ import {
   detectAutoVerifyCommand,
   extractAcceptanceCheckCommand,
   formatVerifyFinalNote,
+  isAcceptableUserAcceptanceVerifyCommand,
   resolveVerifyCommandForFinal,
 } from '../../src/agent/verifyBeforeDone';
 import { pinUserMessagesForCompaction } from '../../src/agent/pinnedUserCompaction';
@@ -132,11 +133,47 @@ function testVerifyFinalNote() {
   ok(formatVerifyFinalNote('npm test', true).includes('passed'), 'final note shows pass');
 }
 
+function testUserAcceptanceCommandGuard() {
+  const root = '/tmp/forge-workspace';
+  ok(isAcceptableUserAcceptanceVerifyCommand('pytest -q', root), 'pytest -q accepted');
+  ok(!isAcceptableUserAcceptanceVerifyCommand('pytest && rm -rf build', root), 'chained pytest rejected');
+  ok(
+    resolveVerifyCommandForFinal({
+      mode: 'agent',
+      verifyBeforeDone: 'auto',
+      settingVerifyCommand: '',
+      userMessage: 'When done run `pytest && rm -rf build`',
+      workspaceRoot: root,
+      turnWroteFiles: true,
+      detectDeps: {
+        exists: () => false,
+        readdir: () => ['tests'],
+        readFile: () => undefined,
+        pytestImportable: true,
+      },
+    }) === 'pytest -q',
+    'rejected user chain falls back to auto-detect pytest',
+  );
+  ok(
+    resolveVerifyCommandForFinal({
+      mode: 'agent',
+      verifyBeforeDone: 'auto',
+      settingVerifyCommand: '',
+      userMessage: 'Verify with `pytest -q` before you finish',
+      workspaceRoot: root,
+      turnWroteFiles: true,
+      detectDeps: { exists: () => false, readdir: () => [], readFile: () => undefined, pytestImportable: true },
+    }) === 'pytest -q',
+    'user pytest -q wins when safe',
+  );
+}
+
 async function main() {
   testDetectOrder();
   testResolveModes();
   testCompactionPins();
   testVerifyFinalNote();
+  testUserAcceptanceCommandGuard();
   console.log(`\n${passed} passed, ${failed} failed.`);
   if (failed > 0) process.exit(1);
 }

@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { extractTaskCommandForms } from './claimChecker';
 import { ForgeMode, modeSupportsVerifyCommand } from './modes';
+import { isDangerousCommand } from '../tools/commandTool';
 
 export type VerifyBeforeDoneMode = 'off' | 'auto' | 'custom';
 
@@ -10,6 +11,46 @@ const ACCEPTANCE_COMMAND_RE =
   /(?:check\.sh|scripts\/check\.sh|npm test|pnpm test|yarn test|pytest|unittest discover|cargo test|go test|make (?:test|check))/i;
 
 const SHELL_LIKE = /^(?:\.\/|bash |sh |python3? |npm |pnpm |yarn |pytest|cargo |go |make )/i;
+
+/** Full-string shapes produced by {@link detectAutoVerifyCommand} (safe to run as-is). */
+const KNOWN_VERIFY_CHECK_FORM_RE: RegExp[] = [
+  /^bash check\.sh$/i,
+  /^bash scripts\/check\.sh$/i,
+  /^(npm|pnpm|yarn) test$/i,
+  /^pytest -q$/i,
+  /^python3 -m unittest discover -s tests -p 'test_\*\.py'$/,
+  /^make (?:test|check)$/i,
+  /^cargo test$/i,
+  /^go test \.\/\.\.\.$/,
+];
+
+function normalizeVerifyCommand(command: string): string {
+  return command.trim().replace(/\s+/g, ' ');
+}
+
+function hasShellChainingOrInjection(command: string): boolean {
+  if (/;/.test(command)) return true;
+  if (/&&/.test(command)) return true;
+  if (/\|\|/.test(command)) return true;
+  if (/>/.test(command)) return true;
+  if (/`/.test(command)) return true;
+  if (/\$\s*\(/.test(command)) return true;
+  return command.replace(/\|\|/g, '').includes('|');
+}
+
+function isKnownVerifyCheckForm(command: string): boolean {
+  const norm = normalizeVerifyCommand(command);
+  return KNOWN_VERIFY_CHECK_FORM_RE.some((re) => re.test(norm));
+}
+
+/** User-named acceptance commands must be a single safe check — no dangerous or chained shell. */
+export function isAcceptableUserAcceptanceVerifyCommand(command: string, workspaceRoot: string): boolean {
+  const norm = normalizeVerifyCommand(command);
+  if (!norm) return false;
+  if (isDangerousCommand(norm, workspaceRoot)) return false;
+  if (hasShellChainingOrInjection(norm) && !isKnownVerifyCheckForm(norm)) return false;
+  return true;
+}
 
 /** Command the user named in the task as the acceptance / verification step — wins over auto-detect. */
 export function extractAcceptanceCheckCommand(userMessage: string): string | undefined {
@@ -174,7 +215,7 @@ export function resolveVerifyCommandForFinal(i: ResolveVerifyCommandInput): stri
   }
 
   const fromUser = extractAcceptanceCheckCommand(i.userMessage);
-  if (fromUser) return fromUser;
+  if (fromUser && isAcceptableUserAcceptanceVerifyCommand(fromUser, i.workspaceRoot)) return fromUser;
 
   return detectAutoVerifyCommand(i.workspaceRoot, i.detectDeps);
 }
