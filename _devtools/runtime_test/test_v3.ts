@@ -52,7 +52,29 @@ function ok(cond: boolean, label: string) {
   for (let i = 0; i < 15; i++) cycleLast = d4.record([cA, cB, cC, cD][i % 4]);
   ok(!cycleLast!.looping, '15 steps of a 4-cycle does not trip before the 16th');
   cycleLast = d4.record(cA);
-  ok(cycleLast!.looping === false, 'a 4-chunk progressive read cycle does not trip (half-open ranges, forward progress)');
+  ok(cycleLast!.looping === true && /cycling through the same few calls/.test(cycleLast!.reason ?? ''), 'a 4-call cycle trips the loop detector on the 16th step');
+  ok(!!cycleLast!.warnSignature?.startsWith('cycle:'), 'cycle detection uses a stable warn signature');
+
+  const d5 = new LoopDetector({ consecutiveLimit: 100, windowSize: 8, windowLimit: 100 });
+  let firstPass;
+  for (const sig of [cA, cB, cC, cD]) firstPass = d5.record(sig);
+  ok(!firstPass!.looping, 'a single first pass over four new chunks does not trip');
+
+  const chunks12 = [];
+  for (let n = 0; n < 12; n++) {
+    const start = n * 100 + 1;
+    chunks12.push(signatureForStep('read_file', { path: 'long.ts', start_line: start, end_line: start + 99 }, true, `p${n}`));
+  }
+  let longPass;
+  for (const sig of chunks12) longPass = d5.record(sig);
+  ok(!longPass!.looping, 'twelve sequential new chunks on one file do not trip the cycle rule');
+
+  const d6 = new LoopDetector({ consecutiveLimit: 100, windowSize: 8, windowLimit: 100 });
+  const w = signatureForStep('write_file', { path: 'f.ts', content: 'v2' }, true, 'Updated f.ts.');
+  d6.record(w);
+  let afterWrite;
+  for (const sig of [cA, cB, cC, cD]) afterWrite = d6.record(sig);
+  ok(!afterWrite!.looping, 're-reading chunks after a write is progress and does not trip');
 }
 
 // ---------- checkpoints ----------

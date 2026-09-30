@@ -20,6 +20,8 @@
  *    move even if something else happens in between.
  * 3. The last 16 signatures use at most four distinct values — the model is
  *    cycling through the same few calls (e.g. four chunked reads on repeat).
+ *    Chunked read_file on one file is exempt only while each step reads line
+ *    ranges not yet covered since the last write to that file.
  */
 export interface LoopDetectorOptions {
   consecutiveLimit?: number;
@@ -38,9 +40,19 @@ export interface LoopCheckResult {
 const CYCLE_HISTORY_SIZE = 16;
 const CYCLE_MAX_DISTINCT = 4;
 
+function cloneCoverageMap(src: Map<string, ReadFileRange[]>): Map<string, ReadFileRange[]> {
+  const out = new Map<string, ReadFileRange[]>();
+  for (const [k, v] of src) out.set(k, v.slice());
+  return out;
+}
+
 export class LoopDetector {
   private history: string[] = [];
   private cycleHistory: string[] = [];
+  /** Read ranges covered per path since the last write to that path (this turn). */
+  private readCoverage = new Map<string, ReadFileRange[]>();
+  /** Coverage snapshot before each recorded step (aligned with cycleHistory). */
+  private coverageBeforeStep: Map<string, ReadFileRange[]>[] = [];
   private readonly consecutiveLimit: number;
   private readonly windowSize: number;
   private readonly windowLimit: number;
@@ -65,8 +77,14 @@ export class LoopDetector {
   record(signature: string): LoopCheckResult {
     this.history.push(signature);
     if (this.history.length > this.windowSize) this.history = this.history.slice(-this.windowSize);
+
+    this.coverageBeforeStep.push(cloneCoverageMap(this.readCoverage));
+    applySignatureToReadCoverage(signature, this.readCoverage);
     this.cycleHistory.push(signature);
-    if (this.cycleHistory.length > CYCLE_HISTORY_SIZE) this.cycleHistory = this.cycleHistory.slice(-CYCLE_HISTORY_SIZE);
+    if (this.cycleHistory.length > CYCLE_HISTORY_SIZE) {
+      this.cycleHistory = this.cycleHistory.slice(-CYCLE_HISTORY_SIZE);
+      this.coverageBeforeStep = this.coverageBeforeStep.slice(-CYCLE_HISTORY_SIZE);
+    }
 
     let consecutive = 0;
     for (let i = this.history.length - 1; i >= 0 && this.history[i] === signature; i--) consecutive++;
@@ -89,7 +107,8 @@ export class LoopDetector {
 
     if (this.cycleHistory.length >= CYCLE_HISTORY_SIZE) {
       const distinct = [...new Set(this.cycleHistory)];
-      if (distinct.length <= CYCLE_MAX_DISTINCT && !isProgressiveReadFileCycle(this.cycleHistory)) {
+      const coverageAtWindowStart = this.coverageBeforeStep[0] ?? new Map();
+      if (distinct.length <= CYCLE_MAX_DISTINCT && !isProgressiveReadFileCycle(this.cycleHistory, coverageAtWindowStart)) {
         const warnSignature = `cycle:${distinct.slice().sort().join('|')}`;
         return {
           looping: true,
@@ -106,6 +125,8 @@ export class LoopDetector {
   reset() {
     this.history = [];
     this.cycleHistory = [];
+    this.readCoverage.clear();
+    this.coverageBeforeStep = [];
     this.warnedSignatures.clear();
   }
 }
@@ -185,31 +206,97 @@ export function parseReadFileSignature(signature: string): ReadFileRange | undef
   }
 }
 
+export function parseWriteFileSignature(signature: string): string | undefined {
+  if (!signature.startsWith('write_file|')) return undefined;
+  const pipe = signature.indexOf('|', 'write_file|'.length);
+  if (pipe < 0) return undefined;
+  try {
+    const args = JSON.parse(signature.slice('write_file|'.length, pipe)) as Record<string, unknown>;
+    return typeof args.path === 'string' ? args.path : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function rangesOverlap(a: ReadFileRange, b: ReadFileRange): boolean {
   if (a.path !== b.path) return false;
   // Half-open [start, end): adjacent chunks (end === next.start) are not overlaps.
   return a.start < b.end && b.start < a.end;
 }
 
+function rangeFullyCovered(range: ReadFileRange, covered: ReadFileRange[]): boolean {
+  if (covered.length === 0) return false;
+  const merged = mergeRanges(covered.filter((r) => r.path === range.path));
+  return merged.some((m) => m.start <= range.start && m.end >= range.end);
+}
+
+function mergeRanges(ranges: ReadFileRange[]): ReadFileRange[] {
+  if (ranges.length === 0) return [];
+  const sorted = ranges.slice().sort((a, b) => a.start - b.start);
+  const out: ReadFileRange[] = [{ ...sorted[0] }];
+  for (let i = 1; i < sorted.length; i++) {
+    const cur = sorted[i];
+    const last = out[out.length - 1];
+    if (cur.start <= last.end) {
+      last.end = Math.max(last.end, cur.end);
+    } else {
+      out.push({ ...cur });
+    }
+  }
+  return out;
+}
+
+function applySignatureToReadCoverage(signature: string, coverage: Map<string, ReadFileRange[]>): void {
+  const writePath = parseWriteFileSignature(signature);
+  if (writePath) {
+    coverage.delete(writePath);
+    return;
+  }
+  const read = parseReadFileSignature(signature);
+  if (!read) return;
+  const list = coverage.get(read.path) ?? [];
+  list.push(read);
+  coverage.set(read.path, list);
+}
+
 /**
- * True when every step in the cycle window is a read_file on one path and the
- * ranges do not overlap (chunked forward progress, not thrashing the same lines).
+ * True when the window is a first-pass chunked read of one file: each read
+ * covers lines not yet read since the last write (including writes in the
+ * window), with at least two non-overlapping chunk ranges.
  */
-export function isProgressiveReadFileCycle(signatures: string[]): boolean {
+export function isProgressiveReadFileCycle(
+  signatures: string[],
+  coverageAtWindowStart: Map<string, ReadFileRange[]> = new Map(),
+): boolean {
   if (signatures.length < CYCLE_HISTORY_SIZE) return false;
-  const ranges: ReadFileRange[] = [];
+  const coverage = cloneCoverageMap(coverageAtWindowStart);
+  let filePath: string | undefined;
+  const uniqueRanges = new Map<string, ReadFileRange>();
+
   for (const sig of signatures) {
+    const writePath = parseWriteFileSignature(sig);
+    if (writePath) {
+      if (filePath !== undefined && writePath !== filePath) return false;
+      filePath = filePath ?? writePath;
+      coverage.delete(writePath);
+      continue;
+    }
     const r = parseReadFileSignature(sig);
     if (!r) return false;
-    ranges.push(r);
+    if (filePath !== undefined && r.path !== filePath) return false;
+    filePath = filePath ?? r.path;
+    if (rangeFullyCovered(r, coverage.get(r.path) ?? [])) return false;
+    const list = coverage.get(r.path) ?? [];
+    list.push(r);
+    coverage.set(r.path, list);
+    uniqueRanges.set(`${r.path}:${r.start}-${r.end}`, r);
   }
-  const paths = new Set(ranges.map((r) => r.path));
-  if (paths.size !== 1) return false;
-  const uniqueRanges = [...new Map(ranges.map((r) => [`${r.path}:${r.start}-${r.end}`, r])).values()];
-  if (uniqueRanges.length < 2) return false;
-  for (let i = 0; i < uniqueRanges.length; i++) {
-    for (let j = i + 1; j < uniqueRanges.length; j++) {
-      if (rangesOverlap(uniqueRanges[i], uniqueRanges[j])) return false;
+
+  if (!filePath || uniqueRanges.size < 2) return false;
+  const ranges = [...uniqueRanges.values()];
+  for (let i = 0; i < ranges.length; i++) {
+    for (let j = i + 1; j < ranges.length; j++) {
+      if (rangesOverlap(ranges[i], ranges[j])) return false;
     }
   }
   return true;

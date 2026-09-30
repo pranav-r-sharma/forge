@@ -37,6 +37,7 @@ function ok(cond: unknown, msg: string) {
 }
 const vs: any = vscode;
 const act = (tool: string, args: any) => '```forge_action\n' + JSON.stringify({ tool, args }) + '\n```';
+const CYCLE_HISTORY_SIZE = 16;
 
 function deps(root: vscode.Uri, ollama: any) {
   return {
@@ -138,23 +139,52 @@ async function testVerifyFailTranscriptNote() {
 }
 
 function testLoopProgressiveReads() {
-  const sigs = [];
   const ranges = [
     { start_line: 1, end_line: 272 },
     { start_line: 273, end_line: 560 },
     { start_line: 560, end_line: 808 },
     { start_line: 808, end_line: 952 },
   ];
-  for (let i = 0; i < 16; i++) {
-    const r = ranges[i % 4];
-    sigs.push(signatureForStep('read_file', { path: 'big.ts', ...r }, true, `chunk ${i}`));
+  const firstPass = ranges.map((r, i) =>
+    signatureForStep('read_file', { path: 'big.ts', ...r }, true, `chunk ${i}`),
+  );
+  while (firstPass.length < CYCLE_HISTORY_SIZE) {
+    const r = ranges[firstPass.length % 4];
+    firstPass.push(signatureForStep('read_file', { path: 'big.ts', ...r }, true, `more ${firstPass.length}`));
   }
-  ok(isProgressiveReadFileCycle(sigs), 'rotating non-overlapping read chunks are progressive, not a loop');
+  ok(!isProgressiveReadFileCycle(firstPass), 'repeated chunk rotation is not progressive');
+
+  const onePassOnly = ranges.map((r, i) =>
+    signatureForStep('read_file', { path: 'big.ts', ...r }, true, `once ${i}`),
+  );
+  ok(!isProgressiveReadFileCycle(onePassOnly), 'fewer than 16 steps never counts as a progressive cycle window');
+
   const same = Array.from({ length: 16 }, () =>
-    signatureForStep('read_file', { path: 'a.ts', start_line: 1, end_line: 50 }, true, 'same')
+    signatureForStep('read_file', { path: 'a.ts', start_line: 1, end_line: 50 }, true, 'same'),
   );
   ok(!isProgressiveReadFileCycle(same), 'identical read ranges are not progressive');
-  ok(parseReadFileSignature(sigs[0])?.path === 'big.ts', 'parseReadFileSignature reads path');
+
+  const progressive16: string[] = [];
+  for (let i = 0; i < 16; i++) {
+    const start = i * 80 + 1;
+    progressive16.push(
+      signatureForStep('read_file', { path: 'big.ts', start_line: start, end_line: start + 79 }, true, `line ${i}`),
+    );
+  }
+  ok(isProgressiveReadFileCycle(progressive16), 'sixteen sequential new chunks are progressive');
+
+  const afterWriteWindow: string[] = [
+    signatureForStep('write_file', { path: 'big.ts', content: 'x' }, true, 'Updated big.ts.'),
+  ];
+  for (let i = 0; i < 15; i++) {
+    const start = i * 50 + 1;
+    afterWriteWindow.push(
+      signatureForStep('read_file', { path: 'big.ts', start_line: start, end_line: start + 49 }, true, `w${i}`),
+    );
+  }
+  ok(isProgressiveReadFileCycle(afterWriteWindow), 'reads after a write in the window are fresh progress');
+
+  ok(parseReadFileSignature(firstPass[0])?.path === 'big.ts', 'parseReadFileSignature reads path');
 }
 
 function testVerifyLoopSkipWithProgress() {
