@@ -16,7 +16,7 @@ import { WebFetchService } from '../websearch/fetchService';
 import { WebSearchKeyStore, SECRET_BACKED_PROVIDERS } from '../websearch/keyStore';
 import { McpManager } from '../mcp/mcpManager';
 import { MODES } from '../agent/modes';
-import { getConfig, setChatModel, setForgeSetting, setMlxChatModel } from '../util/config';
+import { getConfig, setChatModel, setForgeSetting, setMlxChatModel, userConfiguredRecommendationKeys } from '../util/config';
 import { genId } from '../util/ids';
 import { resolveWorkspacePath, toRelative } from '../util/paths';
 import { WorkspaceEntryIndex } from '../util/fileSearch';
@@ -697,6 +697,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       })
     );
     const snapshot: SettingsSnapshot = {
+      provider: cfg.provider,
+      thinking: cfg.thinking,
+      terseSteps: cfg.terseSteps,
+      contextAppendOnly: cfg.contextAppendOnly,
+      traceEnabled: cfg.traceEnabled,
       numCtx: cfg.numCtx,
       maxAgentIterations: cfg.maxAgentIterations,
       autoModeMaxIterations: cfg.autoModeMaxIterations,
@@ -774,7 +779,27 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     if (profile.memory) parts.push(`${profile.memory.availableGB} GB available`);
     if (profile.memory?.pressure && profile.memory.pressure !== 'unknown') parts.push(`pressure ${profile.memory.pressure}`);
     if (loadedGb) parts.push(`model ~${loadedGb.toFixed(1)} GB resident`);
-    snapshot.recommendations = recommendations;
+    const currentByKey: Record<string, number> = {
+      numCtx: cfg.numCtx,
+      'mlx.promptCacheGB': cfg.mlxPromptCacheGB,
+      'mlx.prefillStepSize': cfg.mlxPrefillStepSize,
+      'mlx.promptCacheSize': cfg.mlxPromptCacheSize,
+      'mlx.decodeConcurrency': cfg.mlxDecodeConcurrency,
+      'mlx.promptConcurrency': cfg.mlxPromptConcurrency,
+      'mlx.numDraftTokens': cfg.mlxNumDraftTokens,
+      'ollama.numBatch': cfg.ollamaNumBatch,
+      maxOutputTokens: cfg.maxOutputTokens,
+      maxOutputTokensCeiling: cfg.maxOutputTokensCeiling,
+      keepAliveMinutes: cfg.keepAliveMinutes,
+      maxContextFileKB: cfg.maxContextFileKB,
+    };
+    const userConfigured = userConfiguredRecommendationKeys();
+    snapshot.recommendations = recommendations.map((r) => ({
+      ...r,
+      userConfigured: userConfigured[r.settingKey],
+      userValue: currentByKey[r.settingKey],
+    }));
+    snapshot.userConfiguredRecommendationKeys = userConfigured;
     snapshot.machineProfileSummary = parts.length ? parts.join(' · ') : undefined;
     return snapshot;
   }

@@ -61,9 +61,9 @@ Each item: **purpose · trigger · location · settings · mutates**
 | ID | Feature | Purpose | Trigger | Key code | Cap | Mutates |
 |----|---------|---------|---------|----------|-----|---------|
 | F32 | Foreign tool detect | Native/Harmony/XML shapes | No fence call | `detectForeignToolCall` | — | Accept or nudge |
-| F33 | Foreign tool nudge | Force ```forge_action``` | F32, not accepted | `formatForeignToolCallNudge` | **3** shared† | User msg |
-| F34 | Length truncation nudge | `finishReason==='length'` | No call | `formatIncompleteActionNudge` | **3** shared† | User msg; `pendingActionTarget` |
-| F35 | Abandoned action nudge | Mid-JSON tool fragment | `looksLikeAbandonedToolCall` | same as F34 | **3** shared† | User msg; append hint |
+| F33 | Foreign tool nudge | Force ```forge_action``` | F32, not accepted | `formatForeignToolCallNudge` | **3** foreign† | User msg |
+| F34 | Length truncation nudge | `finishReason==='length'` | No call | `formatIncompleteActionNudge` | **3** incomplete† | User msg; `pendingActionTarget` |
+| F35 | Abandoned action nudge | Mid-JSON tool fragment | `looksLikeAbandonedToolCall` | same as F34 | **3** incomplete† | User msg; append hint |
 | F36 | Incomplete cap failure | Stop with system note | † exhausted | `formatIncompleteActionCapFailure` | — | **Final** (failure) |
 | F37 | Unverified file claim | Said edited path, no write_file | Final path | `findUnverifiedClaims` | **2** | User msg |
 | F38 | Task command forms | User-specified cmd shapes not run | Final | `formatTaskCommandNudge` | **3** (progress-gated) | User msg |
@@ -75,7 +75,7 @@ Each item: **purpose · trigger · location · settings · mutates**
 | F44 | Verify gaming warning | Heuristic bypass scan | Pass after prior fail | `gamingDetection.ts` | — | UI warning only |
 | F45 | Pending action redirect | Finish interrupted write | After incomplete nudge | `pendingActionTarget` | 1 redirect | User msg |
 
-† **Shared counter:** `truncationNudges` in `agentLoop.ts` (~584, 724–728, 750–753, 1162) counts **both** foreign-tool and incomplete/abandoned nudges.
+† **Separate counters:** `foreignFormatNudges` and `incompleteActionNudges` in `agentLoop.ts` (~584, 724–728, 750–753) each cap at **3** (foreign-tool vs incomplete/abandoned nudges no longer share one budget).
 
 ### Tool execution
 
@@ -105,7 +105,7 @@ Read via `getConfig()` in `src/util/config.ts` unless noted. **Panel?** = listed
 
 | Key | Default (package.json / code) | Panel? | Effect |
 |-----|------------------------------|--------|--------|
-| `forge.provider` | mlx | No | LLM backend |
+| `forge.provider` | mlx | Yes | LLM backend |
 | `forge.ollamaBaseUrl` | localhost:11434 | No | Ollama URL |
 | `forge.mlx.baseUrl` | 127.0.0.1:8123 | No | MLX server URL |
 | `forge.mlx.model` | "" | No | HF folder / id |
@@ -120,13 +120,13 @@ Read via `getConfig()` in `src/util/config.ts` unless noted. **Panel?** = listed
 | `forge.autoModeMaxIterations` | 100000 | Yes | Auto/outcome cap |
 | `forge.maxOutputTokens` | 0 (auto) | Yes | Generation cap |
 | `forge.maxOutputTokensCeiling` | 0 | Yes | Caps auto mode only |
-| `forge.thinking` | auto | **No** | Thinking toggle |
-| `forge.terseSteps` | true | **No** | System brevity |
-| `forge.context.appendOnly` | true | **No** | Append-only vs legacy prune |
+| `forge.thinking` | auto | **Yes** | Thinking toggle |
+| `forge.terseSteps` | true | **Yes** | System brevity |
+| `forge.context.appendOnly` | true | **Yes** | Append-only vs legacy prune |
 | `forge.context.highWaterPct` / `lowWaterPct` | 75 / 45 | **No** | Compaction batch thresholds |
 | `forge.context.pinnedUserMaxChars` | 40000 | Yes | Pin budget in compaction |
 | `forge.singleMessageSharePct` | 25 | Yes | Oversized msg cap |
-| `forge.trace.enabled` | true | **No** | JSONL trace |
+| `forge.trace.enabled` | true | **Yes** | JSONL trace |
 | `forge.loopDetection.enabled` | true | Yes | Loop detector |
 | `forge.structuredOutput.enabled` | false | Yes | JSON envelope |
 | `forge.planFirst.enabled` | false | Yes | Plan-first pass |
@@ -164,8 +164,8 @@ buildPromptView (append-only OR legacy prune/compact/hardCap + requirements tail
 LLM chat (thinking, maxTokens, numCtx, structured format?)
 updateCharsPerToken?
 parse response (plan → no tools)
-foreign tool? → accept OR truncationNudge++ → continue OR cap final
-incomplete (length|abandoned)? → truncationNudge++ → continue OR cap final
+foreign tool? → accept OR foreignFormatNudge++ → continue OR cap final
+incomplete (length|abandoned)? → incompleteActionNudge++ → continue OR cap final
 if NO tool call (final candidate chain — at most ONE nudge per iteration):
   1 unverified claims (≤2)
   2 task command forms (≤3, progress gated)
@@ -225,14 +225,14 @@ Verified by reviewer 2026-09-30: row 1 re-classified (false positive).
 | Sev | Issue | Scenario | Evidence | Suggested fix (not implemented in audit) |
 |-----|-------|----------|----------|----------------------------------------|
 | **cosmetic** | Send-path health error toast always mentions Ollama | User on MLX (or other active provider) sees misleading toast if health fails | `services.ollama` is `SwitchableProvider` (`extension.ts` ~80); `health()` routes to active runtime; toast at `chatSession.ts` ~488 always says “Can't reach Ollama … Run ollama serve” | Word the error message by active provider |
-| **risk** | Shared `truncationNudges` | Model emits 3 foreign-format attempts then hits length truncation → cap failure without incomplete recovery | `agentLoop.ts` 584, 724–728, 750–753 | Split counters or prioritize length over foreign |
-| **risk** | Assistant “done” before verify fail | Model final text pushed (~859) then verify fails → transcript shows success wording while loop continues | `agentLoop.ts` 859–899 | Defer `pushAssistant` until verify passes, or insert corrective stub |
+| **risk** | Shared `truncationNudges` | Model emits 3 foreign-format attempts then hits length truncation → cap failure without incomplete recovery | `agentLoop.ts` 584, 724–728, 750–753 | **Fixed 2026-09-30:** split `foreignFormatNudges` / `incompleteActionNudges` |
+| **risk** | Assistant “done” before verify fail | Model final text pushed (~859) then verify fails → transcript shows success wording while loop continues | `agentLoop.ts` 859–899 | **Fixed 2026-09-30:** defer `pushAssistant` until verify passes; on fail append corrective system note |
 | **risk** | Session verify ignores `turnWroteFiles` | Outcome chat sets verify cmd; model answers without edits → verify still runs | `verifyBeforeDone.ts` 205–208 (session wins before write check) | Document as intentional or gate session verify on writes |
-| **risk** | Loop detector vs verify retries | Repeated identical verify command + same output counts toward loop; may halt Outcome iteration | `agentLoop.ts` 896 `checkLoop(..., '__verify__', ...)`; `loopDetector.ts` | Exempt verify signature or use outcome-specific limits |
-| **risk** | Loop detector vs chunked reads | Four rotating read ranges can trip “cycle” rule (by design) | `loopDetector.ts` 22–23, 90–99 | Tune cycle distinct count or exempt partial reads with progress |
-| **risk** | Settings panel gap | `thinking`, `terseSteps`, `context.appendOnly`, `trace.enabled`, `provider`, MLX model path not in allowlist | `config.ts` `SETTINGS_PANEL_KEYS` | Extend allowlist or document “settings.json only” |
-| **risk** | `numCtx` panel vs MLX | Panel writes `numCtx` but storage remaps to `mlx.contextTokens` when provider≠ollama | `setForgeSetting` 353–355 | UI label should say “Context (MLX)” when on MLX |
-| **risk** | Recommendations vs explicit settings | Apply may overwrite user-tuned ctx/output | `recommendations.ts` + panel | Confirm diff before apply; don’t fight panel values |
+| **risk** | Loop detector vs verify retries | Repeated identical verify command + same output counts toward loop; may halt Outcome iteration | `agentLoop.ts` 896 `checkLoop(..., '__verify__', ...)`; `loopDetector.ts` | **Fixed 2026-09-30:** skip loop when `writesSinceLastVerify` had progress |
+| **risk** | Loop detector vs chunked reads | Four rotating read ranges can trip “cycle” rule (by design) | `loopDetector.ts` 22–23, 90–99 | **Fixed 2026-09-30:** exempt non-overlapping read_file progress cycles |
+| **risk** | Settings panel gap | `thinking`, `terseSteps`, `context.appendOnly`, `trace.enabled`, `provider`, MLX model path not in allowlist | `config.ts` `SETTINGS_PANEL_KEYS` | **Fixed 2026-09-30:** added to allowlist + panel UI (provider/thinking/terse/append-only/trace) |
+| **risk** | `numCtx` panel vs MLX | Panel writes `numCtx` but storage remaps to `mlx.contextTokens` when provider≠ollama | `setForgeSetting` 353–355 | **Fixed 2026-09-30:** label “Context window (MLX)” / “(Ollama)” in settings panel |
+| **risk** | Recommendations vs explicit settings | Apply may overwrite user-tuned ctx/output | `recommendations.ts` + panel | **Fixed 2026-09-30:** Apply all skips user-configured keys; “(you set X)” on reco rows |
 | **risk** | Compaction + checklist + pins | Large pinned users + requirements tail + summary can still approach window; low-water loop escalates keep-N | `contextManager.ts` `updatePromptView` | Monitor `estPromptTokens` in trace; adjust water marks |
 | **risk** | Auto output cap vs huge ctx | Auto = max(ctx/2, 16384) — on 131k ctx allows ~65k gen; still independent of prompt size (runtime may OOM) | `resolveEffectiveMaxOutputTokens` | Document; optional prompt-aware cap |
 | **cosmetic** | `findRequirementsGateGaps` ≡ nudge gaps | Same filter for markers and nudges; judgment items never nudged | `requirements.ts` 384–396 | Rename or split for clarity |

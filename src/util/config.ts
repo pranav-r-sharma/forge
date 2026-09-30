@@ -296,6 +296,11 @@ export async function setCompletionModel(model: string) {
  * message can never blind-write an arbitrary VS Code setting.
  */
 export const SETTINGS_PANEL_KEYS = [
+  'provider',
+  'thinking',
+  'terseSteps',
+  'context.appendOnly',
+  'trace.enabled',
   'numCtx',
   'maxAgentIterations',
   'autoModeMaxIterations',
@@ -345,14 +350,50 @@ export const SETTINGS_PANEL_KEYS = [
 ] as const;
 export type SettingsPanelKey = (typeof SETTINGS_PANEL_KEYS)[number];
 
+/** VS Code storage key for a panel setting (handles numCtx → mlx.contextTokens remap). */
+export function storageKeyForPanelSetting(key: string, provider?: ForgeConfig['provider']): string {
+  const cfg = vscode.workspace.getConfiguration('forge');
+  const p = provider ?? parseProviderId(cfg.get<string>('provider'));
+  if (key === 'numCtx' && p !== 'ollama') return 'mlx.contextTokens';
+  return key;
+}
+
+/** True when the user set this key at global, workspace, or folder scope (not just the default). */
+export function isUserConfiguredPanelSetting(key: string): boolean {
+  const storageKey = storageKeyForPanelSetting(key);
+  const insp = vscode.workspace.getConfiguration('forge').inspect(storageKey);
+  return insp?.globalValue !== undefined || insp?.workspaceValue !== undefined || insp?.workspaceFolderValue !== undefined;
+}
+
+/** Keys that appear in the machine recommendations UI and may be skipped by Apply all. */
+export const RECOMMENDATION_SETTING_KEYS = [
+  'numCtx',
+  'mlx.promptCacheGB',
+  'mlx.prefillStepSize',
+  'mlx.promptCacheSize',
+  'mlx.decodeConcurrency',
+  'mlx.promptConcurrency',
+  'mlx.numDraftTokens',
+  'ollama.numBatch',
+  'maxOutputTokens',
+  'maxOutputTokensCeiling',
+  'keepAliveMinutes',
+  'maxContextFileKB',
+] as const;
+
+export function userConfiguredRecommendationKeys(): Record<string, boolean> {
+  const out: Record<string, boolean> = {};
+  for (const key of RECOMMENDATION_SETTING_KEYS) {
+    out[key] = isUserConfiguredPanelSetting(key === 'numCtx' ? 'numCtx' : key);
+  }
+  return out;
+}
+
 /** Generic setting writer backing the Settings panel — see SETTINGS_PANEL_KEYS. */
 export async function setForgeSetting(key: string, value: unknown): Promise<boolean> {
   if (!(SETTINGS_PANEL_KEYS as readonly string[]).includes(key)) return false;
   const cfg = vscode.workspace.getConfiguration('forge');
-  let storageKey: string = key;
-  if (key === 'numCtx' && parseProviderId(cfg.get<string>('provider')) !== 'ollama') {
-    storageKey = 'mlx.contextTokens';
-  }
+  const storageKey = storageKeyForPanelSetting(key);
   await cfg.update(storageKey, value, vscode.ConfigurationTarget.Global);
   return true;
 }

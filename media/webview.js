@@ -496,8 +496,12 @@
   function settingRecoHtml(key) {
     const r = recoForKey(key);
     if (!r) return '';
+    const youSet =
+      r.userConfigured && r.userValue !== undefined
+        ? ` <span class="setting-reco-yours">(you set ${escapeHtml(formatRecoValue(r.userValue))})</span>`
+        : '';
     return `<div class="setting-reco" data-reco-key="${escapeAttr(key)}">
-      <div class="setting-reco-text">Recommended: ${escapeHtml(formatRecoValue(r.recommended))} — ${escapeHtml(r.reason)}</div>
+      <div class="setting-reco-text">Recommended: ${escapeHtml(formatRecoValue(r.recommended))} — ${escapeHtml(r.reason)}${youSet}</div>
       <button type="button" class="setting-reco-apply" data-key="${escapeAttr(key)}" data-value="${r.recommended}">Apply</button>
     </div>`;
   }
@@ -540,6 +544,7 @@
         };
         for (const r of recs) {
           const now = currentByKey[r.settingKey];
+          if (r.userConfigured) continue;
           if (now === r.recommended) continue;
           const inputId = RECO_INPUT_IDS[r.settingKey];
           const input = inputId ? document.getElementById(inputId) : null;
@@ -653,6 +658,16 @@
       el.settingsBody.innerHTML = '<div class="search-empty">Loading…</div>';
       return;
     }
+    const numCtxLabel =
+      s.provider === 'ollama'
+        ? 'Context window (Ollama)'
+        : s.provider === 'mlx'
+          ? 'Context window (MLX)'
+          : 'Context window (global)';
+    const numCtxHint =
+      s.provider === 'ollama'
+        ? 'forge.numCtx — sent on each Ollama chat request.'
+        : 'Stored as forge.mlx.contextTokens for MLX/OpenAI-compatible servers (forge.numCtx is Ollama-only).';
     const profileLine = s.machineProfileSummary
       ? `<div class="settings-machine-profile">${escapeHtml(s.machineProfileSummary)}</div>`
       : '';
@@ -671,7 +686,12 @@
       <div id="settings-numctx-suggestion-host">${renderNumCtxSuggestionHtml()}</div>
       ${sessionModelSettingRow()}
       <div class="settings-section-title">Global defaults</div>
-      ${settingRowWithReco('numCtx', 'Context window (global)', 'Applies to all chats that do not have their own context override. For MLX and OpenAI-compatible runtimes this is forge.mlx.contextTokens; for Ollama it is forge.numCtx.', `<input id="set-numCtx" type="number" min="512" step="512" value="${s.numCtx}" />`)}
+      ${settingRow(
+        'LLM provider',
+        'Which runtime Forge uses for chat (may require reload or server restart when switching).',
+        `<select id="set-provider"><option value="mlx" ${s.provider === 'mlx' ? 'selected' : ''}>mlx</option><option value="ollama" ${s.provider === 'ollama' ? 'selected' : ''}>ollama</option><option value="openai-compatible" ${s.provider === 'openai-compatible' ? 'selected' : ''}>openai-compatible</option></select>`
+      )}
+      ${settingRowWithReco('numCtx', numCtxLabel, numCtxHint, `<input id="set-numCtx" type="number" min="512" step="512" value="${s.numCtx}" />`)}
       ${settingRowWithReco('maxOutputTokens', 'Max output tokens per reply', '0 = auto (half the context window, at least 16384). Thinking tokens count too. Never leaves the limit unset — mlx_lm.server defaults to 512.', `<input id="set-maxOutputTokens" type="number" min="0" step="512" value="${s.maxOutputTokens}" />`)}
       ${settingRowWithReco('maxOutputTokensCeiling', 'Max output tokens ceiling (auto mode)', '0 = no ceiling. When max output is auto, cap the derived limit here (explicit max output still wins).', `<input id="set-maxOutputTokensCeiling" type="number" min="0" step="512" value="${s.maxOutputTokensCeiling ?? 0}" />`)}
       ${settingRow('Temperature', '', `<input id="set-temperature" type="number" min="0" max="2" step="0.1" value="${s.temperature}" />`)}
@@ -679,6 +699,10 @@
       ${settingRow('Require approval for file edits', '', `<input id="set-requireApprovalForWrites" type="checkbox" ${s.requireApprovalForWrites ? 'checked' : ''} />`)}
       ${settingRow('Require approval for commands', '', `<input id="set-requireApprovalForCommands" type="checkbox" ${s.requireApprovalForCommands ? 'checked' : ''} />`)}
       ${settingRow('Show brief status messages', 'e.g. "Reading foo.ts…" while the agent works.', `<input id="set-showStatusMessages" type="checkbox" ${s.showStatusMessages ? 'checked' : ''} />`)}
+      ${settingRow('Thinking mode', 'off / on / auto (auto enables thinking after repeated command failures).', `<select id="set-thinking"><option value="off" ${s.thinking === 'off' ? 'selected' : ''}>off</option><option value="on" ${s.thinking === 'on' ? 'selected' : ''}>on</option><option value="auto" ${s.thinking === 'auto' ? 'selected' : ''}>auto</option></select>`)}
+      ${settingRow('Terse step messages', 'Shorter system prompt style for agent steps.', `<input id="set-terseSteps" type="checkbox" ${s.terseSteps ? 'checked' : ''} />`)}
+      ${settingRow('Append-only prompt view', 'Batch compaction for MLX prefix cache stability (legacy off rewrites stale reads each step).', `<input id="set-contextAppendOnly" type="checkbox" ${s.contextAppendOnly ? 'checked' : ''} />`)}
+      ${settingRow('Trace JSONL', 'Write per-iteration metrics under .forge/traces/.', `<input id="set-traceEnabled" type="checkbox" ${s.traceEnabled ? 'checked' : ''} />`)}
       ${settingRow('Loop detection (Auto/Outcome mode)', 'Stops the agent if it looks like it\'s repeating the same action in a loop. check_background_command is always exempt regardless of this setting. Turn off if it\'s incorrectly triggering on legitimately repetitive work.', `<input id="set-loopDetectionEnabled" type="checkbox" ${s.loopDetectionEnabled ? 'checked' : ''} />`)}
       <div class="settings-section-title">Performance (MLX)</div>
       ${settingRowWithReco('mlx.promptCacheGB', 'MLX prompt cache (GB)', 'In-memory prompt cache on mlx_lm.server (0 = server default). Restarts the managed MLX server when changed.', `<input id="set-mlx-promptCacheGB" type="number" min="0" step="0.5" value="${s.mlxPromptCacheGB}" />`)}
@@ -789,6 +813,21 @@
     // while their DOM ids are camelCase (set-webSearchMaxResults,
     // set-loopDetectionEnabled) — folding them into the generic loop would
     // require deriving one from the other and getting it wrong silently.
+    document.getElementById('set-provider').addEventListener('change', (e) => {
+      vscodeApi.postMessage({ type: 'updateSetting', key: 'provider', value: e.target.value });
+    });
+    document.getElementById('set-thinking').addEventListener('change', (e) => {
+      vscodeApi.postMessage({ type: 'updateSetting', key: 'thinking', value: e.target.value });
+    });
+    document.getElementById('set-terseSteps').addEventListener('change', (e) => {
+      vscodeApi.postMessage({ type: 'updateSetting', key: 'terseSteps', value: e.target.checked });
+    });
+    document.getElementById('set-contextAppendOnly').addEventListener('change', (e) => {
+      vscodeApi.postMessage({ type: 'updateSetting', key: 'context.appendOnly', value: e.target.checked });
+    });
+    document.getElementById('set-traceEnabled').addEventListener('change', (e) => {
+      vscodeApi.postMessage({ type: 'updateSetting', key: 'trace.enabled', value: e.target.checked });
+    });
     document.getElementById('set-loopDetectionEnabled').addEventListener('change', (e) => {
       vscodeApi.postMessage({ type: 'updateSetting', key: 'loopDetection.enabled', value: e.target.checked });
     });

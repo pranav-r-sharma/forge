@@ -52,8 +52,7 @@ function ok(cond: boolean, label: string) {
   for (let i = 0; i < 15; i++) cycleLast = d4.record([cA, cB, cC, cD][i % 4]);
   ok(!cycleLast!.looping, '15 steps of a 4-cycle does not trip before the 16th');
   cycleLast = d4.record(cA);
-  ok(cycleLast!.looping === true && /cycling through the same few calls/.test(cycleLast!.reason ?? ''), 'a 4-call cycle trips the loop detector on the 16th step');
-  ok(!!cycleLast!.warnSignature?.startsWith('cycle:'), 'cycle detection uses a stable warn signature');
+  ok(cycleLast!.looping === false, 'a 4-chunk progressive read cycle does not trip (half-open ranges, forward progress)');
 }
 
 // ---------- checkpoints ----------

@@ -89,7 +89,7 @@ export class LoopDetector {
 
     if (this.cycleHistory.length >= CYCLE_HISTORY_SIZE) {
       const distinct = [...new Set(this.cycleHistory)];
-      if (distinct.length <= CYCLE_MAX_DISTINCT) {
+      if (distinct.length <= CYCLE_MAX_DISTINCT && !isProgressiveReadFileCycle(this.cycleHistory)) {
         const warnSignature = `cycle:${distinct.slice().sort().join('|')}`;
         return {
           looping: true,
@@ -159,4 +159,58 @@ export function signatureForStep(tool: string, args: Record<string, any>, ok: bo
 function stableStringify(obj: Record<string, any>): string {
   const keys = Object.keys(obj).sort();
   return JSON.stringify(obj, keys);
+}
+
+/** Parsed read_file range from a loop signature (see signatureForStep). */
+export interface ReadFileRange {
+  path: string;
+  start: number;
+  end: number;
+}
+
+/** Extract path and line range from a read_file loop signature, if applicable. */
+export function parseReadFileSignature(signature: string): ReadFileRange | undefined {
+  if (!signature.startsWith('read_file|')) return undefined;
+  const pipe = signature.indexOf('|', 'read_file|'.length);
+  if (pipe < 0) return undefined;
+  const argsJson = signature.slice('read_file|'.length, pipe);
+  try {
+    const args = JSON.parse(argsJson) as Record<string, unknown>;
+    if (typeof args.path !== 'string') return undefined;
+    const start = typeof args.start_line === 'number' ? args.start_line : 1;
+    const end = typeof args.end_line === 'number' ? args.end_line : start;
+    return { path: args.path, start, end };
+  } catch {
+    return undefined;
+  }
+}
+
+function rangesOverlap(a: ReadFileRange, b: ReadFileRange): boolean {
+  if (a.path !== b.path) return false;
+  // Half-open [start, end): adjacent chunks (end === next.start) are not overlaps.
+  return a.start < b.end && b.start < a.end;
+}
+
+/**
+ * True when every step in the cycle window is a read_file on one path and the
+ * ranges do not overlap (chunked forward progress, not thrashing the same lines).
+ */
+export function isProgressiveReadFileCycle(signatures: string[]): boolean {
+  if (signatures.length < CYCLE_HISTORY_SIZE) return false;
+  const ranges: ReadFileRange[] = [];
+  for (const sig of signatures) {
+    const r = parseReadFileSignature(sig);
+    if (!r) return false;
+    ranges.push(r);
+  }
+  const paths = new Set(ranges.map((r) => r.path));
+  if (paths.size !== 1) return false;
+  const uniqueRanges = [...new Map(ranges.map((r) => [`${r.path}:${r.start}-${r.end}`, r])).values()];
+  if (uniqueRanges.length < 2) return false;
+  for (let i = 0; i < uniqueRanges.length; i++) {
+    for (let j = i + 1; j < uniqueRanges.length; j++) {
+      if (rangesOverlap(uniqueRanges[i], uniqueRanges[j])) return false;
+    }
+  }
+  return true;
 }

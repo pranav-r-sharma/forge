@@ -68,6 +68,11 @@ export interface SessionState {
 
 /** Snapshot of the settings the in-webview Settings panel can read/write (item "a new setting pane") — see util/config.ts's SETTINGS_PANEL_KEYS. */
 export interface SettingsSnapshot {
+  provider: string;
+  thinking: string;
+  terseSteps: boolean;
+  contextAppendOnly: boolean;
+  traceEnabled: boolean;
   numCtx: number;
   maxAgentIterations: number;
   autoModeMaxIterations: number;
@@ -118,6 +123,8 @@ export interface SettingsSnapshot {
   maxOutputTokensCeiling: number;
   /** Dynamic suggestions from util/recommendations.ts (recomputed on panel open / Refresh). */
   recommendations: SettingRecommendation[];
+  /** Keys the user set explicitly — Apply all skips these unless a per-field Apply is clicked. */
+  userConfiguredRecommendationKeys?: Record<string, boolean>;
   /** Short read-only summary of the machine profile used for recommendations. */
   machineProfileSummary?: string;
 }
@@ -126,6 +133,8 @@ export interface SettingRecommendation {
   settingKey: string;
   recommended: number;
   reason: string;
+  userConfigured?: boolean;
+  userValue?: number;
 }
 
 /** Item "ability to kill commands while they are running from the chat window" — see tools/backgroundProcessManager.ts. */

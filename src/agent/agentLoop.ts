@@ -581,7 +581,8 @@ export async function runAgentTurn(
   let unresolvedRunFailure: UnresolvedRunFailure | undefined;
   let commandsExecutedThisTurn: string[] = [];
   let filesWrittenThisTurn: string[] = [];
-  let truncationNudges = 0;
+  let foreignFormatNudges = 0;
+  let incompleteActionNudges = 0;
   let requirementsNudges = 0;
   let pendingActionTarget: PendingActionTarget | undefined;
   /** Consecutive failed run_command results (tests/build still failing) — drives forge.thinking='auto': the agent is stuck, so let the model think. */
@@ -721,15 +722,15 @@ export async function runAgentTurn(
         nativeAcceptedFormat = accepted.format;
       }
     }
-    if (foreignCall && !call && truncationNudges < 3) {
-      truncationNudges++;
+    if (foreignCall && !call && foreignFormatNudges < 3) {
+      foreignFormatNudges++;
       pushAssistant(fullText);
       pushMsg({ role: 'user', content: formatForeignToolCallNudge(foreignCall, knownToolNames, fullText) });
       traceIter({ note: 'foreign-tool-call-nudge' });
       continue;
     }
-    if (foreignCall && !call && truncationNudges >= 3) {
-      const failureNote = formatForeignToolCallCapFailure(foreignCall, truncationNudges);
+    if (foreignCall && !call && foreignFormatNudges >= 3) {
+      const failureNote = formatForeignToolCallCapFailure(foreignCall, foreignFormatNudges);
       pushAssistant(fullText);
       const finalText = `${displayText.trim()}\n\n[System] ${failureNote}`.trim();
       traceIter({ note: 'incomplete-action-cap', final: true });
@@ -747,10 +748,10 @@ export async function runAgentTurn(
     // acceptance test — see PROGRESS.md — where this was 100% reproducible on a large new-file write).
     const abandonedAction = !call && !lengthTruncated && options.mode !== 'plan' && looksLikeAbandonedToolCall(fullText);
     const incompleteReply = !call && options.mode !== 'plan' && (lengthTruncated || abandonedAction);
-    if (incompleteReply && truncationNudges < 3) {
+    if (incompleteReply && incompleteActionNudges < 3) {
       // What we have is an INCOMPLETE action or thought, not a final answer — treating it as one is how a run
       // silently "finishes" without doing the work. Keep the partial text in the transcript and ask the model to carry on with an action.
-      truncationNudges++;
+      incompleteActionNudges++;
       pushAssistant(fullText);
       pushMsg({ role: 'user', content: formatIncompleteActionNudge(fullText, lengthTruncated) });
       const nudgeTarget = extractAbandonedActionTarget(fullText);
@@ -761,8 +762,8 @@ export async function runAgentTurn(
       continue;
     }
 
-    if (incompleteReply && truncationNudges >= 3) {
-      const failureNote = formatIncompleteActionCapFailure(fullText, truncationNudges);
+    if (incompleteReply && incompleteActionNudges >= 3) {
+      const failureNote = formatIncompleteActionCapFailure(fullText, incompleteActionNudges);
       pushAssistant(fullText);
       const finalText = `${displayText.trim()}\n\n[System] ${failureNote}`.trim();
       traceIter({ note: 'incomplete-action-cap', final: true });
@@ -856,8 +857,6 @@ export async function runAgentTurn(
             ]
           : []),
       ];
-      pushAssistant(fullText);
-
       // "Definition of done": a plain-text final answer isn't the actual end
       // of the turn if a verify command is configured — Forge, not the
       // model, is the arbiter of whether the goal is really met. A failing
@@ -888,12 +887,20 @@ export async function runAgentTurn(
           return { messages, compactionCache };
         }
         if (!verify.ok) {
+          const hadProgressSinceLastVerify = writesSinceLastVerify.length > 0;
+          const verifyRejectNote =
+            '\n\n[System: This completion was not accepted — the definition-of-done check failed. Forge is continuing the turn; do not treat the task as finished yet.]';
+          pushAssistant(fullText + verifyRejectNote);
           const nudge = `[Definition-of-done check failed]\n${verify.output}\n\nThe goal is not met yet — this is real evidence, not an opinion. Diagnose why and keep working; do not repeat the same "done" claim without either fixing the underlying issue or explaining concretely why this check itself is wrong (e.g. it tests the wrong thing). Do NOT make this check pass by disabling, skipping, or weakening what it verifies (e.g. skipping/deleting the failing test, neutering an assertion, silencing an error instead of fixing it, or editing the check command itself) — Forge scans for exactly that pattern and will flag it to the user, and it does not actually satisfy the user's goal even if the command exits 0.`;
           pushMsg({ role: 'user', content: nudge });
           sawFailedVerify = true;
           writesSinceLastVerify = [];
           traceIter({ note: 'verify-failed' });
-          if (checkLoop(loopDetector, '__verify__', { command: effectiveVerify }, false, verify.output, emit)) {
+          if (
+            checkLoop(loopDetector, '__verify__', { command: effectiveVerify }, false, verify.output, emit, {
+              skipWhenWorkspaceProgress: hadProgressSinceLastVerify,
+            })
+          ) {
             return { messages, compactionCache };
           }
           continue;
@@ -906,6 +913,8 @@ export async function runAgentTurn(
         writesSinceLastVerify = [];
         finalDisplayText += formatVerifyFinalNote(effectiveVerify, true);
       }
+
+      pushAssistant(fullText);
 
       traceIter({ final: true });
       pendingActionTarget = undefined;
@@ -1159,7 +1168,8 @@ export async function runAgentTurn(
 
     pushMsg({ role: 'user', content: `[Tool "${call.tool}" result]\n${resultContentForModel}` });
 
-    truncationNudges = 0;
+    foreignFormatNudges = 0;
+    incompleteActionNudges = 0;
 
     if (call.tool === 'run_command') failedRunsInARow = result.ok ? 0 : failedRunsInARow + 1;
 
@@ -1217,6 +1227,8 @@ export interface CheckLoopHooks {
   pushLoopWarning?: (message: string) => void;
   traceNote?: (note: string) => void;
   unresolvedRunFailure?: UnresolvedRunFailure;
+  /** When true, repeated verify with the same output is allowed (workspace changed since last verify). */
+  skipWhenWorkspaceProgress?: boolean;
 }
 
 export function checkLoop(
@@ -1230,6 +1242,7 @@ export function checkLoop(
 ): boolean {
   if (tool === 'check_background_command') return false;
   if (!getConfig().loopDetectionEnabled) return false;
+  if (tool === '__verify__' && hooks?.skipWhenWorkspaceProgress) return false;
   const signature = signatureForStep(tool, args, ok, resultContent);
   const check = detector.record(signature);
   if (!check.looping) return false;

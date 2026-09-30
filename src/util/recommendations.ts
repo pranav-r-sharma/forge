@@ -26,6 +26,15 @@ export interface SettingRecommendation {
   settingKey: string;
   recommended: number;
   reason: string;
+  /** Present when enriched for the settings panel — user explicitly set this value. */
+  userConfigured?: boolean;
+  userValue?: number;
+}
+
+/** Whether Apply all should skip this recommendation (user tuned it, or already matches). */
+export function shouldSkipApplyAllRecommendation(rec: SettingRecommendation, currentValue: number): boolean {
+  if (rec.userConfigured) return true;
+  return currentValue === rec.recommended;
 }
 
 const GB = 1024 ** 3;
