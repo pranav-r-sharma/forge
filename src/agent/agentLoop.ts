@@ -44,6 +44,7 @@ import {
   injectRequirementsIntoPromptView,
   renderRequirementsChecklistForPrompt,
   requirementGateMarkers,
+  declinedRequirementNotes,
   updateRequirementsFromMessages,
   type RequirementsState,
 } from './requirements';
@@ -836,6 +837,9 @@ export async function runAgentTurn(
         ...(hasTaskFormIssues ? taskCommandFormUnverifiedMarkers(unexercisedTaskForms) : []),
         ...(unresolvedRunFailure ? [unresolvedFailureMarker(unresolvedRunFailure)] : []),
         ...(requirementsGateMissing.length > 0 ? requirementGateMarkers(requirementsGateMissing) : []),
+        ...(requirementsState
+          ? declinedRequirementNotes(requirementsState).map((n) => `requirement noted: ${n}`)
+          : []),
       ];
       pushAssistant(fullText);
 

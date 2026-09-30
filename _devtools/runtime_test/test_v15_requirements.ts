@@ -12,6 +12,9 @@ import {
   injectRequirementsIntoPromptView,
   estimateChecklistPromptChars,
   isRealUserTurnContent,
+  parseRequirementsSelfReport,
+  classifyRequirementKind,
+  declinedRequirementNotes,
 } from '../../src/agent/requirements';
 import { ChatMessage } from '../../src/ollama/types';
 
@@ -31,14 +34,25 @@ function testT09StyleExtraction() {
   const taskPath = path.join(__dirname, '../../_devtools/e2e/tasks/t09-harder-build/task.md');
   const taskMd = fs.readFileSync(taskPath, 'utf8');
   const state = extractRequirementsFromUserMessage(taskMd);
-  ok(state.items.length >= 8, `t09-style task yields many requirements (${state.items.length})`);
+  console.log('\n--- t09 requirement items (' + state.items.length + ') ---');
+  for (const it of state.items) {
+    console.log(`  ${it.id}. [${it.kind}] ${it.text.slice(0, 110)}${it.text.length > 110 ? '…' : ''}`);
+  }
+  console.log('--- end t09 list ---\n');
+  ok(state.items.length >= 6 && state.items.length <= 24, `t09 yields distinct requirements (${state.items.length}, cap 24)`);
   ok(
     state.items.some((it) => it.text.includes('inventory/cli.py') || it.text.includes('cli.py')),
     'extracts file-path requirements',
   );
   ok(state.items.some((it) => it.text.includes('python3 main.py')), 'extracts CLI command forms');
+  const dupPaths = state.items.filter((it) => it.text.startsWith('Create or update file'));
+  const bulletPaths = state.items.filter((it) => it.text.includes('inventory/') && !it.text.startsWith('Run command'));
+  ok(dupPaths.length <= 2, `path dedupe avoids redundant Create-or-update lines (${dupPaths.length})`);
+  ok(bulletPaths.length >= 5, 'keeps per-file bullet requirements from task');
   const rendered = renderRequirementsChecklistForPrompt(state);
   ok(rendered.includes('## Requirements'), 'renders checklist header');
+  ok(rendered.includes('[?]') || rendered.includes('[ ]'), 'renders kind marks');
+  ok(rendered.includes('Requirements:** section'), 'checklist includes self-report format hint');
   ok(estimateChecklistPromptChars(state) > 100, 'checklist has non-trivial size');
 }
 
@@ -46,6 +60,7 @@ function testTrackingWriteAndCommand() {
   let state = extractRequirementsFromUserMessage(
     'Update `src/foo.py`. Run `python3 -m py_compile src/foo.py`.',
   );
+  ok(state.items.every((it) => it.kind === 'checkable'), 'path and py_compile items are checkable');
   const messages: ChatMessage[] = [
     { role: 'user', content: 'task' },
     {
@@ -63,12 +78,84 @@ function testTrackingWriteAndCommand() {
   ok(state.items.every((it) => it.status === 'done'), 'write + successful command mark items done');
 }
 
+function testJudgmentSelfReportDone() {
+  let state = extractRequirementsFromUserMessage(
+    '1. Never use global mutable state in this module.\n' + 'Context: '.repeat(20),
+  );
+  ok(state.items[0]?.kind === 'judgment', 'vague policy line is judgment');
+  const messages: ChatMessage[] = [
+    { role: 'user', content: 'task' },
+    {
+      role: 'assistant',
+      content: 'Done.\n\nRequirements:\n1. done — only module-level constants, no globals\n',
+    },
+  ];
+  state = updateRequirementsFromMessages(state, messages);
+  ok(state.items[0]?.status === 'done', 'judgment item satisfied by Requirements: done line');
+  ok(findRequirementsGateGaps(state).length === 0, 'no gate gaps after judgment report');
+}
+
+function testJudgmentNotDoneNoNudge() {
+  let state = extractRequirementsFromUserMessage('1. Keep every function under 40 lines.');
+  const messages: ChatMessage[] = [
+    { role: 'user', content: 'task' },
+    {
+      role: 'assistant',
+      content: 'Requirements:\n1. not done — several helpers exceed 40 lines in cli.py\n',
+    },
+  ];
+  state = updateRequirementsFromMessages(state, messages);
+  ok(state.items[0]?.status === 'declined', 'honest not done sets declined');
+  ok(findRequirementsGateGaps(state).length === 0, 'declined judgment is not a gate gap');
+  ok(declinedRequirementNotes(state).length === 1, 'declined surfaced for final note');
+}
+
+function testCheckableIgnoresSelfReport() {
+  let state = extractRequirementsFromUserMessage('Run `python3 -m py_compile src/foo.py`.');
+  const messages: ChatMessage[] = [
+    { role: 'user', content: 'task' },
+    {
+      role: 'assistant',
+      content: 'Requirements:\n1. done — compiled mentally\n',
+    },
+  ];
+  state = updateRequirementsFromMessages(state, messages);
+  ok(state.items[0]?.status === 'open', 'checkable still open without tool evidence');
+  ok(findRequirementsGateGaps(state).length === 1, 'checkable still blocks gate');
+}
+
+function testNoNudgeWhenAllAddressed() {
+  let state = extractRequirementsFromUserMessage(
+    '1. Document the API in README.\n2. Run `python3 -m py_compile main.py`.',
+  );
+  const messages: ChatMessage[] = [
+    { role: 'user', content: 'task' },
+    { role: 'assistant', content: 'Requirements:\n1. done — added API section to README\n' },
+    {
+      role: 'assistant',
+      content: '```forge_action\n{"tool":"run_command","args":{"command":"python3 -m py_compile main.py"}}\n```',
+    },
+    { role: 'user', content: '[Tool "run_command" result]\n(exit code: 0)' },
+  ];
+  state = updateRequirementsFromMessages(state, messages);
+  ok(findRequirementsGateGaps(state).length === 0, 'mixed judgment + checkable all satisfied');
+}
+
+function testParseSelfReportTolerant() {
+  const lines = parseRequirementsSelfReport(
+    'Summary\n\nRequirements:\n1. done — wired CLI\n2. not done — no time for docs\n3. met — tests pass\n',
+  );
+  ok(lines.length === 3, 'parses three requirement lines');
+  ok(lines[0].verdict === 'done' && lines[1].verdict === 'not_done', 'done vs not done');
+}
+
 function testGateNudgeAndCap() {
   const state = extractRequirementsFromUserMessage('1. Must add tests.\n2. Never skip lint.');
   const gaps = findRequirementsGateGaps(state);
   ok(gaps.length === 2, 'open items block gate');
   const nudge = formatRequirementsGateNudge(gaps);
-  ok(nudge.includes('[System check]') && nudge.includes('1.'), 'gate nudge lists missing items');
+  ok(nudge.includes('[System check]') && nudge.includes('Requirements:'), 'gate nudge lists missing items and format');
+  ok(classifyRequirementKind('Run command form: `python3 main.py demo`.') === 'checkable', 'command forms checkable');
 }
 
 function testPrefixStability() {
@@ -109,6 +196,11 @@ function testCompactionPinsFollowUpUser() {
 async function main() {
   testT09StyleExtraction();
   testTrackingWriteAndCommand();
+  testJudgmentSelfReportDone();
+  testJudgmentNotDoneNoNudge();
+  testCheckableIgnoresSelfReport();
+  testNoNudgeWhenAllAddressed();
+  testParseSelfReportTolerant();
   testGateNudgeAndCap();
   testPrefixStability();
   testCompactionPinsFollowUpUser();
