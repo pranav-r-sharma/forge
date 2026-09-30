@@ -3,7 +3,7 @@ import { spawn } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import { ToolExecContext, ToolResult } from '../agent/types';
-import { requireStringArg, suggestCommandFromArgvArray } from './argErrors';
+import { requireStringArg, resolveRunCommandString, suggestCommandFromArgvArray } from './argErrors';
 import { resolveWorkspacePath } from '../util/paths';
 
 const MAX_OUTPUT_CHARS = 100_000;
@@ -40,15 +40,21 @@ export function resolveCommandCwd(
 }
 
 export async function runCommandTool(args: Record<string, any>, ctx: ToolExecContext): Promise<ToolResult> {
+  const resolvedCmd = resolveRunCommandString(args.command);
   const commandCheck = requireStringArg(
     'run_command',
     'command',
-    args.command,
+    resolvedCmd,
     'Missing required arg "command" (a shell command string).',
     (wrong) => (Array.isArray(wrong) ? suggestCommandFromArgvArray(wrong) : undefined),
   );
   if (!commandCheck.ok) return { ok: false, content: commandCheck.content };
   const command = commandCheck.value;
+
+  const unknownTimeoutNote =
+    args.timeout !== undefined && args.timeout_ms === undefined
+      ? `Note: run_command has no arg "timeout" (ignored) — use "timeout_ms" (milliseconds) if you need a custom limit.\n`
+      : '';
 
   callCounter += 1;
   const callId = `cmd_${Date.now().toString(36)}_${callCounter}`;
@@ -198,7 +204,7 @@ export async function runCommandTool(args: Record<string, any>, ctx: ToolExecCon
       const header = `$ ${command}\n(exit code: ${code ?? 'unknown'}${signal ? `, signal: ${signal}` : ''})`;
       resolve({
         ok: code === 0,
-        content: `${header}\n${output.trim() || '(no output)'}${truncated}${killedNote}${cwdNote ? `\n\n${cwdNote}` : ''}`,
+        content: `${unknownTimeoutNote}${header}\n${output.trim() || '(no output)'}${truncated}${killedNote}${cwdNote ? `\n\n${cwdNote}` : ''}`,
       });
     });
   });

@@ -2,12 +2,14 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { buildSystemPrompt } from '../../src/agent/systemPrompt';
 import { buildPinnedCompactedView } from '../../src/agent/contextManager';
-import { serializePromptMessages, sharedPrefixLength } from '../../src/agent/promptPrefix';
+import { serializePromptMessages } from '../../src/agent/promptPrefix';
 import {
   extractRequirementsFromUserMessage,
   updateRequirementsFromMessages,
   renderRequirementsChecklistForPrompt,
   findRequirementsGateGaps,
+  findRequirementsNudgeGaps,
+  stripRequirementsBlockFromContent,
   formatRequirementsGateNudge,
   injectRequirementsIntoPromptView,
   estimateChecklistPromptChars,
@@ -147,15 +149,29 @@ function testParseSelfReportTolerant() {
   );
   ok(lines.length === 3, 'parses three requirement lines');
   ok(lines[0].verdict === 'done' && lines[1].verdict === 'not_done', 'done vs not done');
+  const bold = parseRequirementsSelfReport('**Requirements**\n\n5. done — stdlib only\n');
+  ok(bold.length === 1 && bold[0].id === 5, 'parses markdown-bold Requirements header');
 }
 
 function testGateNudgeAndCap() {
-  const state = extractRequirementsFromUserMessage('1. Must add tests.\n2. Never skip lint.');
-  const gaps = findRequirementsGateGaps(state);
-  ok(gaps.length === 2, 'open items block gate');
+  const state = extractRequirementsFromUserMessage('Run `python3 -m py_compile main.py`. Never skip lint.');
+  const gaps = findRequirementsNudgeGaps(state);
+  ok(gaps.length === 1 && gaps[0].kind === 'checkable', 'only checkable open items nudge');
   const nudge = formatRequirementsGateNudge(gaps);
   ok(nudge.includes('[System check]') && nudge.includes('Requirements:'), 'gate nudge lists missing items and format');
   ok(classifyRequirementKind('Run command form: `python3 main.py demo`.') === 'checkable', 'command forms checkable');
+}
+
+function testCompactChecklist() {
+  let state = extractRequirementsFromUserMessage('1. Do A.\n2. Run `python3 main.py`.');
+  state = updateRequirementsFromMessages(state, [
+    { role: 'user', content: 'task' },
+    { role: 'assistant', content: '```forge_action\n{"tool":"run_command","args":{"command":"python3 main.py"}}\n```' },
+    { role: 'user', content: '[Tool "run_command" result]\n(exit code: 0)' },
+  ]);
+  const rendered = renderRequirementsChecklistForPrompt(state);
+  ok(rendered.includes('1 requirement(s) done'), 'done items collapse to a one-line count');
+  ok(!rendered.includes('[x] 2.'), 'done items are not listed in full');
 }
 
 function testPrefixStability() {
@@ -171,11 +187,22 @@ function testPrefixStability() {
     { role: 'user', content: '[Tool "read_file" result]\ndata' },
   ];
   const view2 = injectRequirementsIntoPromptView(view1, checklist);
-  const sp1 = sharedPrefixLength(serializePromptMessages(view1), serializePromptMessages(view2));
-  ok(sp1 === serializePromptMessages(view1).length - view1[view1.length - 1].content.length, 'checklist only changes the last message prefix');
   ok(view1[0].content === view2[0].content, 'system message byte-identical when checklist injected');
-  const view3 = injectRequirementsIntoPromptView(view2, checklist + '\n[x] 1. done');
-  ok(view1[0].content === view3[0].content, 'two checklist steps keep same system prefix');
+  ok(view1[1].content === view2[1].content, 'earlier user messages never edited');
+  ok(view2[view2.length - 1].content.includes('## Requirements (track each)'), 'checklist appended to last user message');
+  const step1 = injectRequirementsIntoPromptView(view1, checklist);
+  const view3: ChatMessage[] = [
+    ...view1,
+    { role: 'assistant', content: 'step2' },
+    { role: 'user', content: '[Tool "write_file" result]\nok' },
+  ];
+  const checklist2 = checklist + '\n[x] 1. done';
+  const step2 = injectRequirementsIntoPromptView(view3, checklist2);
+  const last1 = step1[step1.length - 1];
+  const step1Base = [...step1.slice(0, -1), { ...last1, content: stripRequirementsBlockFromContent(last1.content) }];
+  const serBase = serializePromptMessages(step1Base);
+  const ser2 = serializePromptMessages(step2);
+  ok(ser2.startsWith(serBase), 'step N (minus trailing checklist) is a byte prefix of step N+1');
 }
 
 function testCompactionPinsFollowUpUser() {
@@ -202,6 +229,7 @@ async function main() {
   testNoNudgeWhenAllAddressed();
   testParseSelfReportTolerant();
   testGateNudgeAndCap();
+  testCompactChecklist();
   testPrefixStability();
   testCompactionPinsFollowUpUser();
   console.log(`\n${passed} passed, ${failed} failed.`);

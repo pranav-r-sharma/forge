@@ -1,5 +1,6 @@
 import { ChatMessage } from '../ollama/types';
 import { extractTaskCommandForms, commandMatchesTaskForm, parseRunCommandExitCode, normalizeCommandWhitespace } from './claimChecker';
+import { resolveRunCommandString } from '../tools/argErrors';
 
 export type RequirementStatus = 'open' | 'done' | 'unverified' | 'declined';
 
@@ -83,9 +84,19 @@ function isNearDuplicateOfExisting(text: string, items: RequirementItem[]): bool
 }
 
 function pathMentionedInText(text: string, path: string): boolean {
-  const norm = path.replace(/^\.\//, '');
+  const norm = normalizeRelPath(path);
   const low = text.toLowerCase();
-  return low.includes(path.toLowerCase()) || low.includes(norm.toLowerCase());
+  const variants = [path, path.replace(/^\.\//, ''), norm];
+  for (const v of variants) {
+    if (!v) continue;
+    if (low.includes(v.toLowerCase())) return true;
+    if (low.includes(normalizeRelPath(v))) return true;
+  }
+  return false;
+}
+
+export function normalizeRelPath(path: string): string {
+  return path.replace(/^\.\//, '').replace(/\\/g, '/').toLowerCase();
 }
 
 /** Checkable = file/command/compile evidence from the transcript; judgment = self-report or holistic. */
@@ -182,11 +193,13 @@ export interface RequirementSelfReportLine {
 
 /** Parse a model "Requirements:" block (tolerant). */
 export function parseRequirementsSelfReport(content: string): RequirementSelfReportLine[] {
-  const section = /(?:^|\n)\s*requirements\s*:?\s*\n([\s\S]*)/im.exec(content);
+  const section =
+    /(?:^|\n)\s*(?:\*{0,2})?requirements(?:\*{0,2})?\s*:?\s*\n+([\s\S]*)/im.exec(content) ??
+    /(?:^|\n)\s*requirements\s*:?\s*\n([\s\S]*)/im.exec(content);
   if (!section) return [];
   const lines: RequirementSelfReportLine[] = [];
   const lineRe =
-    /^\s*(\d+)\.\s*(done|not\s+done|met|unmet|open|waived|skipped)\s*(?:[—–\-:]+\s*|\s+-\s+)(.+)\s*$/i;
+    /^\s*(\d+)\.\s*(done|not\s+done|met|unmet|open|waived|skipped)\s*(?:[—–\-:]+\s*|\s+-\s+|\s+)(.+)\s*$/i;
   for (const raw of section[1].split('\n')) {
     const trimmed = raw.trim();
     if (!trimmed || !/^\d+\./.test(trimmed)) {
@@ -210,6 +223,34 @@ function isToolResultUserMessage(content: string): boolean {
     content.startsWith('[System check]') ||
     content.startsWith('[Definition-of-done') ||
     content.startsWith('[Earlier conversation summary')
+  );
+}
+
+function pathsTouchedByShellCommand(command: string): string[] {
+  const found = new Set<string>();
+  const patterns = [
+    /(?:^|[\s;|&])(?:cat|tee)\s+<<-?\s*['"]?\w+['"]?\s*>\s*([\w@./-]+\.[A-Za-z0-9]{1,8})/gi,
+    /(?:^|[\s;|&])>\s*>?\s*([\w@./-]+\.[A-Za-z0-9]{1,8})(?:$|[\s'"`])/g,
+    /\b(?:python3?|py)\s+([\w@./-]+\.py)\b/gi,
+  ];
+  for (const re of patterns) {
+    re.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(command))) {
+      found.add(m[1]!.replace(/^["']|["']$/g, ''));
+    }
+  }
+  return [...found];
+}
+
+function isCheckOrTestCommand(command: string): boolean {
+  const c = normalizeCommandWhitespace(command).toLowerCase();
+  return (
+    /\bpy_compile\b/.test(c) ||
+    /\bpython3\s+-m\s+(unittest|pytest)\b/.test(c) ||
+    /\bpytest\b/.test(c) ||
+    /\bcheck\.sh\b/.test(c) ||
+    (/\bpython3\b/.test(c) && /\b-m\s+unittest\b/.test(c))
   );
 }
 
@@ -243,11 +284,13 @@ function scanTranscriptFacts(messages: ChatMessage[]): {
           if (parsed.tool === 'write_file' && typeof parsed.args?.path === 'string') {
             writtenPaths.push(parsed.args.path);
           }
-          if (parsed.tool === 'run_command' && typeof parsed.args?.command === 'string') {
+          const cmdStr = parsed.tool === 'run_command' ? resolveRunCommandString(parsed.args?.command) : undefined;
+          if (cmdStr) {
+            for (const p of pathsTouchedByShellCommand(cmdStr)) writtenPaths.push(p);
             const next = messages[i + 1];
             if (next?.role === 'user' && next.content.includes('[Tool "run_command" result]')) {
               const code = parseRunCommandExitCode(next.content);
-              if (code === 0) okCommands.push(parsed.args.command);
+              if (code === 0) okCommands.push(cmdStr);
             }
           }
         } catch {
@@ -300,10 +343,13 @@ export function updateRequirementsFromMessages(state: RequirementsState, message
     }
     if (
       item.kind === 'checkable' &&
-      /\bcompile\b/i.test(item.text) &&
-      okCommands.some((c) => /py_compile|tsc|compile/i.test(c))
+      (/\bcompile\b/i.test(item.text) || /\bpy_compile\b/i.test(item.text)) &&
+      okCommands.some((c) => /\bpy_compile\b/i.test(c))
     ) {
-      return { ...item, status: 'unverified' as const, evidence: 'compile-related command ran' };
+      return { ...item, status: 'done' as const, evidence: 'py_compile command succeeded' };
+    }
+    if (item.kind === 'checkable' && /\b(unittest|pytest|tests?\s+must\s+pass)\b/i.test(item.text) && okCommands.some((c) => isCheckOrTestCommand(c))) {
+      return { ...item, status: 'done' as const, evidence: 'test/check command succeeded' };
     }
     return item;
   });
@@ -320,22 +366,33 @@ function markForPrompt(it: RequirementItem): string {
 
 export function renderRequirementsChecklistForPrompt(state: RequirementsState): string {
   if (state.items.length === 0) return '';
-  const lines = state.items.map((it) => {
+  const doneCount = state.items.filter((it) => it.status === 'done' || it.status === 'declined').length;
+  const lines: string[] = [];
+  if (doneCount > 0) {
+    lines.push(`[x] ${doneCount} requirement(s) done — see tool results / final **Requirements:** report for details.`);
+  }
+  for (const it of state.items) {
+    if (it.status === 'done' || it.status === 'declined') continue;
     const mark = markForPrompt(it);
     const ev = it.evidence ? ` — ${it.evidence}` : '';
-    return `${mark} ${it.id}. ${it.text}${ev}`;
-  });
+    lines.push(`${mark} ${it.id}. ${it.text}${ev}`);
+  }
   return `${CHECKLIST_HEADER}\n${lines.join('\n')}\n\n${CHECKLIST_FORMAT_HINT}`;
 }
 
-/** Items still open or unverified without evidence — block premature "done". */
-export function findRequirementsGateGaps(state: RequirementsState): RequirementItem[] {
+/** Checkable items still missing tool evidence — used for gate nudges only. */
+export function findRequirementsNudgeGaps(state: RequirementsState): RequirementItem[] {
   return state.items.filter((it) => {
+    if (it.kind !== 'checkable') return false;
     if (it.status === 'done' || it.status === 'declined') return false;
     if (it.status === 'unverified' && it.evidence) return false;
-    if (it.kind === 'judgment') return it.status === 'open';
     return it.status === 'open' || (it.status === 'unverified' && !it.evidence);
   });
+}
+
+/** Items still open or unverified without evidence — surfaced in final unverified markers (checkable only). */
+export function findRequirementsGateGaps(state: RequirementsState): RequirementItem[] {
+  return findRequirementsNudgeGaps(state);
 }
 
 export function formatRequirementsGateNudge(missing: RequirementItem[]): string {
@@ -356,31 +413,26 @@ export function estimateChecklistPromptChars(state: RequirementsState): number {
 
 const REQUIREMENTS_HEADER = CHECKLIST_HEADER;
 
-/** Remove a prior checklist injection so only the current tail carries it (prefix-stable across steps). */
+/** Remove a trailing checklist injection from message content (prompt view only). */
 export function stripRequirementsBlockFromContent(content: string): string {
-  const idx = content.indexOf(REQUIREMENTS_HEADER);
+  const idx = content.lastIndexOf(REQUIREMENTS_HEADER);
   if (idx < 0) return content;
-  let end = content.length;
-  const after = content.slice(idx);
-  const hintIdx = after.indexOf(CHECKLIST_FORMAT_HINT);
-  if (hintIdx >= 0) end = idx + hintIdx + CHECKLIST_FORMAT_HINT.length;
-  return content.slice(0, end).replace(/\n+$/, '');
+  const tail = content.slice(idx);
+  if (!tail.includes(CHECKLIST_FORMAT_HINT)) return content;
+  return content.slice(0, idx).replace(/\n+$/, '');
 }
 
 /**
- * Prepends the live checklist to the last user message in the prompt view only
- * (archival messages unchanged — cache-friendly tail injection).
+ * Appends the live checklist to the end of the last user message in the prompt view only
+ * (archival messages unchanged — earlier messages are never edited).
  */
 export function injectRequirementsIntoPromptView(view: ChatMessage[], checklistBlock: string): ChatMessage[] {
   if (!checklistBlock) return view;
-  const copy = view.map((m) =>
-    m.role === 'user' ? { ...m, content: stripRequirementsBlockFromContent(m.content) } : m,
-  );
+  const copy = view.map((m) => ({ ...m }));
   for (let i = copy.length - 1; i >= 0; i--) {
     if (copy[i].role === 'user') {
-      const c = copy[i].content;
-      if (c.startsWith(checklistBlock)) return copy;
-      copy[i] = { ...copy[i], content: `${checklistBlock}\n\n${c}` };
+      const base = stripRequirementsBlockFromContent(copy[i].content);
+      copy[i] = { ...copy[i], content: base ? `${base}\n\n${checklistBlock}` : checklistBlock };
       return copy;
     }
   }
@@ -402,4 +454,11 @@ export function declinedRequirementNotes(state: RequirementsState): string[] {
   return state.items
     .filter((it) => it.status === 'declined' && it.evidence)
     .map((it) => `${it.id}. ${it.text} — ${it.evidence}`);
+}
+
+/** Judgment items still open — note in final, never nudge. */
+export function openJudgmentRequirementNotes(state: RequirementsState): string[] {
+  return state.items
+    .filter((it) => it.kind === 'judgment' && it.status === 'open')
+    .map((it) => `${it.id}. ${it.text} — add a **Requirements:** line in your final answer`);
 }

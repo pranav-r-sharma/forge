@@ -26,8 +26,11 @@ export async function readFileTool(args: Record<string, any>, ctx: ToolExecConte
     return { ok: false, content: `File not found: ${relPath}` };
   }
 
+  const startLineArg = args.start_line ?? args.line_start;
+  const endLineArg = args.end_line ?? args.line_end;
+
   const maxBytes = ctx.config.maxContextFileKB * 1024;
-  if (Buffer.byteLength(content, 'utf8') > maxBytes && !args.start_line && !args.end_line) {
+  if (Buffer.byteLength(content, 'utf8') > maxBytes && !startLineArg && !endLineArg) {
     const totalLines = content.split('\n').length;
     return {
       ok: false,
@@ -36,8 +39,8 @@ export async function readFileTool(args: Record<string, any>, ctx: ToolExecConte
   }
 
   const lines = content.split('\n');
-  const start = clamp(args.start_line ? Number(args.start_line) : 1, 1, lines.length);
-  const end = clamp(args.end_line ? Number(args.end_line) : lines.length, start, lines.length);
+  const start = clamp(startLineArg ? Number(startLineArg) : 1, 1, lines.length);
+  const end = clamp(endLineArg ? Number(endLineArg) : lines.length, start, lines.length);
   const width = String(end).length;
   const numbered = lines
     .slice(start - 1, end)

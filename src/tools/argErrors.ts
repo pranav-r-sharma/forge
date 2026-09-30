@@ -7,8 +7,8 @@ export function receivedTypeLabel(value: unknown): string {
   return t;
 }
 
-/** Suggest a shell command string when the model sent argv-style arrays. */
-export function suggestCommandFromArgvArray(value: unknown[]): string {
+/** Shell-join argv tokens for run_command when the model sends an array. */
+export function shellQuoteJoinArgv(value: unknown[]): string {
   if (
     value.length >= 3 &&
     (value[0] === 'bash' || value[0] === 'sh') &&
@@ -16,7 +16,25 @@ export function suggestCommandFromArgvArray(value: unknown[]): string {
   ) {
     return String(value[value.length - 1]);
   }
-  return value.map((x) => String(x)).join(' ');
+  return value
+    .map((x) => {
+      const s = String(x);
+      if (/^[A-Za-z0-9_./=-]+$/.test(s)) return s;
+      return `"${s.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+    })
+    .join(' ');
+}
+
+/** Suggest a shell command string when the model sent argv-style arrays. */
+export function suggestCommandFromArgvArray(value: unknown[]): string {
+  return shellQuoteJoinArgv(value);
+}
+
+/** Resolve run_command's command field (string or argv array). */
+export function resolveRunCommandString(value: unknown): string | undefined {
+  if (typeof value === 'string' && value.trim()) return value.trim();
+  if (Array.isArray(value) && value.length > 0) return shellQuoteJoinArgv(value);
+  return undefined;
 }
 
 export function formatWrongTypeResend(
@@ -76,4 +94,11 @@ export function detectNestedToolAction(args: Record<string, unknown>): { tool: s
 export function formatNestedActionResend(_outerTool: string, inner: { tool: string; args: Record<string, unknown> }): string {
   const payload = JSON.stringify({ tool: inner.tool, args: inner.args });
   return `You nested a whole action inside "args". Resend as ${payload}`;
+}
+
+/** Unwrap {"tool","args"} accidentally nested inside another tool's args. */
+export function unwrapNestedToolCall<T extends { tool: string; args: Record<string, unknown> }>(call: T): T {
+  const nested = detectNestedToolAction(call.args);
+  if (!nested) return call;
+  return { ...call, tool: nested.tool, args: nested.args };
 }

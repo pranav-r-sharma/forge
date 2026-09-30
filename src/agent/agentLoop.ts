@@ -22,6 +22,7 @@ import { logger } from '../util/logger';
 import { resolveWorkspacePath, toRelative } from '../util/paths';
 import { CompactionCache, PromptViewState, hardCapOversizedMessages, maybeCompact, pruneStaleReadsView, updateCharsPerToken, updatePromptView, DEFAULT_CHARS_PER_TOKEN } from './contextManager';
 import { LoopDetector, formatLoopWarningMessage, signatureForStep } from './loopDetector';
+import { unwrapNestedToolCall } from '../tools/argErrors';
 import { unknownArgNotesForSpec } from '../tools/unknownToolArgs';
 import {
   evaluateClaimedCommands,
@@ -36,15 +37,16 @@ import {
   unresolvedFailureMarker,
   type UnresolvedRunFailure,
 } from './claimChecker';
-import { detectNestedToolAction, formatNestedActionResend } from '../tools/argErrors';
 import {
   extractRequirementsFromUserMessage,
   findRequirementsGateGaps,
+  findRequirementsNudgeGaps,
   formatRequirementsGateNudge,
   injectRequirementsIntoPromptView,
   renderRequirementsChecklistForPrompt,
   requirementGateMarkers,
   declinedRequirementNotes,
+  openJudgmentRequirementNotes,
   updateRequirementsFromMessages,
   type RequirementsState,
 } from './requirements';
@@ -813,20 +815,22 @@ export async function runAgentTurn(
         continue;
       }
       let requirementsGateMissing: ReturnType<typeof findRequirementsGateGaps> = [];
+      let requirementsNudgeMissing: ReturnType<typeof findRequirementsNudgeGaps> = [];
       if (requirementsActive && requirementsState) {
         requirementsState = updateRequirementsFromMessages(requirementsState, messages);
         requirementsGateMissing = findRequirementsGateGaps(requirementsState);
+        requirementsNudgeMissing = findRequirementsNudgeGaps(requirementsState);
         const overlapsTaskNudge =
           hasTaskFormIssues &&
-          requirementsGateMissing.some((it) => unexercisedTaskForms.some((f) => it.text.includes(f) || f.includes(it.text.slice(0, 30))));
+          requirementsNudgeMissing.some((it) => unexercisedTaskForms.some((f) => it.text.includes(f) || f.includes(it.text.slice(0, 30))));
         if (
-          requirementsGateMissing.length > 0 &&
+          requirementsNudgeMissing.length > 0 &&
           !overlapsTaskNudge &&
           requirementsNudges < cfg.requirementsMaxNudges
         ) {
           requirementsNudges++;
           pushAssistant(fullText);
-          pushMsg({ role: 'user', content: formatRequirementsGateNudge(requirementsGateMissing) });
+          pushMsg({ role: 'user', content: formatRequirementsGateNudge(requirementsNudgeMissing) });
           traceIter({ note: 'requirements-gate-nudge' });
           continue;
         }
@@ -838,7 +842,10 @@ export async function runAgentTurn(
         ...(unresolvedRunFailure ? [unresolvedFailureMarker(unresolvedRunFailure)] : []),
         ...(requirementsGateMissing.length > 0 ? requirementGateMarkers(requirementsGateMissing) : []),
         ...(requirementsState
-          ? declinedRequirementNotes(requirementsState).map((n) => `requirement noted: ${n}`)
+          ? [
+              ...declinedRequirementNotes(requirementsState).map((n) => `requirement noted: ${n}`),
+              ...openJudgmentRequirementNotes(requirementsState).map((n) => `requirement noted: ${n}`),
+            ]
           : []),
       ];
       pushAssistant(fullText);
@@ -962,6 +969,7 @@ export async function runAgentTurn(
       }
     }
 
+    call = unwrapNestedToolCall(call);
     const builtInSpec = TOOL_MAP[call.tool];
     const mcpSpec = builtInSpec ? undefined : mcpToolMap.get(call.tool);
     const resolvedSpec = builtInSpec || mcpSpec;
@@ -1012,16 +1020,6 @@ export async function runAgentTurn(
         if (checkLoop(loopDetector, call.tool, call.args, false, msg, emit)) return { messages, compactionCache };
         continue;
       }
-    }
-
-    const nestedAction = detectNestedToolAction(call.args as Record<string, unknown>);
-    if (nestedAction) {
-      const msg = formatNestedActionResend(call.tool, nestedAction);
-      emit({ type: 'tool_result', callId, ok: false, summary: msg });
-      pushMsg({ role: 'user', content: `[Tool "${call.tool}" result]\n${msg}` });
-      traceIter({ tool: call.tool, ok: false, note: 'nested-action-in-args' });
-      if (checkLoop(loopDetector, call.tool, call.args, false, msg, emit)) return { messages, compactionCache };
-      continue;
     }
 
     const toolStartedAt = Date.now();

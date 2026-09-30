@@ -7,7 +7,9 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
+import { resolveRunCommandString, shellQuoteJoinArgv } from '../../src/tools/argErrors';
 import { resolveCommandCwd, runCommandTool, isDangerousCommand } from '../../src/tools/commandTool';
+import { readFileTool } from '../../src/tools/fileTools';
 import { detectEnvironment, renderEnvironment } from '../../src/agent/environment';
 
 let passed = 0;
@@ -96,9 +98,46 @@ function dangerousCommandTests() {
   ok(isDangerousCommand('rm -rf /'), "the pre-existing rm -rf / guard is unaffected (doesn't need workspace context)");
 }
 
+function harnessArgTests() {
+  ok(
+    shellQuoteJoinArgv(['python3', '-m', 'py_compile', 'main.py']) === 'python3 -m py_compile main.py',
+    'argv array joins to shell command',
+  );
+  ok(resolveRunCommandString(['echo', 'hello world']) === 'echo "hello world"', 'array command with spaces is shell-quoted');
+  ok(resolveRunCommandString('python3 main.py') === 'python3 main.py', 'string command unchanged');
+}
+
+async function readFileAliasTests() {
+  const root = ws();
+  const big = path.join(root, 'big.py');
+  fs.writeFileSync(big, Array.from({ length: 250 }, (_, i) => `# line ${i + 1}`).join('\n'));
+  const ctx: any = {
+    workspaceRoot: vscode.Uri.file(root),
+    config: { maxContextFileKB: 1 },
+    readEffective: async (uri: vscode.Uri) => fs.readFileSync(uri.fsPath, 'utf8'),
+  };
+  const paged = await readFileTool({ path: 'big.py', line_start: 1, line_end: 3 }, ctx);
+  ok(paged.ok && paged.content.includes('lines 1-3'), 'read_file accepts line_start/line_end aliases');
+}
+
+async function runCommandArrayTests() {
+  const root = ws();
+  const ctx: any = {
+    workspaceRoot: vscode.Uri.file(root),
+    cancellation: new vscode.CancellationTokenSource().token,
+    requestCommandApproval: async () => true,
+    startBackgroundCommand: () => ({ ok: false, error: 'n/a' }),
+  };
+  const r = await runCommandTool({ command: ['python3', '-c', 'print(7)'], timeout: 999 }, ctx);
+  ok(r.ok && r.content.includes('7') && /no arg "timeout"/.test(r.content), 'array command runs and unknown timeout is explained');
+}
+
 async function main() {
   pureTests();
+  harnessArgTests();
   await toolTests();
+  await readFileAliasTests();
+  await runCommandArrayTests();
   environmentWording();
   dangerousCommandTests();
   console.log(`\n${passed} passed, ${failed} failed.`);

@@ -3,7 +3,7 @@ import { DynamicToolSpec } from '../mcp/mcpTypes';
 
 /** Every arg name each built-in tool accepts (including common aliases like `file` for `path`). */
 export const BUILTIN_TOOL_ARG_NAMES: Record<string, readonly string[]> = {
-  read_file: ['path', 'file', 'start_line', 'end_line'],
+  read_file: ['path', 'file', 'start_line', 'end_line', 'line_start', 'line_end'],
   list_dir: ['path', 'depth'],
   search_code: ['query', 'pattern', 'glob'],
   search_codebase: ['query', 'k'],

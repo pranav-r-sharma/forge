@@ -20,7 +20,7 @@ import {
   scriptOperandIsCheckTarget,
   templateHasOnlyFlagsAfterExecutable,
 } from '../../src/agent/claimChecker';
-import { detectNestedToolAction, formatNestedActionResend } from '../../src/tools/argErrors';
+import { detectNestedToolAction, formatNestedActionResend, unwrapNestedToolCall } from '../../src/tools/argErrors';
 
 let passed = 0;
 let failed = 0;
@@ -265,6 +265,8 @@ function ok(cond: boolean, label: string) {
     args: { command: 'python3 -m py_compile main.py' },
   });
   ok(nested?.tool === 'run_command' && nested.args.command === 'python3 -m py_compile main.py', 'detectNestedToolAction finds inner action');
+  const unwrapped = unwrapNestedToolCall({ tool: 'run_command', args: nested!.args as Record<string, unknown> });
+  ok(unwrapped.tool === 'run_command' && unwrapped.args.command === 'python3 -m py_compile main.py', 'unwrapNestedToolCall runs inner tool');
   const msg = formatNestedActionResend('run_command', nested!);
   ok(
     msg === 'You nested a whole action inside "args". Resend as {"tool":"run_command","args":{"command":"python3 -m py_compile main.py"}}',
