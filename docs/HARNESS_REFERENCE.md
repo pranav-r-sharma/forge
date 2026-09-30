@@ -242,6 +242,20 @@ Verified by reviewer 2026-09-30: row 1 re-classified (false positive).
 | **cosmetic** | Sub-agent feature subset | No requirements extract, empty history, auto mode; shares memory/log | `spawn_subagent` tool describe in `tools/index.ts` | **Fixed 2026-09-30:** documented in tool description |
 | **cosmetic** | Plan-first double user content | Plan call and main turn both see raw user message | F6 inventory | **Fixed 2026-09-30:** documented cost (kept behavior) |
 
+### Second audit (2026-09-30, `b24795c`, report `_devtools/bench/results/2026-09-30-second-audit.md`)
+
+| Sev | Issue | Scenario | Evidence | Suggested fix (report only) |
+|-----|-------|----------|----------|------------------------------|
+| **risk** | `mlx.contextTokens` vs running server | User raises context in panel; compaction/output math changes but server window unchanged | `extension.ts` MLX restart allowlist; `mlxServer.ts` `doEnsure` key | Restart server or document Forge-only semantics |
+| **risk** | MLX restart during active turn | Settings change mid-`runAgentTurn` races `ensureMlx` | `extension.ts` 106; `agentLoop.ts` chat error path | Defer restart until no busy session |
+| **risk** | `thinking: default` coercion | settings.json `default` behaves as `auto`, not model default | `config.ts` 223; `package.json` thinking enum | Map `default` → `undefined` in `thinkingForStep` |
+| **risk** | Soft requirements gate | After `maxNudges`, final still ships with markers only | `agentLoop.ts` 873–904 | Optional hard cap |
+| **risk** | Append OOM | `write_file` append unbounded read of existing file | `fileTools.ts` 393–396 | Size guard like read path |
+| **risk** | Verify spawn hang | Verify command lacks `run_command` process-group kill | `verifyCheck.ts` vs `commandTool.ts` | Share kill-tree helper |
+| **cosmetic** | Uneven terminal events | Iteration/loop stops use `error` not `final` | `agentLoop.ts` 1257–1330 | Unify UX |
+| **cosmetic** | Loop detection scope copy | Setting text says Auto/Outcome; code runs in all modes | `checkLoop`; `package.json` loopDetection | Doc or gate |
+| **cosmetic** | Missing `done` on some exits | `aborted`, context-full | `agentLoop.ts` 687–689, 937–939 | Emit `done` for symmetry |
+
 ---
 
 ## 5. Maintenance
