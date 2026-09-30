@@ -82,6 +82,9 @@ export interface SettingsSnapshot {
   loopDetectionEnabled: boolean;
   structuredOutputEnabled: boolean;
   planFirstEnabled: boolean;
+  requirementsEnabled: boolean;
+  requirementsMaxNudges: number;
+  requirementsShowInPrompt: boolean;
   selfCritiqueEnabled: boolean;
   bestOfNEnabled: boolean;
   /** Cost-aware task planning (item "cost-aware task planning" — see agent/taskCost.ts). */

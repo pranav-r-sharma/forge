@@ -427,6 +427,26 @@
           "default": false,
           "description": "Before acting in Agent/Auto/Outcome mode, make one extra no-tool 'think first' model call (grounded with a few relevant codebase-search snippets) and give the agent its own short plan for the turn before the first action. Off by default — it's one additional full model call per turn."
         },
+        "forge.requirements.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Extract numbered requirements from the user's message, show a live checklist at the tail of each agent step, and nudge before accepting a final answer if items lack evidence."
+        },
+        "forge.requirements.maxNudges": {
+          "type": "number",
+          "default": 2,
+          "description": "How many pre-final nudges to send when requirements are still open, before finishing with unmet-item markers."
+        },
+        "forge.requirements.showInPrompt": {
+          "type": "boolean",
+          "default": true,
+          "description": "Include the requirements checklist in the per-step prompt tail (not the system message)."
+        },
+        "forge.requirements.llmExtract": {
+          "type": "boolean",
+          "default": false,
+          "description": "Reserved: optional LLM-based requirement extraction. Not implemented; heuristic extraction is used instead."
+        },
         "forge.selfCritique.enabled": {
           "type": "boolean",
           "default": false,

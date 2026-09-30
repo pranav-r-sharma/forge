@@ -227,7 +227,7 @@ function depsFor(root: vscode.Uri, ollama: any, trace: TraceWriter) {
 }
 
 async function runLoop(appendOnly: boolean, nReads: number, chars: number, numCtx = 32768) {
-  vs.__setConfig({ 'forge.context.appendOnly': appendOnly });
+  vs.__setConfig({ 'forge.context.appendOnly': appendOnly, 'forge.requirements.enabled': false });
   try {
     const files: Record<string, string> = {};
     for (let i = 0; i < nReads; i++) files[`f${i}.txt`] = 'abcdefghij\n'.repeat(Math.ceil(chars / 11));

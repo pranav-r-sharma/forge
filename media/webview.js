@@ -708,6 +708,10 @@
       <div class="settings-section-title">Advanced / experimental (each costs extra model calls — try, keep only what helps your model)</div>
       ${settingRow('Structured tool-call output', 'Uses Ollama\'s schema-constrained decoding for the tool-call contract instead of the fenced text block — can eliminate malformed-tool-call bugs if your model/Ollama version honor it well. Falls back automatically for any response that doesn\'t respect the schema.', `<input id="set-structuredOutputEnabled" type="checkbox" ${s.structuredOutputEnabled ? 'checked' : ''} />`)}
       ${settingRow('Plan before acting', 'One extra no-tool "think first" model call at the start of each Agent/Auto/Outcome turn, grounded with relevant codebase snippets.', `<input id="set-planFirstEnabled" type="checkbox" ${s.planFirstEnabled ? 'checked' : ''} />`)}
+      <div class="settings-section-title">Instruction following</div>
+      ${settingRow('Requirements checklist', 'Extract checkable requirements from the user message, show status each agent step, and nudge before a premature final answer.', `<input id="set-requirementsEnabled" type="checkbox" ${s.requirementsEnabled ? 'checked' : ''} />`)}
+      ${settingRow('Show checklist in prompt', 'Include the live checklist at the tail of each step (not in the system message).', `<input id="set-requirementsShowInPrompt" type="checkbox" ${s.requirementsShowInPrompt ? 'checked' : ''} />`)}
+      ${settingRow('Requirements gate nudges', 'How many times to push back on a final answer when requirements still lack evidence.', `<input id="set-requirementsMaxNudges" type="number" min="0" max="5" step="1" value="${s.requirementsMaxNudges}" />`)}
       ${settingRow('Self-critique large edits', 'One extra model call after a large edit asking "does this look right," fed back to the agent alongside the edit result.', `<input id="set-selfCritiqueEnabled" type="checkbox" ${s.selfCritiqueEnabled ? 'checked' : ''} />`)}
       ${settingRow('Best-of-N for large rewrites', 'Samples several candidates for a large full-file rewrite of an existing file and keeps the best-scoring one instead of trusting the first.', `<input id="set-bestOfNEnabled" type="checkbox" ${s.bestOfNEnabled ? 'checked' : ''} />`)}
       <div class="settings-section-title">MCP servers</div>
@@ -795,6 +799,16 @@
     });
     document.getElementById('set-planFirstEnabled').addEventListener('change', (e) => {
       vscodeApi.postMessage({ type: 'updateSetting', key: 'planFirst.enabled', value: e.target.checked });
+    });
+    document.getElementById('set-requirementsEnabled').addEventListener('change', (e) => {
+      vscodeApi.postMessage({ type: 'updateSetting', key: 'requirements.enabled', value: e.target.checked });
+    });
+    document.getElementById('set-requirementsShowInPrompt').addEventListener('change', (e) => {
+      vscodeApi.postMessage({ type: 'updateSetting', key: 'requirements.showInPrompt', value: e.target.checked });
+    });
+    document.getElementById('set-requirementsMaxNudges').addEventListener('change', (e) => {
+      const num = parseFloat(e.target.value);
+      if (Number.isFinite(num)) vscodeApi.postMessage({ type: 'updateSetting', key: 'requirements.maxNudges', value: num });
     });
     document.getElementById('set-selfCritiqueEnabled').addEventListener('change', (e) => {
       vscodeApi.postMessage({ type: 'updateSetting', key: 'selfCritique.enabled', value: e.target.checked });

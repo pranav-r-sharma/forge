@@ -1,5 +1,6 @@
 import { ChatMessage } from '../ollama/types';
 import { LlmProvider } from '../llm/provider';
+import { capPinnedUserContent, isRealUserTurnContent, PINNED_USER_MESSAGE_MAX_CHARS } from './requirements';
 import { parseToolCall } from './toolProtocol';
 
 /**
@@ -374,10 +375,27 @@ function normalizeState(s: CompactionCache | PromptViewState | undefined): Requi
 }
 
 /** Compaction summary substituted for archival[bodyStart..throughIndex), with the ORIGINAL first user message kept verbatim in front of it. */
-function buildPinnedCompactedView(archival: ChatMessage[], throughIndex: number, summary: string): ChatMessage[] {
+export function buildPinnedCompactedView(archival: ChatMessage[], throughIndex: number, summary: string): ChatMessage[] {
   const hasSystem = archival.length > 0 && archival[0].role === 'system';
   const bodyStart = hasSystem ? 1 : 0;
-  const pinned = archival[bodyStart]?.role === 'user' && throughIndex > bodyStart + 1 ? [archival[bodyStart]] : [];
+  const pinned: ChatMessage[] = [];
+  const first = archival[bodyStart];
+  if (first?.role === 'user' && throughIndex > bodyStart + 1 && isRealUserTurnContent(first.content)) {
+    pinned.push(first);
+  }
+  let lastUser: ChatMessage | undefined;
+  for (let i = bodyStart + 1; i < throughIndex; i++) {
+    const m = archival[i];
+    if (m.role === 'user' && isRealUserTurnContent(m.content)) lastUser = m;
+  }
+  const followUpLooksLikeCorrection =
+    lastUser &&
+    lastUser !== first &&
+    lastUser.content.length <= PINNED_USER_MESSAGE_MAX_CHARS &&
+    /\b(actually|instead|correction|do not|don't|never|must not|please fix|again|reminder)\b/i.test(lastUser.content);
+  if (followUpLooksLikeCorrection) {
+    pinned.push({ role: 'user', content: capPinnedUserContent(lastUser!.content) });
+  }
   const summarized = throughIndex - bodyStart - pinned.length;
   return [
     ...(hasSystem ? [archival[0]] : []),

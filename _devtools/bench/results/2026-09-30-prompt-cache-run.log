@@ -1,0 +1,14 @@
+server ready in 2.642 s
+server argv tail: --log-level WARNING --prompt-cache-bytes 34359738368
+{"label":"R1-req1 cold+history","promptTotal":6687,"cached":0,"evaluated":6687,"prefillMs":7058,"prefillTokPerSec":947,"decodeTokPerSec":34.8,"hitPct":0}
+{"label":"R1-req2 append tool1","promptTotal":6922,"cached":6686,"evaluated":236,"prefillMs":461,"prefillTokPerSec":512,"decodeTokPerSec":34,"hitPct":97}
+{"label":"R1-req3 append tool2","promptTotal":7118,"cached":6921,"evaluated":197,"prefillMs":433,"prefillTokPerSec":455,"decodeTokPerSec":35.1,"hitPct":97}
+{"label":"R1-control early-msg edit (cache miss)","promptTotal":7122,"cached":3283,"evaluated":3839,"prefillMs":2936,"prefillTokPerSec":1308,"decodeTokPerSec":35.2,"hitPct":46}
+{"label":"R2-req1 cold+history","promptTotal":6687,"cached":6686,"evaluated":1,"prefillMs":145,"prefillTokPerSec":7,"decodeTokPerSec":35.6,"hitPct":100}
+{"label":"R2-req2 append tool1","promptTotal":6922,"cached":6686,"evaluated":236,"prefillMs":452,"prefillTokPerSec":522,"decodeTokPerSec":35.3,"hitPct":97}
+{"label":"R2-req3 append tool2","promptTotal":7118,"cached":6921,"evaluated":197,"prefillMs":445,"prefillTokPerSec":443,"decodeTokPerSec":35.2,"hitPct":97}
+{"label":"R2-control early-msg edit (cache miss)","promptTotal":7122,"cached":3283,"evaluated":3839,"prefillMs":2931,"prefillTokPerSec":1310,"decodeTokPerSec":35,"hitPct":46}
+{"label":"R3-req1 cold+history","promptTotal":6687,"cached":3283,"evaluated":3404,"prefillMs":2615,"prefillTokPerSec":1302,"decodeTokPerSec":35.5,"hitPct":49}
+{"label":"R3-req2 append tool1","promptTotal":6922,"cached":6686,"evaluated":236,"prefillMs":456,"prefillTokPerSec":518,"decodeTokPerSec":35.2,"hitPct":97}
+{"label":"R3-req3 append tool2","promptTotal":7118,"cached":6921,"evaluated":197,"prefillMs":435,"prefillTokPerSec":453,"decodeTokPerSec":29.5,"hitPct":97}
+{"label":"R3-control early-msg edit (cache miss)","promptTotal":7122,"cached":3283,"evaluated":3839,"prefillMs":3154,"prefillTokPerSec":1217,"decodeTokPerSec":35.2,"hitPct":46}

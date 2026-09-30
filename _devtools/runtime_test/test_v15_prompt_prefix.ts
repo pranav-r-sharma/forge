@@ -2,6 +2,7 @@
 import { buildSystemPrompt, buildTurnContextPrefix } from '../../src/agent/systemPrompt';
 import { isPromptPrefixExtension, serializePromptMessages, sharedPrefixLength } from '../../src/agent/promptPrefix';
 import { updatePromptView } from '../../src/agent/contextManager';
+import { extractRequirementsFromUserMessage, injectRequirementsIntoPromptView, renderRequirementsChecklistForPrompt } from '../../src/agent/requirements';
 import { ChatMessage } from '../../src/ollama/types';
 
 let passed = 0;
@@ -53,9 +54,29 @@ async function testConsecutiveStepsSharePrefix() {
   }
 }
 
+function testRequirementsInjectionPreservesSystemPrefix() {
+  const sys = buildSystemPrompt('w', 'agent');
+  const state = extractRequirementsFromUserMessage('1. First.\n2. Second.\n3. Third.');
+  const checklistA = renderRequirementsChecklistForPrompt(state);
+  const checklistB = checklistA.replace('[ ] 1.', '[x] 1.');
+  const base: ChatMessage[] = [
+    { role: 'system', content: sys },
+    { role: 'user', content: 'do work' },
+  ];
+  const step1 = injectRequirementsIntoPromptView(base, checklistA);
+  const step2 = injectRequirementsIntoPromptView(
+    [...base, { role: 'assistant', content: 'a' }, { role: 'user', content: '[Tool "read_file" result]\nx' }],
+    checklistB,
+  );
+  ok(step1[0].content === step2[0].content, 'requirements tail updates do not rewrite the system message');
+  const prefixLen = sharedPrefixLength(serializePromptMessages(step1), serializePromptMessages(step2));
+  ok(prefixLen >= serializePromptMessages(base).length, 'two agent steps share the same prefix up through the task user message');
+}
+
 async function main() {
   testTurnContextNotInSystem();
   testMcpToolOrderStable();
+  testRequirementsInjectionPreservesSystemPrefix();
   await testConsecutiveStepsSharePrefix();
   console.log(`\n${passed} passed, ${failed} failed.`);
   if (failed > 0) process.exit(1);

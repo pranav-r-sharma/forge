@@ -37,6 +37,16 @@ import {
   type UnresolvedRunFailure,
 } from './claimChecker';
 import { detectNestedToolAction, formatNestedActionResend } from '../tools/argErrors';
+import {
+  extractRequirementsFromUserMessage,
+  findRequirementsGateGaps,
+  formatRequirementsGateNudge,
+  injectRequirementsIntoPromptView,
+  renderRequirementsChecklistForPrompt,
+  requirementGateMarkers,
+  updateRequirementsFromMessages,
+  type RequirementsState,
+} from './requirements';
 import { runVerifyCommand } from './verifyCheck';
 import { detectSuspiciousVerifyBypass } from './gamingDetection';
 import { BackgroundProcessManager } from '../tools/backgroundProcessManager';
@@ -356,6 +366,12 @@ export async function runAgentTurn(
     messages.unshift({ role: 'system', content: systemPrompt });
   }
 
+  const requirementsActive = cfg.requirementsEnabled && (options.subAgentDepth ?? 0) === 0;
+  let requirementsState: RequirementsState | undefined;
+  if (requirementsActive) {
+    requirementsState = extractRequirementsFromUserMessage(userMessage);
+  }
+
   const turnContextPrefix = buildTurnContextPrefix({
     memoryText: options.memoryText,
     projectLogText: options.projectLogText,
@@ -526,12 +542,24 @@ export async function runAgentTurn(
       compactionCache = r.state;
       lastViewEvent = r.event?.kind;
       lastEstTokens = r.estTokens;
-      return r.view;
+      let view = r.view;
+      if (requirementsActive && cfg.requirementsShowInPrompt && requirementsState) {
+        requirementsState = updateRequirementsFromMessages(requirementsState, messages);
+        const checklist = renderRequirementsChecklistForPrompt(requirementsState);
+        view = injectRequirementsIntoPromptView(view, checklist);
+      }
+      return view;
     }
     const pruned = pruneStaleReadsView(messages);
     const compacted = await maybeCompact(pruned, compactionCache, model, numCtx, deps.ollama, cancellationToAbortSignal(cancellation));
     compactionCache = compacted.cache;
-    return hardCapOversizedMessages(compacted.promptMessages);
+    let view = hardCapOversizedMessages(compacted.promptMessages);
+    if (requirementsActive && cfg.requirementsShowInPrompt && requirementsState) {
+      requirementsState = updateRequirementsFromMessages(requirementsState, messages);
+      const checklist = renderRequirementsChecklistForPrompt(requirementsState);
+      view = injectRequirementsIntoPromptView(view, checklist);
+    }
+    return view;
   }
 
   let hallucinationNudges = 0;
@@ -543,6 +571,7 @@ export async function runAgentTurn(
   let commandsExecutedThisTurn: string[] = [];
   let filesWrittenThisTurn: string[] = [];
   let truncationNudges = 0;
+  let requirementsNudges = 0;
   let pendingActionTarget: PendingActionTarget | undefined;
   /** Consecutive failed run_command results (tests/build still failing) — drives forge.thinking='auto': the agent is stuck, so let the model think. */
   let failedRunsInARow = 0;
@@ -782,11 +811,31 @@ export async function runAgentTurn(
         traceIter({ note: 'unresolved-failure-nudge' });
         continue;
       }
+      let requirementsGateMissing: ReturnType<typeof findRequirementsGateGaps> = [];
+      if (requirementsActive && requirementsState) {
+        requirementsState = updateRequirementsFromMessages(requirementsState, messages);
+        requirementsGateMissing = findRequirementsGateGaps(requirementsState);
+        const overlapsTaskNudge =
+          hasTaskFormIssues &&
+          requirementsGateMissing.some((it) => unexercisedTaskForms.some((f) => it.text.includes(f) || f.includes(it.text.slice(0, 30))));
+        if (
+          requirementsGateMissing.length > 0 &&
+          !overlapsTaskNudge &&
+          requirementsNudges < cfg.requirementsMaxNudges
+        ) {
+          requirementsNudges++;
+          pushAssistant(fullText);
+          pushMsg({ role: 'user', content: formatRequirementsGateNudge(requirementsGateMissing) });
+          traceIter({ note: 'requirements-gate-nudge' });
+          continue;
+        }
+      }
       const unverifiedAll = [
         ...unverified,
         ...claimedCmd.unverifiedMarkers,
         ...(hasTaskFormIssues ? taskCommandFormUnverifiedMarkers(unexercisedTaskForms) : []),
         ...(unresolvedRunFailure ? [unresolvedFailureMarker(unresolvedRunFailure)] : []),
+        ...(requirementsGateMissing.length > 0 ? requirementGateMarkers(requirementsGateMissing) : []),
       ];
       pushAssistant(fullText);
 

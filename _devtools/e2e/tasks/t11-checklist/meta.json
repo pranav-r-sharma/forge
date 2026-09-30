@@ -1,0 +1,7 @@
+{
+  "id": "t11-checklist",
+  "title": "Instruction checklist eval (8 explicit requirements)",
+  "category": "instruction-following",
+  "protected": [],
+  "expected_files": ["app/hello.py", "app/utils.py", "tests/test_utils.py"]
+}

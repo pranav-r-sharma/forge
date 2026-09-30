@@ -154,11 +154,20 @@ Rules for actions:
  * Returns '' when there's nothing to prepend, so callers can safely
  * concatenate unconditionally.
  */
-export function buildTurnContextPrefix(extra?: { memoryText?: string; projectLogText?: string; milestonesText?: string; taskLedgerText?: string }): string {
+export function buildTurnContextPrefix(extra?: {
+  memoryText?: string;
+  projectLogText?: string;
+  milestonesText?: string;
+  taskLedgerText?: string;
+  /** Live requirements checklist — prefer injectRequirementsIntoPromptView() each agent step so archival text stays stable; this hook exists for tests and optional static prefix. */
+  requirementsText?: string;
+}): string {
   // taskLedgerText last, right before the user's own message — it's the
   // most actionable "what's already done, don't redo it" signal for
   // whatever this specific turn is about to do, so it belongs closest to
   // the actual request rather than buried under memory/project-log context.
-  const blocks = [extra?.memoryText, extra?.projectLogText, extra?.milestonesText, extra?.taskLedgerText].filter((b): b is string => !!b);
+  const blocks = [extra?.memoryText, extra?.projectLogText, extra?.milestonesText, extra?.taskLedgerText, extra?.requirementsText].filter(
+    (b): b is string => !!b,
+  );
   return blocks.length ? blocks.join('\n\n') + '\n\n' : '';
 }

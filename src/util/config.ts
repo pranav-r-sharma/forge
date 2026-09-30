@@ -98,6 +98,12 @@ export interface ForgeConfig {
   structuredOutputEnabled: boolean;
   /** Optional internal no-tool "think first" pass at the start of a turn in Agent/Auto/Outcome mode — see agent/planFirst.ts. Off by default: it's an extra full model call on every turn, real latency cost for a real (but not universally needed) accuracy gain. */
   planFirstEnabled: boolean;
+  /** Extract and track numbered requirements from the user message; show a checklist in the turn tail and gate premature finals. */
+  requirementsEnabled: boolean;
+  requirementsMaxNudges: number;
+  requirementsShowInPrompt: boolean;
+  /** Optional LLM extraction for requirements (not implemented — heuristic extract only). */
+  requirementsLlmExtract: boolean;
   /** Optional extra model call after a large/risky edit asking "does this look right" before it's staged — see agent/selfCritique.ts. Off by default, same latency-cost reasoning as planFirstEnabled. */
   selfCritiqueEnabled: boolean;
   /** Minimum combined added+removed lines for an edit to trigger a self-critique pass — see agent/selfCritique.ts's shouldCritique(). */
@@ -216,6 +222,10 @@ export function getConfig(): ForgeConfig {
     contextLowWaterPct: cfg.get<number>('context.lowWaterPct') ?? 45,
     structuredOutputEnabled: cfg.get<boolean>('structuredOutput.enabled') ?? false,
     planFirstEnabled: cfg.get<boolean>('planFirst.enabled') ?? false,
+    requirementsEnabled: cfg.get<boolean>('requirements.enabled') ?? true,
+    requirementsMaxNudges: Math.max(0, Math.floor(cfg.get<number>('requirements.maxNudges') ?? 2)),
+    requirementsShowInPrompt: cfg.get<boolean>('requirements.showInPrompt') ?? true,
+    requirementsLlmExtract: cfg.get<boolean>('requirements.llmExtract') ?? false,
     selfCritiqueEnabled: cfg.get<boolean>('selfCritique.enabled') ?? false,
     selfCritiqueMinLines: cfg.get<number>('selfCritique.minLines') ?? 40,
     bestOfNEnabled: cfg.get<boolean>('bestOfN.enabled') ?? false,
@@ -287,6 +297,10 @@ export const SETTINGS_PANEL_KEYS = [
   'loopDetection.enabled',
   'structuredOutput.enabled',
   'planFirst.enabled',
+  'requirements.enabled',
+  'requirements.maxNudges',
+  'requirements.showInPrompt',
+  'requirements.llmExtract',
   'selfCritique.enabled',
   'selfCritique.minLines',
   'bestOfN.enabled',
