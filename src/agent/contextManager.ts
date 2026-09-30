@@ -280,6 +280,13 @@ export function estimateTokens(chars: number, cpt: number): number {
   return Math.ceil(chars / (cpt > 0 ? cpt : DEFAULT_CHARS_PER_TOKEN));
 }
 
+/** Prompt size for output-cap math: never under-estimate vs the previous step's runtime estimate. */
+export function promptViewTokenEstimate(view: ChatMessage[], cpt: number, priorEst?: number): number {
+  const chars = view.reduce((n, m) => n + m.content.length, 0);
+  const fresh = estimateTokens(chars, cpt);
+  return Math.max(fresh, priorEst ?? 0);
+}
+
 /** EMA of measured chars/token. Ignores tiny prompts and implausible values so one odd reading can't swing the compaction trigger. */
 export function updateCharsPerToken(prev: number | undefined, chars: number, tokens: number | undefined): number {
   const base = prev && prev > 0 ? prev : DEFAULT_CHARS_PER_TOKEN;
@@ -410,6 +417,8 @@ export interface PromptViewOptions {
   pinnedUserMaxChars?: number;
   /** Tokens reserved for requirements checklist tail (subtracted from water marks before compaction). */
   reservedTailTokens?: number;
+  /** When true, run mask/compact even below the high-water mark (output room exhausted). */
+  forceCompactionForOutput?: boolean;
 }
 
 export interface PromptViewResult {
@@ -452,7 +461,7 @@ export async function updatePromptView(archival: ChatMessage[], stateIn: Compact
 
   let view = build(st.maskedIdx, st.throughIndex, st.summary);
   let tokens = size(view);
-  if (tokens <= highTokens) return { view, state: stateOut(st.maskedIdx, st.throughIndex, st.summary), estTokens: tokens };
+  if (!o.forceCompactionForOutput && tokens <= highTokens) return { view, state: stateOut(st.maskedIdx, st.throughIndex, st.summary), estTokens: tokens };
 
   // ---- batched cleanup, escalating only as far as needed to reach the LOW-water mark ----
   // Level 1 protects the last 6 tool results / 12 messages (the old behaviour); later levels protect fewer, so a cleanup always makes real

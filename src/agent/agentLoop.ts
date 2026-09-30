@@ -20,7 +20,7 @@ import { HookRunner } from '../forge/hooks';
 import { getConfig, resolveEffectiveMaxOutputTokens } from '../util/config';
 import { logger } from '../util/logger';
 import { resolveWorkspacePath, toRelative } from '../util/paths';
-import { CompactionCache, PromptViewState, estimateTokens, hardCapOversizedMessages, maybeCompact, pruneStaleReadsView, updateCharsPerToken, updatePromptView, DEFAULT_CHARS_PER_TOKEN } from './contextManager';
+import { CompactionCache, PromptViewState, estimateTokens, hardCapOversizedMessages, maybeCompact, promptViewTokenEstimate, pruneStaleReadsView, updateCharsPerToken, updatePromptView, DEFAULT_CHARS_PER_TOKEN, type PromptViewOptions } from './contextManager';
 import { LoopDetector, formatLoopWarningMessage, signatureForStep } from './loopDetector';
 import { unwrapNestedToolCall } from '../tools/argErrors';
 import { unknownArgNotesForSpec } from '../tools/unknownToolArgs';
@@ -532,60 +532,60 @@ export async function runAgentTurn(
   let lastViewEvent: 'mask' | 'compact' | undefined;
   let lastEstTokens: number | undefined;
   let requirementsPromptView: ChatMessage[] | undefined;
-  async function buildPromptView(): Promise<ChatMessage[]> {
-    lastViewEvent = undefined;
-    if (cfg.contextAppendOnly) {
+  function reservedTailTokensForPromptView(): number {
+    const checklistReserveChars =
+      requirementsActive && cfg.requirementsShowInPrompt && requirementsState
+        ? requirementsChecklistMaxChars(numCtx, (compactionCache as PromptViewState | undefined)?.cpt)
+        : 0;
+    return checklistReserveChars > 0
+      ? estimateTokens(checklistReserveChars, (compactionCache as PromptViewState | undefined)?.cpt ?? DEFAULT_CHARS_PER_TOKEN)
+      : 0;
+  }
+  function promptViewOptions(extra?: Partial<PromptViewOptions>): PromptViewOptions {
+    return {
+      model,
+      numCtx,
+      ollama: deps.ollama,
+      signal: cancellationToAbortSignal(cancellation),
+      highWaterPct: cfg.contextHighWaterPct,
+      lowWaterPct: cfg.contextLowWaterPct,
+      singleMessageSharePct: cfg.singleMessageSharePct,
+      pinnedUserMaxChars: cfg.contextPinnedUserMaxChars,
+      reservedTailTokens: reservedTailTokensForPromptView(),
+      ...extra,
+    };
+  }
+  function attachRequirementsChecklist(view: ChatMessage[], cpt?: number): ChatMessage[] {
+    if (requirementsActive && cfg.requirementsShowInPrompt && requirementsState) {
+      requirementsState = updateRequirementsFromMessages(requirementsState, messages);
+      const checklist = renderRequirementsChecklistForPrompt(
+        requirementsState,
+        requirementsChecklistMaxChars(numCtx, cpt ?? (compactionCache as PromptViewState | undefined)?.cpt),
+      );
+      const extended = extendRequirementsPromptView(requirementsPromptView, view, checklist);
+      requirementsPromptView = extended;
+      return extended;
+    }
+    return view;
+  }
+  async function buildPromptView(opts?: { forceCompactionForOutput?: boolean }): Promise<ChatMessage[]> {
+    if (!opts?.forceCompactionForOutput) lastViewEvent = undefined;
+    if (cfg.contextAppendOnly || opts?.forceCompactionForOutput) {
       // Append-only path (v0.15.0 §2.1): nothing already sent is rewritten except in a deliberate, batched event — see updatePromptView().
-      const checklistReserveChars =
-        requirementsActive && cfg.requirementsShowInPrompt && requirementsState
-          ? requirementsChecklistMaxChars(numCtx, (compactionCache as PromptViewState | undefined)?.cpt)
-          : 0;
-      const reservedTailTokens =
-        checklistReserveChars > 0
-          ? estimateTokens(checklistReserveChars, (compactionCache as PromptViewState | undefined)?.cpt ?? DEFAULT_CHARS_PER_TOKEN)
-          : 0;
-      const r = await updatePromptView(messages, compactionCache, {
-        model,
-        numCtx,
-        ollama: deps.ollama,
-        signal: cancellationToAbortSignal(cancellation),
-        highWaterPct: cfg.contextHighWaterPct,
-        lowWaterPct: cfg.contextLowWaterPct,
-        singleMessageSharePct: cfg.singleMessageSharePct,
-        pinnedUserMaxChars: cfg.contextPinnedUserMaxChars,
-        reservedTailTokens,
-      });
+      const r = await updatePromptView(messages, compactionCache, promptViewOptions({ forceCompactionForOutput: opts?.forceCompactionForOutput }));
       compactionCache = r.state;
-      lastViewEvent = r.event?.kind;
+      lastViewEvent = r.event?.kind ?? lastViewEvent;
       lastEstTokens = r.estTokens;
-      if (r.event) {
-        requirementsPromptView = undefined;
-      }
-      let view = r.view;
-      if (requirementsActive && cfg.requirementsShowInPrompt && requirementsState) {
-        requirementsState = updateRequirementsFromMessages(requirementsState, messages);
-        const checklist = renderRequirementsChecklistForPrompt(
-          requirementsState,
-          requirementsChecklistMaxChars(numCtx, r.state.cpt),
-        );
-        view = extendRequirementsPromptView(requirementsPromptView, view, checklist);
-        requirementsPromptView = view;
-      }
-      return view;
+      if (r.event) requirementsPromptView = undefined;
+      return attachRequirementsChecklist(r.view, r.state.cpt);
     }
     const pruned = pruneStaleReadsView(messages);
     const compacted = await maybeCompact(pruned, compactionCache, model, numCtx, deps.ollama, cancellationToAbortSignal(cancellation));
     compactionCache = compacted.cache;
     let view = hardCapOversizedMessages(compacted.promptMessages);
-    if (requirementsActive && cfg.requirementsShowInPrompt && requirementsState) {
-      requirementsState = updateRequirementsFromMessages(requirementsState, messages);
-      const checklist = renderRequirementsChecklistForPrompt(
-        requirementsState,
-        requirementsChecklistMaxChars(numCtx, (compactionCache as PromptViewState | undefined)?.cpt),
-      );
-      view = extendRequirementsPromptView(requirementsPromptView, view, checklist);
-      requirementsPromptView = view;
-    }
+    view = attachRequirementsChecklist(view);
+    const cpt = (compactionCache as PromptViewState | undefined)?.cpt ?? DEFAULT_CHARS_PER_TOKEN;
+    lastEstTokens = promptViewTokenEstimate(view, cpt, lastEstTokens);
     return view;
   }
 
@@ -653,7 +653,42 @@ export async function runAgentTurn(
       return { messages, compactionCache };
     }
 
-    const promptView = await buildPromptView();
+    let promptView = await buildPromptView();
+    const cptForCap = (compactionCache as PromptViewState | undefined)?.cpt ?? DEFAULT_CHARS_PER_TOKEN;
+    let estPromptTokens = promptViewTokenEstimate(promptView, cptForCap, lastEstTokens);
+    let effectiveMaxOut = resolveEffectiveMaxOutputTokens(
+      cfg.maxOutputTokens,
+      numCtx,
+      cfg.maxOutputTokensCeiling,
+      estPromptTokens,
+    );
+    if (effectiveMaxOut <= 0) {
+      promptView = await buildPromptView({ forceCompactionForOutput: true });
+      estPromptTokens = promptViewTokenEstimate(promptView, cptForCap, lastEstTokens);
+      effectiveMaxOut = resolveEffectiveMaxOutputTokens(
+        cfg.maxOutputTokens,
+        numCtx,
+        cfg.maxOutputTokensCeiling,
+        estPromptTokens,
+      );
+    }
+    if (effectiveMaxOut <= 0) {
+      const fullMsg =
+        'Context is full — start a new chat or raise the context window (forge.numCtx or mlx.contextTokens).';
+      iterState = {
+        ...iterState,
+        iter: iteration,
+        promptChars: promptView.reduce((n, m) => n + m.content.length, 0),
+        promptMsgs: promptView.length,
+        estPromptTokens,
+        viewEvent: lastViewEvent,
+        compacted: promptView.some((m) => m.content.startsWith('[Earlier conversation summary')),
+      };
+      emit({ type: 'final', text: fullMsg });
+      traceIter({ note: 'context-full', final: true });
+      return { messages, compactionCache };
+    }
+
     iterState = {
       iter: iteration,
       promptChars: promptView.reduce((n, m) => n + m.content.length, 0),
@@ -663,7 +698,7 @@ export async function runAgentTurn(
       modelMs: 0,
       metrics: undefined,
       viewEvent: lastViewEvent,
-      estPromptTokens: lastEstTokens,
+      estPromptTokens,
       thinking: thinkingForStep(cfg.thinking, failedRunsInARow),
     };
     const modelStartedAt = Date.now();
@@ -685,12 +720,7 @@ export async function runAgentTurn(
         keepAliveMinutes: keepAliveOpt(cfg.keepAliveMinutes),
         format: structuredOutputEnabled ? STRUCTURED_RESPONSE_SCHEMA : undefined,
         thinking: thinkingForStep(cfg.thinking, failedRunsInARow),
-        maxTokens: resolveEffectiveMaxOutputTokens(
-          cfg.maxOutputTokens,
-          numCtx,
-          cfg.maxOutputTokensCeiling,
-          lastEstTokens ?? estimateTokens(promptView.reduce((n, m) => n + m.content.length, 0), (compactionCache as PromptViewState | undefined)?.cpt ?? DEFAULT_CHARS_PER_TOKEN),
-        ),
+        maxTokens: effectiveMaxOut,
         onToken: (token) => emit({ type: 'token', text: token }),
         onMetrics: (metrics) => {
           iterState.metrics = metrics;

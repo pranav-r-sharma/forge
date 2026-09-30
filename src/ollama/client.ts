@@ -101,10 +101,11 @@ export class OllamaClient implements LlmProvider {
         temperature: opts.temperature ?? 0.2,
         ...(opts.numCtx ? { num_ctx: opts.numCtx } : {}),
         ...(opts.numBatch ? { num_batch: opts.numBatch } : {}),
-        ...(opts.maxTokens ? { num_predict: opts.maxTokens } : {}),
+        ...(opts.maxTokens !== undefined && opts.maxTokens > 0 ? { num_predict: opts.maxTokens } : {}),
         ...(opts.stop ? { stop: opts.stop } : {}),
       },
     };
+    if (opts.maxTokens === 0) logger.warn('Ollama chat: maxTokens is 0 — omitting num_predict (runtime may use a low default)');
 
     let res: Response;
     try {
@@ -155,12 +156,13 @@ export class OllamaClient implements LlmProvider {
         temperature: opts.temperature ?? 0.1,
         ...(opts.numCtx ? { num_ctx: opts.numCtx } : {}),
         ...(opts.numBatch ? { num_batch: opts.numBatch } : {}),
-        ...(opts.maxTokens ? { num_predict: opts.maxTokens } : {}),
+        ...(opts.maxTokens !== undefined && opts.maxTokens > 0 ? { num_predict: opts.maxTokens } : {}),
         ...(opts.stop ? { stop: opts.stop } : {}),
       },
     };
     if (opts.suffix !== undefined) body.suffix = opts.suffix;
     if (opts.raw) body.raw = true;
+    if (opts.maxTokens === 0) logger.warn('Ollama generate: maxTokens is 0 — omitting num_predict (runtime may use a low default)');
 
     let res: Response;
     try {

@@ -137,7 +137,8 @@ export class OpenAiCompatClient implements LlmProvider {
       stream_options: { include_usage: true },
       temperature: opts.temperature ?? 0.2,
     };
-    if (opts.maxTokens) body.max_tokens = opts.maxTokens;
+    if (opts.maxTokens !== undefined && opts.maxTokens > 0) body.max_tokens = opts.maxTokens;
+    else if (opts.maxTokens === 0) logger.warn('OpenAI-compat chat: maxTokens is 0 — omitting output cap (runtime may use a low default)');
     if (opts.stop && opts.stop.length) body.stop = opts.stop;
     if (opts.thinking !== undefined && this.capabilities.thinkingControl) body.chat_template_kwargs = { enable_thinking: opts.thinking };
     // numCtx / keepAliveMinutes / format have no equivalent here: the context window is fixed when the server starts, models stay loaded.
@@ -168,7 +169,8 @@ export class OpenAiCompatClient implements LlmProvider {
 
   async generate(opts: GenerateRequestOptions): Promise<string> {
     const body: Record<string, any> = { model: this.modelName(opts.model), prompt: opts.prompt, stream: true, temperature: opts.temperature ?? 0.1 };
-    if (opts.maxTokens) body.max_tokens = opts.maxTokens;
+    if (opts.maxTokens !== undefined && opts.maxTokens > 0) body.max_tokens = opts.maxTokens;
+    else if (opts.maxTokens === 0) logger.warn('OpenAI-compat chat: maxTokens is 0 — omitting output cap (runtime may use a low default)');
     if (opts.stop && opts.stop.length) body.stop = opts.stop;
     // `suffix` (fill-in-middle) is not part of mlx_lm.server's /v1/completions — capabilities.fim is false, callers should not rely on it.
     const t0 = performance.now();

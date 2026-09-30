@@ -103,10 +103,10 @@ async function main() {
   {
     const { deps, events } = makeDeps(projRoot, subOllama);
     const cts = new vscode.CancellationTokenSource();
-    const result = await runAgentTurn([], 'figure out why the build is failing', deps as any, (e: AgentEvent) => events.push(e), cts.token, 'parent-model', { mode: 'auto', numCtx: 4096 });
+    const result = await runAgentTurn([], 'figure out why the build is failing', deps as any, (e: AgentEvent) => events.push(e), cts.token, 'parent-model', { mode: 'auto', numCtx: 32768 });
 
     ok(subChatCalls === 3, 'three model calls total: parent delegates, sub-agent answers, parent concludes');
-    ok(subCapturedNumCtx.every((n) => n === 4096), "the parent's numCtx override (4096) is threaded down into the sub-agent's own call, not silently reset to the global default");
+    ok(subCapturedNumCtx.every((n) => n === 32768), "the parent's numCtx override (32768) is threaded down into the sub-agent's own call, not silently reset to the global default");
 
     const start = events.find((e): e is Extract<AgentEvent, { type: 'subagent_start' }> => e.type === 'subagent_start');
     ok(!!start && start.depth === 1 && start.task === 'investigate the failing build', 'subagent_start fires with depth 1 and the delegated task text');

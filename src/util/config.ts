@@ -259,6 +259,9 @@ export function getConfig(): ForgeConfig {
   };
 }
 
+/** Minimum output-token budget before the agent loop compacts or aborts (never call the model with a smaller cap — runtimes omit 0 and fall back to ~512). */
+export const MIN_AGENT_OUTPUT_TOKEN_FLOOR = 2048;
+
 /** Headroom reserved so prompt + output never exceeds the context window. */
 export function outputTokenSafetyMargin(contextTokens: number): number {
   const ctx = contextTokens > 0 ? contextTokens : 131072;
@@ -287,6 +290,13 @@ export function resolveEffectiveMaxOutputTokens(
 
   if (configured > 0) return Math.min(configured, room);
   return Math.min(auto, room);
+}
+
+/** Tokens left in the window for model output after the estimated prompt and safety margin. */
+export function outputTokenRoom(contextTokens: number, promptTokens: number): number {
+  const ctx = contextTokens > 0 ? contextTokens : 131072;
+  const safety = outputTokenSafetyMargin(ctx);
+  return Math.max(0, ctx - Math.max(0, promptTokens) - safety);
 }
 
 export async function setChatModel(model: string) {
