@@ -109,7 +109,10 @@ async function main() {
   ok(verifyResults.length === 2, 'two verify checks ran — one per attempt');
   ok(verifyResults[0].ok === false && verifyResults[1].ok === true, 'the first check fails (marker missing), the second passes (marker now exists)');
   const finalEvent = events.find((e): e is Extract<AgentEvent, { type: 'final' }> => e.type === 'final');
-  ok(!!finalEvent && finalEvent.text === 'Now it is actually done.', 'the turn only actually ends once the definition-of-done check genuinely passes, not on the first unverified claim');
+  ok(
+    !!finalEvent && finalEvent.text.startsWith('Now it is actually done.') && finalEvent.verifyOk === true,
+    'the turn only actually ends once the definition-of-done check genuinely passes, not on the first unverified claim',
+  );
   ok(result.messages.some((m) => m.content.includes('Definition-of-done check failed')), 'the failed check is fed back into the model-facing transcript as real evidence, not silently retried');
 
   fs.unlinkSync(markerPath);

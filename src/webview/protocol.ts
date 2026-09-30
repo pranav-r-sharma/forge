@@ -85,6 +85,10 @@ export interface SettingsSnapshot {
   requirementsEnabled: boolean;
   requirementsMaxNudges: number;
   requirementsShowInPrompt: boolean;
+  verifyBeforeDone: string;
+  verifyCommand: string;
+  verifyTimeoutSec: number;
+  contextPinnedUserMaxChars: number;
   selfCritiqueEnabled: boolean;
   bestOfNEnabled: boolean;
   /** Cost-aware task planning (item "cost-aware task planning" — see agent/taskCost.ts). */

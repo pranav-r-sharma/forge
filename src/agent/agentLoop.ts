@@ -51,6 +51,7 @@ import {
   type RequirementsState,
 } from './requirements';
 import { runVerifyCommand } from './verifyCheck';
+import { formatVerifyFinalNote, resolveVerifyCommandForFinal } from './verifyBeforeDone';
 import { detectSuspiciousVerifyBypass } from './gamingDetection';
 import { BackgroundProcessManager } from '../tools/backgroundProcessManager';
 import { DynamicToolSpec } from '../mcp/mcpTypes';
@@ -542,6 +543,7 @@ export async function runAgentTurn(
         highWaterPct: cfg.contextHighWaterPct,
         lowWaterPct: cfg.contextLowWaterPct,
         singleMessageSharePct: cfg.singleMessageSharePct,
+        pinnedUserMaxChars: cfg.contextPinnedUserMaxChars,
       });
       compactionCache = r.state;
       lastViewEvent = r.event?.kind;
@@ -861,11 +863,26 @@ export async function runAgentTurn(
       // model, is the arbiter of whether the goal is really met. A failing
       // check gets fed straight back in as evidence and the loop continues,
       // which is what makes OUTCOME mode's iterate-until-true promise real.
-      if (options.verifyCommand) {
-        emit({ type: 'status', text: `Verifying: ${truncateOneLine(options.verifyCommand, 80)}…`, activity: 'verify' });
-        emit({ type: 'verify_start', command: options.verifyCommand, draftText: displayText.trim() });
-        const verify = await runVerifyCommand(options.verifyCommand, deps.workspaceRoot.fsPath, cancellation);
-        emit({ type: 'verify_result', command: options.verifyCommand, ok: verify.ok, summary: summarize(verify.output) });
+      const effectiveVerify = resolveVerifyCommandForFinal({
+        mode: options.mode,
+        verifyBeforeDone: cfg.verifyBeforeDone,
+        settingVerifyCommand: cfg.verifyCommand,
+        sessionVerifyCommand: options.verifyCommand,
+        userMessage,
+        workspaceRoot: deps.workspaceRoot.fsPath,
+        turnWroteFiles: filesWrittenThisTurn.length > 0,
+      });
+      let finalDisplayText = displayText.trim();
+      if (effectiveVerify) {
+        emit({ type: 'status', text: `Verifying: ${truncateOneLine(effectiveVerify, 80)}…`, activity: 'verify' });
+        emit({ type: 'verify_start', command: effectiveVerify, draftText: finalDisplayText });
+        const verify = await runVerifyCommand(
+          effectiveVerify,
+          deps.workspaceRoot.fsPath,
+          cancellation,
+          cfg.verifyTimeoutSec * 1000,
+        );
+        emit({ type: 'verify_result', command: effectiveVerify, ok: verify.ok, summary: summarize(verify.output) });
         if (cancellation.isCancellationRequested) {
           emit({ type: 'aborted' });
           return { messages, compactionCache };
@@ -876,25 +893,28 @@ export async function runAgentTurn(
           sawFailedVerify = true;
           writesSinceLastVerify = [];
           traceIter({ note: 'verify-failed' });
-          if (checkLoop(loopDetector, '__verify__', { command: options.verifyCommand }, false, verify.output, emit)) {
+          if (checkLoop(loopDetector, '__verify__', { command: effectiveVerify }, false, verify.output, emit)) {
             return { messages, compactionCache };
           }
           continue;
         }
         if (sawFailedVerify) {
-          const findings = detectSuspiciousVerifyBypass(writesSinceLastVerify, options.verifyCommand);
+          const findings = detectSuspiciousVerifyBypass(writesSinceLastVerify, effectiveVerify);
           if (findings.length > 0) emit({ type: 'verify_gaming_warning', findings });
         }
         sawFailedVerify = false;
         writesSinceLastVerify = [];
+        finalDisplayText += formatVerifyFinalNote(effectiveVerify, true);
       }
 
       traceIter({ final: true });
       pendingActionTarget = undefined;
       emit({
         type: 'final',
-        text: displayText.trim(),
+        text: finalDisplayText,
         unverifiedClaims: unverifiedAll.length > 0 ? unverifiedAll : undefined,
+        verifyCommand: effectiveVerify,
+        verifyOk: effectiveVerify ? true : undefined,
       });
       emit({ type: 'done' });
       return { messages, compactionCache };

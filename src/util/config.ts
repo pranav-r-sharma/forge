@@ -104,6 +104,12 @@ export interface ForgeConfig {
   requirementsShowInPrompt: boolean;
   /** Optional LLM extraction for requirements (not implemented — heuristic extract only). */
   requirementsLlmExtract: boolean;
+  /** Run a workspace check before accepting a final answer after file edits (auto-detect or custom command). */
+  verifyBeforeDone: 'off' | 'auto' | 'custom';
+  /** Shell command when forge.verifyBeforeDone is custom. */
+  verifyCommand: string;
+  verifyTimeoutSec: number;
+  contextPinnedUserMaxChars: number;
   /** Optional extra model call after a large/risky edit asking "does this look right" before it's staged — see agent/selfCritique.ts. Off by default, same latency-cost reasoning as planFirstEnabled. */
   selfCritiqueEnabled: boolean;
   /** Minimum combined added+removed lines for an edit to trigger a self-critique pass — see agent/selfCritique.ts's shouldCritique(). */
@@ -226,6 +232,13 @@ export function getConfig(): ForgeConfig {
     requirementsMaxNudges: Math.max(0, Math.floor(cfg.get<number>('requirements.maxNudges') ?? 2)),
     requirementsShowInPrompt: cfg.get<boolean>('requirements.showInPrompt') ?? true,
     requirementsLlmExtract: cfg.get<boolean>('requirements.llmExtract') ?? false,
+    verifyBeforeDone: (() => {
+      const v = cfg.get<string>('verifyBeforeDone');
+      return v === 'off' || v === 'custom' ? v : 'auto';
+    })(),
+    verifyCommand: (cfg.get<string>('verifyCommand') || '').trim(),
+    verifyTimeoutSec: Math.max(30, Math.floor(cfg.get<number>('verifyTimeoutSec') ?? 300)),
+    contextPinnedUserMaxChars: Math.max(2000, Math.floor(cfg.get<number>('context.pinnedUserMaxChars') ?? 40_000)),
     selfCritiqueEnabled: cfg.get<boolean>('selfCritique.enabled') ?? false,
     selfCritiqueMinLines: cfg.get<number>('selfCritique.minLines') ?? 40,
     bestOfNEnabled: cfg.get<boolean>('bestOfN.enabled') ?? false,
@@ -301,6 +314,10 @@ export const SETTINGS_PANEL_KEYS = [
   'requirements.maxNudges',
   'requirements.showInPrompt',
   'requirements.llmExtract',
+  'verifyBeforeDone',
+  'verifyCommand',
+  'verifyTimeoutSec',
+  'context.pinnedUserMaxChars',
   'selfCritique.enabled',
   'selfCritique.minLines',
   'bestOfN.enabled',

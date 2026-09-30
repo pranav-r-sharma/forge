@@ -1,6 +1,6 @@
 import { ChatMessage } from '../ollama/types';
 import { LlmProvider } from '../llm/provider';
-import { capPinnedUserContent, isRealUserTurnContent, PINNED_USER_MESSAGE_MAX_CHARS } from './requirements';
+import { DEFAULT_PINNED_USER_MAX_CHARS, pinUserMessagesForCompaction } from './pinnedUserCompaction';
 import { parseToolCall } from './toolProtocol';
 
 /**
@@ -374,28 +374,19 @@ function normalizeState(s: CompactionCache | PromptViewState | undefined): Requi
   return { throughIndex: v.throughIndex || 0, summary: v.summary || '', maskedIdx: Array.isArray(v.maskedIdx) ? v.maskedIdx : [], cpt: v.cpt };
 }
 
-/** Compaction summary substituted for archival[bodyStart..throughIndex), with the ORIGINAL first user message kept verbatim in front of it. */
-export function buildPinnedCompactedView(archival: ChatMessage[], throughIndex: number, summary: string): ChatMessage[] {
+/** Compaction summary substituted for archival[bodyStart..throughIndex), with user messages in that range pinned verbatim when possible. */
+export function buildPinnedCompactedView(
+  archival: ChatMessage[],
+  throughIndex: number,
+  summary: string,
+  pinnedUserMaxChars: number = DEFAULT_PINNED_USER_MAX_CHARS,
+): ChatMessage[] {
   const hasSystem = archival.length > 0 && archival[0].role === 'system';
   const bodyStart = hasSystem ? 1 : 0;
-  const pinned: ChatMessage[] = [];
-  const first = archival[bodyStart];
-  if (first?.role === 'user' && throughIndex > bodyStart + 1 && isRealUserTurnContent(first.content)) {
-    pinned.push(first);
-  }
-  let lastUser: ChatMessage | undefined;
-  for (let i = bodyStart + 1; i < throughIndex; i++) {
-    const m = archival[i];
-    if (m.role === 'user' && isRealUserTurnContent(m.content)) lastUser = m;
-  }
-  const followUpLooksLikeCorrection =
-    lastUser &&
-    lastUser !== first &&
-    lastUser.content.length <= PINNED_USER_MESSAGE_MAX_CHARS &&
-    /\b(actually|instead|correction|do not|don't|never|must not|please fix|again|reminder)\b/i.test(lastUser.content);
-  if (followUpLooksLikeCorrection) {
-    pinned.push({ role: 'user', content: capPinnedUserContent(lastUser!.content) });
-  }
+  const pinned =
+    throughIndex > bodyStart + 1
+      ? pinUserMessagesForCompaction(archival, bodyStart, throughIndex, pinnedUserMaxChars)
+      : [];
   const summarized = throughIndex - bodyStart - pinned.length;
   return [
     ...(hasSystem ? [archival[0]] : []),
@@ -416,6 +407,7 @@ export interface PromptViewOptions {
   highWaterPct?: number;
   lowWaterPct?: number;
   singleMessageSharePct?: number;
+  pinnedUserMaxChars?: number;
 }
 
 export interface PromptViewResult {
@@ -440,9 +432,16 @@ export async function updatePromptView(archival: ChatMessage[], stateIn: Compact
   const capChars = singleMessageCapChars(o.numCtx, o.singleMessageSharePct ?? 25);
   const { highTokens, lowTokens } = waterMarks(o.numCtx, o.highWaterPct, o.lowWaterPct);
   const stateOut = (masked: number[], throughIndex: number, summary: string): PromptViewState => ({ throughIndex, summary, maskedIdx: masked, cpt: st.cpt });
+  const pinCap = Math.min(
+    o.pinnedUserMaxChars ?? DEFAULT_PINNED_USER_MAX_CHARS,
+    Math.max(4000, Math.floor(lowTokens * cpt * 0.3)),
+  );
   const build = (masked: number[], throughIndex: number, summary: string): ChatMessage[] => {
     const base = applyMasks(archival, masked);
-    return capOversizedStable(throughIndex > 0 && summary ? buildPinnedCompactedView(base, throughIndex, summary) : base, capChars);
+    return capOversizedStable(
+      throughIndex > 0 && summary ? buildPinnedCompactedView(base, throughIndex, summary, pinCap) : base,
+      capChars,
+    );
   };
   const size = (v: ChatMessage[]) => estimateTokens(v.reduce((n, m) => n + m.content.length, 0), cpt);
 
@@ -463,7 +462,11 @@ export async function updatePromptView(archival: ChatMessage[], stateIn: Compact
   const reasons = new Map<number, StaleRead>();
   let maskedNow = 0;
   let maskedBase = applyMasks(archival, masked);
-  const buildMasked = (throughIndex: number, summary: string) => capOversizedStable(throughIndex > 0 && summary ? buildPinnedCompactedView(maskedBase, throughIndex, summary) : maskedBase, capChars);
+  const buildMasked = (throughIndex: number, summary: string) =>
+    capOversizedStable(
+      throughIndex > 0 && summary ? buildPinnedCompactedView(maskedBase, throughIndex, summary, pinCap) : maskedBase,
+      capChars,
+    );
   let after = tokens;
   for (const keep of maskLevels) {
     const fresh = staleReadIndices(archival, keep).filter((r) => r.idx < untouchable && !masked.includes(r.idx));

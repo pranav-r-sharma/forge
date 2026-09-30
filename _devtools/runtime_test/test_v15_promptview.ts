@@ -177,8 +177,11 @@ async function testCompactionEvent() {
   const before = snapshot(arch);
   const r = await updatePromptView(arch, undefined, o);
   ok(r.event?.kind === 'compact' && o.ollama.calls >= 1, `no reads to mask, prompt over the mark → the oldest turns are summarized (kind=${r.event?.kind}, model calls=${o.ollama.calls})`);
-  ok(r.view[0] === sys && r.view[1] === task, 'the system prompt and the ORIGINAL USER REQUEST stay verbatim at the front (never summarized away)');
-  ok(r.view[2].content.startsWith('[Earlier conversation summary') && r.view[2].content.includes('SUMMARY OF EARLIER WORK'), 'followed by the visible summary marker with a pointer to search_chat_history');
+  ok(r.view[0] === sys && r.view[1].content === task.content, 'the system prompt and the ORIGINAL USER REQUEST stay verbatim at the front (never summarized away)');
+  ok(
+    r.view.some((m) => m.content.startsWith('[Earlier conversation summary') && m.content.includes('SUMMARY OF EARLIER WORK')),
+    'includes the visible summary marker with a pointer to search_chat_history',
+  );
   ok(r.view[r.view.length - 1].content === arch[arch.length - 1].content && r.view[r.view.length - 2].content === arch[arch.length - 2].content, 'the newest messages are untouched');
   ok(r.view.length < arch.length && r.state.throughIndex > 0, 'state records how much was folded');
   ok(snapshot(arch) === before, 'the archival transcript is not mutated');

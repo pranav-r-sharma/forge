@@ -447,6 +447,27 @@
           "default": false,
           "description": "Reserved: optional LLM-based requirement extraction. Not implemented; heuristic extraction is used instead."
         },
+        "forge.verifyBeforeDone": {
+          "type": "string",
+          "enum": ["off", "auto", "custom"],
+          "default": "auto",
+          "description": "Before accepting a final answer (after this turn edited files), run a check command: auto-detect from the workspace, use forge.verifyCommand when custom, or skip when off. Per-chat Outcome verify still wins when set."
+        },
+        "forge.verifyCommand": {
+          "type": "string",
+          "default": "",
+          "description": "Shell command to run when forge.verifyBeforeDone is custom (e.g. bash scripts/check.sh)."
+        },
+        "forge.verifyTimeoutSec": {
+          "type": "number",
+          "default": 300,
+          "description": "Maximum seconds for the definition-of-done verify command before the turn treats it as failed."
+        },
+        "forge.context.pinnedUserMaxChars": {
+          "type": "number",
+          "default": 40000,
+          "description": "Total character budget for pinning user messages verbatim through compaction; overflow summarizes middle follow-ups."
+        },
         "forge.selfCritique.enabled": {
           "type": "boolean",
           "default": false,

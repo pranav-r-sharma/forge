@@ -712,6 +712,14 @@
       ${settingRow('Requirements checklist', 'Extract checkable requirements from the user message, show status each agent step, and nudge before a premature final answer.', `<input id="set-requirementsEnabled" type="checkbox" ${s.requirementsEnabled ? 'checked' : ''} />`)}
       ${settingRow('Show checklist in prompt', 'Include the live checklist at the tail of each step (not in the system message).', `<input id="set-requirementsShowInPrompt" type="checkbox" ${s.requirementsShowInPrompt ? 'checked' : ''} />`)}
       ${settingRow('Requirements gate nudges', 'How many times to push back on a final answer when requirements still lack evidence.', `<input id="set-requirementsMaxNudges" type="number" min="0" max="5" step="1" value="${s.requirementsMaxNudges}" />`)}
+      ${settingRow(
+        'Verify before done',
+        'After file edits, run a workspace check before accepting the final answer. Auto picks check.sh, npm test, pytest, make test, cargo test, or go test when present.',
+        `<select id="set-verifyBeforeDone"><option value="off" ${s.verifyBeforeDone === 'off' ? 'selected' : ''}>off</option><option value="auto" ${s.verifyBeforeDone === 'auto' ? 'selected' : ''}>auto</option><option value="custom" ${s.verifyBeforeDone === 'custom' ? 'selected' : ''}>custom</option></select>`
+      )}
+      ${settingRow('Custom verify command', 'Used when verify before done is custom (ignored in auto unless you set per-chat Outcome verify).', `<input id="set-verifyCommand" type="text" placeholder="bash check.sh" value="${escapeAttr(s.verifyCommand || '')}" />`)}
+      ${settingRow('Verify timeout (seconds)', 'How long the definition-of-done check may run.', `<input id="set-verifyTimeoutSec" type="number" min="30" step="10" value="${s.verifyTimeoutSec}" />`)}
+      ${settingRow('Pinned user messages (chars)', 'Compaction keeps user follow-ups verbatim up to this total size.', `<input id="set-contextPinnedUserMaxChars" type="number" min="2000" step="1000" value="${s.contextPinnedUserMaxChars}" />`)}
       ${settingRow('Self-critique large edits', 'One extra model call after a large edit asking "does this look right," fed back to the agent alongside the edit result.', `<input id="set-selfCritiqueEnabled" type="checkbox" ${s.selfCritiqueEnabled ? 'checked' : ''} />`)}
       ${settingRow('Best-of-N for large rewrites', 'Samples several candidates for a large full-file rewrite of an existing file and keeps the best-scoring one instead of trusting the first.', `<input id="set-bestOfNEnabled" type="checkbox" ${s.bestOfNEnabled ? 'checked' : ''} />`)}
       <div class="settings-section-title">MCP servers</div>
@@ -809,6 +817,20 @@
     document.getElementById('set-requirementsMaxNudges').addEventListener('change', (e) => {
       const num = parseFloat(e.target.value);
       if (Number.isFinite(num)) vscodeApi.postMessage({ type: 'updateSetting', key: 'requirements.maxNudges', value: num });
+    });
+    document.getElementById('set-verifyBeforeDone').addEventListener('change', (e) => {
+      vscodeApi.postMessage({ type: 'updateSetting', key: 'verifyBeforeDone', value: e.target.value });
+    });
+    document.getElementById('set-verifyCommand').addEventListener('change', (e) => {
+      vscodeApi.postMessage({ type: 'updateSetting', key: 'verifyCommand', value: e.target.value });
+    });
+    document.getElementById('set-verifyTimeoutSec').addEventListener('change', (e) => {
+      const num = parseFloat(e.target.value);
+      if (Number.isFinite(num)) vscodeApi.postMessage({ type: 'updateSetting', key: 'verifyTimeoutSec', value: num });
+    });
+    document.getElementById('set-contextPinnedUserMaxChars').addEventListener('change', (e) => {
+      const num = parseFloat(e.target.value);
+      if (Number.isFinite(num)) vscodeApi.postMessage({ type: 'updateSetting', key: 'context.pinnedUserMaxChars', value: num });
     });
     document.getElementById('set-selfCritiqueEnabled').addEventListener('change', (e) => {
       vscodeApi.postMessage({ type: 'updateSetting', key: 'selfCritique.enabled', value: e.target.checked });

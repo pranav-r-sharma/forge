@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { spawn } from 'child_process';
 
 const MAX_OUTPUT_CHARS = 4000;
-const TIMEOUT_MS = 120_000;
+const DEFAULT_TIMEOUT_MS = 300_000;
 
 export interface VerifyCheckResult {
   ok: boolean;
@@ -20,13 +20,19 @@ export interface VerifyCheckResult {
  * too) and is capped the same way run_command is, so a hung dev server
  * can't wedge the turn forever.
  */
-export function runVerifyCommand(command: string, cwd: string, cancellation: vscode.CancellationToken): Promise<VerifyCheckResult> {
+export function runVerifyCommand(
+  command: string,
+  cwd: string,
+  cancellation: vscode.CancellationToken,
+  timeoutMs: number = DEFAULT_TIMEOUT_MS,
+): Promise<VerifyCheckResult> {
+  const timeout = timeoutMs > 0 ? timeoutMs : DEFAULT_TIMEOUT_MS;
   return new Promise((resolve) => {
     let output = '';
     let settled = false;
     let child: ReturnType<typeof spawn>;
     try {
-      child = spawn(command, { shell: true, cwd, timeout: TIMEOUT_MS, env: { ...process.env, CI: '1', FORGE_AGENT: '1' } });
+      child = spawn(command, { shell: true, cwd, timeout, env: { ...process.env, CI: '1', FORGE_AGENT: '1' } });
     } catch (err: any) {
       resolve({ ok: false, output: `Failed to run verify command: ${err?.message || err}` });
       return;
