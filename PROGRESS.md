@@ -271,3 +271,30 @@ Three commits (`d912e59`, `720e092`, `fc20381`) close the harness gap found in t
 **Fix:** `maxOutputTokens` default **0 = auto** (`resolveEffectiveMaxOutputTokens`: min(context/2, 32768), floor 8192) — always sent on agent chat, never MLX’s 512 default. `write_file` gains **`append: true`** for chunked writes; tool schema + system prompt document ~300+ line files. Length-truncated `write_file` nudges tell the model not to resend the whole file and to use append. Settings panel: `forge.maxOutputTokens` wired like other globals.
 
 **Tests:** `_devtools/runtime_test/test_v15_large_write.ts` (15 checks); truncation tests updated. `npm test`: **41/42 files, 1590 passed / 1 failed** (pre-existing: `test_v15_trace.ts` “write_file records no redundancy flag”). Typecheck + compile clean.
+
+## Generous limits + output-cap ceiling (2026-09-30)
+
+Standing rule 10 (M5 Max 128 GB): raised work-limiting defaults; added `forge.maxOutputTokensCeiling` (0 = no cap on auto output).
+
+| Setting / constant | Old | New | Why |
+| --- | --- | --- | --- |
+| `forge.numCtx` / `forge.mlx.contextTokens` | 32768 | 131072 | Match large-context target hardware |
+| `forge.maxOutputTokensCeiling` | (n/a) | 0 default | Optional cap on auto-derived output |
+| `resolveEffectiveMaxOutputTokens` auto | max(ctx/2, 16384) | same + ceiling | Explicit `maxOutputTokens` still wins |
+| `forge.maxContextFileKB` | 200 | 8192 | Read/index multi-MB sources |
+| `forge.contextChunkCount` | 8 | 24 | Richer @codebase retrieval |
+| `forge.subAgentMaxIterations` | 40 | 200 | Longer delegated tasks |
+| `forge.mlx.promptCacheGB` | 4 | 32 | Larger prompt cache on 128 GB |
+| `forge.webSearch.maxFetchChars` | 500000 | 2000000 | Full pages without early chop |
+| `MAX_COMPACT_CHAR_THRESHOLD` | 600000 | 2400000 | Compaction budget scales with ctx |
+| `MAX_SINGLE_MESSAGE_CHARS` (legacy) | 20000 | 80000 | Legacy path message cap |
+| `singleMessageCapChars` upper clamp | 120000 | 400000 | Large-window per-message cap |
+| `MAX_OUTPUT_CHARS` (run_command) | 8000 | 100000 | Long test/build logs |
+| Background cmd output cap | 20000 | 100000 | Same |
+| `search_code` scan/match/file KB | 3000/60/512 | 10000/200/8192 | Bigger repos |
+| Workspace index files/chunks/bytes | 3k/4k/512KB | 10k/20k/8MB | Index large repos |
+| Chat memory chunks/session | 200 | 1000 | Longer session recall |
+| `list_dir` entry cap | 400 | 2000 | Deep trees |
+| Chat attachment paste cap | 20000 | 100000 | Large pasted context |
+
+Unchanged (safety): loop detection, truncation nudge count (3), `HARD_MAX_SUBAGENT_DEPTH`, approval guards, `MAX_EDITS_PER_CALL`, background concurrency.

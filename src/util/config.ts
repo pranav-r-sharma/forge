@@ -71,6 +71,8 @@ export interface ForgeConfig {
   thinking: 'default' | 'off' | 'on' | 'auto';
   /** Output-token limit per model reply (0 = auto: derived from the context window via resolveEffectiveMaxOutputTokens — never the runtime default, which can be 512 on MLX). */
   maxOutputTokens: number;
+  /** When maxOutputTokens is auto (0), cap the derived limit at this value (0 = no ceiling). Explicit maxOutputTokens still wins. */
+  maxOutputTokensCeiling: number;
   /** Ask the model for one-sentence tool steps and short final answers (generated tokens dominate step time on local models). */
   terseSteps: boolean;
   /** Estimated prompt size (% of the context window) that triggers a batched compaction, and the size it compacts down to. */
@@ -149,7 +151,7 @@ export function getConfig(): ForgeConfig {
     mlxExtraModelFolders: (cfg.get<string[]>('mlx.extraModelFolders') || []).filter((a) => typeof a === 'string'),
     mlxPythonPath: (cfg.get<string>('mlx.pythonPath') || '').trim(),
     mlxAutoStart: cfg.get<boolean>('mlx.autoStart') ?? true,
-    mlxPromptCacheGB: cfg.get<number>('mlx.promptCacheGB') ?? 4,
+    mlxPromptCacheGB: cfg.get<number>('mlx.promptCacheGB') ?? 32,
     mlxPrefillStepSize: Math.max(0, Math.floor(cfg.get<number>('mlx.prefillStepSize') ?? 0)),
     mlxPromptCacheSize: Math.max(0, Math.floor(cfg.get<number>('mlx.promptCacheSize') ?? 0)),
     mlxExtraArgs: (cfg.get<string[]>('mlx.extraArgs') || []).filter((a) => typeof a === 'string'),
@@ -170,22 +172,22 @@ export function getConfig(): ForgeConfig {
     autoApproveCommands: cfg.get<string[]>('autoApproveCommands') || [],
     enableTabCompletion: cfg.get<boolean>('enableTabCompletion') ?? true,
     completionDebounceMs: cfg.get<number>('completionDebounceMs') ?? 250,
-    contextChunkCount: cfg.get<number>('contextChunkCount') ?? 8,
-    maxContextFileKB: cfg.get<number>('maxContextFileKB') ?? 200,
+    contextChunkCount: cfg.get<number>('contextChunkCount') ?? 24,
+    maxContextFileKB: cfg.get<number>('maxContextFileKB') ?? 8192,
     singleMessageSharePct: Math.min(80, Math.max(5, cfg.get<number>('singleMessageSharePct') ?? 25)),
     // 0 = let Ollama use its own (small, often silently-truncating) default.
     // Set this to your model's real max (check `ollama show <model>`) to stop
     // long agent sessions from quietly losing early context.
     // Ollama takes the window per request (forge.numCtx); MLX / OpenAI-compatible servers fix it at start-up, so for those it is the
     // separately-configured forge.mlx.contextTokens (used for compaction thresholds and the context meter).
-    numCtx: parseProviderId(cfg.get<string>('provider')) === 'ollama' ? cfg.get<number>('numCtx') ?? 32768 : cfg.get<number>('mlx.contextTokens') ?? 32768,
+    numCtx: parseProviderId(cfg.get<string>('provider')) === 'ollama' ? cfg.get<number>('numCtx') ?? 131072 : cfg.get<number>('mlx.contextTokens') ?? 131072,
     // -1 = never unload the model between messages (avoids paying a full
     // reload + KV-cache-rebuild cost every time you pause to think).
     // 0 = server default (~5 min idle unload).
     keepAliveMinutes: cfg.get<number>('keepAliveMinutes') ?? -1,
     modelRouting: cfg.get<Partial<Record<ForgeMode, string>>>('modelRouting') || {},
     subAgentModel: cfg.get<string>('subAgentModel') || '',
-    subAgentMaxIterations: cfg.get<number>('subAgentMaxIterations') ?? 40,
+    subAgentMaxIterations: cfg.get<number>('subAgentMaxIterations') ?? 200,
     maxSubAgentDepth: cfg.get<number>('maxSubAgentDepth') ?? 2,
     showStatusMessages: cfg.get<boolean>('showStatusMessages') ?? true,
     loopDetectionEnabled: cfg.get<boolean>('loopDetection.enabled') ?? true,
@@ -194,6 +196,7 @@ export function getConfig(): ForgeConfig {
     thinking: ((v) => (v === 'off' || v === 'on' || v === 'auto' ? v : 'auto'))(cfg.get<string>('thinking')),
     terseSteps: cfg.get<boolean>('terseSteps') ?? true,
     maxOutputTokens: Math.max(0, Math.floor(cfg.get<number>('maxOutputTokens') ?? 0)),
+    maxOutputTokensCeiling: Math.max(0, Math.floor(cfg.get<number>('maxOutputTokensCeiling') ?? 0)),
     contextHighWaterPct: cfg.get<number>('context.highWaterPct') ?? 75,
     contextLowWaterPct: cfg.get<number>('context.lowWaterPct') ?? 45,
     structuredOutputEnabled: cfg.get<boolean>('structuredOutput.enabled') ?? false,
@@ -213,21 +216,23 @@ export function getConfig(): ForgeConfig {
     webSearchCacheTtlMinutes: cfg.get<number>('webSearch.cacheTtlMinutes') ?? 10,
     webSearchBlockedDomains: cfg.get<string[]>('webSearch.blockedDomains') || [],
     webSearchRespectRobotsTxt: cfg.get<boolean>('webSearch.respectRobotsTxt') ?? true,
-    webSearchMaxFetchChars: cfg.get<number>('webSearch.maxFetchChars') ?? 500_000,
+    webSearchMaxFetchChars: cfg.get<number>('webSearch.maxFetchChars') ?? 2_000_000,
     webSearchSearxngUrl: cfg.get<string>('webSearch.searxngUrl') || '',
   };
 }
 
 /**
  * Effective max output tokens for one model reply. configured=0 means auto:
- * floor(contextTokens/2), never below 16384 (assumes 131072 context when contextTokens<=0).
+ * max(floor(contextTokens/2), 16384), then if ceiling>0 cap at ceiling (assumes 131072 context when contextTokens<=0).
  * Explicit user values win.
  */
-export function resolveEffectiveMaxOutputTokens(configured: number, contextTokens: number): number {
+export function resolveEffectiveMaxOutputTokens(configured: number, contextTokens: number, ceiling = 0): number {
   if (configured > 0) return configured;
   const ctx = contextTokens > 0 ? contextTokens : 131072;
   const half = Math.floor(ctx / 2);
-  return Math.max(half, 16384);
+  let auto = Math.max(half, 16384);
+  if (ceiling > 0) auto = Math.min(auto, ceiling);
+  return auto;
 }
 
 export async function setChatModel(model: string) {
@@ -285,6 +290,7 @@ export const SETTINGS_PANEL_KEYS = [
   'maxContextFileKB',
   'singleMessageSharePct',
   'maxOutputTokens',
+  'maxOutputTokensCeiling',
 ] as const;
 export type SettingsPanelKey = (typeof SETTINGS_PANEL_KEYS)[number];
 

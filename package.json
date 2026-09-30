@@ -138,7 +138,7 @@
         },
         "forge.mlx.promptCacheGB": {
           "type": "number",
-          "default": 4,
+          "default": 32,
           "minimum": 0,
           "description": "Memory cap (GB) for the MLX server's prompt cache, which is what makes long agent sessions cheap (each step only processes its new text). 0 = the server's default (unbounded until memory pressure)."
         },
@@ -162,7 +162,7 @@
         },
         "forge.mlx.contextTokens": {
           "type": "number",
-          "default": 32768,
+          "default": 131072,
           "description": "Context window (tokens) to assume for MLX and other OpenAI-compatible runtimes. Unlike Ollama, the context size is fixed when the server starts, so Forge cannot request it per call - this only tells Forge when to compact the conversation and what to show in the context meter. Set it to what your server/model actually supports and your memory allows."
         },
         "forge.openaiCompat.baseUrl": {
@@ -203,7 +203,7 @@
         },
         "forge.numCtx": {
           "type": "number",
-          "default": 32768,
+          "default": 131072,
           "description": "Context window size requested from Ollama (options.num_ctx) for chat/agent and inline-edit calls. Ollama's own default is small and silent about truncating — a long agent session can quietly lose early context without this set. Check your model's real max with `ollama show <model>` and set this close to it if you have the memory/VRAM to spare (the KV cache is sized to this ceiling whether or not you use all of it)."
         },
         "forge.modelRouting": {
@@ -248,13 +248,13 @@
         },
         "forge.contextChunkCount": {
           "type": "number",
-          "default": 8,
+          "default": 24,
           "description": "Number of workspace chunks to retrieve for @codebase context."
         },
         "forge.maxContextFileKB": {
           "type": "number",
-          "default": 200,
-          "description": "Skip indexing/reading files larger than this size (KB) to keep context tight."
+          "default": 8192,
+          "description": "Skip indexing/reading files larger than this size (KB). Raise on a large-memory Mac so big source files are not skipped."
         },
         "forge.singleMessageSharePct": {
           "type": "number",
@@ -270,7 +270,7 @@
         },
         "forge.subAgentMaxIterations": {
           "type": "number",
-          "default": 40,
+          "default": 200,
           "description": "Tool-call step cap for a single spawn_subagent turn — its own, tighter budget than forge.autoModeMaxIterations so a delegated sub-task can't silently run forever."
         },
         "forge.maxSubAgentDepth": {
@@ -297,7 +297,13 @@
           "type": "number",
           "default": 0,
           "minimum": 0,
-          "description": "Maximum tokens per model reply in the agent loop (thinking tokens count too). 0 = auto: half the context window, at least 16384 (no upper cap) — never the runtime default (mlx_lm.server defaults to 512). Set an explicit value to override. If a reply is still cut off, Forge asks the model to continue (and to use write_file append for large files) instead of treating it as finished."
+          "description": "Maximum tokens per model reply in the agent loop (thinking tokens count too). 0 = auto: half the context window, at least 16384 — never the runtime default (mlx_lm.server defaults to 512). Set an explicit value to override. forge.maxOutputTokensCeiling can cap auto mode. If a reply is still cut off, Forge asks the model to continue (and to use write_file append for large files) instead of treating it as finished."
+        },
+        "forge.maxOutputTokensCeiling": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "description": "When forge.maxOutputTokens is 0 (auto), cap the derived output limit at this many tokens (0 = no ceiling). Does not apply when maxOutputTokens is set explicitly."
         },
         "forge.thinking": {
           "type": "string",
@@ -374,7 +380,7 @@
         },
         "forge.webSearch.maxFetchChars": {
           "type": "number",
-          "default": 500000,
+          "default": 2000000,
           "description": "Approximate cap on how much raw page content web_fetch downloads/reads before extraction, to bound memory/time on an unexpectedly huge page."
         },
         "forge.webSearch.searxngUrl": {

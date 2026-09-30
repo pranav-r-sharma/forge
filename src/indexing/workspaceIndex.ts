@@ -8,9 +8,9 @@ import { chunkFileStructurally } from './chunker';
 import { buildImportGraph } from './importGraph';
 import { logger } from '../util/logger';
 
-const MAX_FILES = 3000;
-const MAX_CHUNKS = 4000;
-const MAX_FILE_BYTES_FOR_INDEX = 512 * 1024;
+const MAX_FILES = 10_000;
+const MAX_CHUNKS = 20_000;
+const MAX_FILE_BYTES_FOR_INDEX = 8 * 1024 * 1024;
 const EMBED_CONCURRENCY = 4;
 
 /** Additive score nudges for retrieval weighting — see WorkspaceIndex.search()'s doc comment. Deliberately small relative to typical cosine-similarity gaps (roughly 0-1) so an open-but-irrelevant file can never outrank a genuinely on-topic one; they only break near-ties or nudge a borderline-relevant-but-currently-relevant-to-you chunk over one that's topically similar but in a file you haven't touched in a while. */

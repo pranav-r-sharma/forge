@@ -546,7 +546,7 @@ export class ChatSession {
         }
         const content = await this.services.pendingEdits.readEffective(uri);
         if (content !== undefined) {
-          const capped = content.length > 20000 ? content.slice(0, 20000) + '\n... (truncated)' : content;
+          const capped = content.length > 100_000 ? content.slice(0, 100_000) + '\n... (truncated)' : content;
           augmented += `\n\n[Attached file: ${rel}]\n\`\`\`\n${capped}\n\`\`\``;
         }
       } catch {

@@ -9,7 +9,7 @@ import { spawn } from 'child_process';
 // with the real @types/node installed, and `any` under the shim.
 type SpawnedProcess = ReturnType<typeof spawn>;
 
-const MAX_OUTPUT_CHARS = 20000;
+const MAX_OUTPUT_CHARS = 100_000;
 /** Hard cap on simultaneously-running background processes, per workspace — a safety bound so a confused model can't spawn an unbounded pile of dev servers/watchers it then forgets about. Killing one (check_background_command with action "kill") frees a slot. */
 const MAX_CONCURRENT = 5;
 

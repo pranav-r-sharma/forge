@@ -109,7 +109,7 @@ async function main() {
 
     // ---- getConfig(): provider + effective context window ----
     vs.__resetConfig();
-    ok(getConfig().provider === 'ollama' && getConfig().numCtx === 32768, 'defaults: provider ollama, numCtx 32768');
+    ok(getConfig().provider === 'ollama' && getConfig().numCtx === 131072, 'defaults: provider ollama, numCtx 131072');
     vs.__setConfig({ 'forge.numCtx': 8192 });
     ok(getConfig().numCtx === 8192, 'Ollama: forge.numCtx is used');
     vs.__setConfig({ 'forge.provider': 'mlx', 'forge.mlx.contextTokens': 65536 });

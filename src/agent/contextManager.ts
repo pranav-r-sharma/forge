@@ -23,8 +23,8 @@ import { parseToolCall } from './toolProtocol';
 const KEEP_RECENT_TOOL_RESULTS = 6;
 const KEEP_RECENT_MESSAGES = 12;
 const MIN_COMPACT_CHAR_THRESHOLD = 40_000;
-const MAX_COMPACT_CHAR_THRESHOLD = 600_000;
-const MAX_SINGLE_MESSAGE_CHARS = 20_000;
+const MAX_COMPACT_CHAR_THRESHOLD = 2_400_000;
+const MAX_SINGLE_MESSAGE_CHARS = 80_000;
 
 export interface CompactionCache {
   /** Index into the archival array (after the system prompt) already folded into `summary`. */
@@ -292,7 +292,7 @@ export function updateCharsPerToken(prev: number | undefined, chars: number, tok
 export function singleMessageCapChars(numCtx: number, sharePct = 25): number {
   const n = numCtx > 0 ? numCtx : 8192;
   const pct = clamp(sharePct, 5, 80) / 100;
-  const upper = Math.max(120_000, Math.floor(n * CAP_CHARS_PER_TOKEN * 0.8));
+  const upper = Math.max(400_000, Math.floor(n * CAP_CHARS_PER_TOKEN * 0.8));
   return clamp(Math.floor(n * pct * CAP_CHARS_PER_TOKEN), 12_000, upper);
 }
 

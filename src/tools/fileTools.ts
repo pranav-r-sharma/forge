@@ -3,7 +3,7 @@ import { ToolExecContext, ToolResult } from '../agent/types';
 import { requireStringArg } from './argErrors';
 import { isIgnoredDir, looksBinary, resolveWorkspacePath, toRelative } from '../util/paths';
 
-const MAX_LIST_ENTRIES = 400;
+const MAX_LIST_ENTRIES = 2000;
 
 export async function readFileTool(args: Record<string, any>, ctx: ToolExecContext): Promise<ToolResult> {
   const pathCheck = requireStringArg('read_file', 'path', args.path ?? args.file, 'Missing required arg "path".');

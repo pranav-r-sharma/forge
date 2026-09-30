@@ -139,7 +139,7 @@ function ok(cond: boolean, label: string) {
 
 // ---------- contextManager: hardCapOversizedMessages ----------
 {
-  const big = 'x'.repeat(30000);
+  const big = 'x'.repeat(100_000);
   const messages: ChatMessage[] = [
     { role: 'system', content: 'sys' },
     { role: 'user', content: big },
@@ -156,7 +156,7 @@ function ok(cond: boolean, label: string) {
 // ---------- contextManager: compactionThreshold + maybeCompact ----------
 {
   ok(compactionThreshold(8192) === 40000, 'compactionThreshold floors at the minimum budget for a small context window');
-  ok(compactionThreshold(262144) < 600000, 'compactionThreshold ceilings out rather than growing unbounded for a huge context window');
+  ok(compactionThreshold(262144) < 2_400_000, 'compactionThreshold ceilings out rather than growing unbounded for a huge context window');
   ok(compactionThreshold(32768) > compactionThreshold(8192), 'a bigger configured context window allows a bigger uncompacted prompt');
 }
 

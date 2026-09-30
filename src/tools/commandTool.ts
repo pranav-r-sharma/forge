@@ -6,7 +6,7 @@ import { ToolExecContext, ToolResult } from '../agent/types';
 import { requireStringArg, suggestCommandFromArgvArray } from './argErrors';
 import { resolveWorkspacePath } from '../util/paths';
 
-const MAX_OUTPUT_CHARS = 8000;
+const MAX_OUTPUT_CHARS = 100_000;
 const DEFAULT_TIMEOUT_MS = 60_000;
 const MAX_TIMEOUT_MS = 180_000;
 

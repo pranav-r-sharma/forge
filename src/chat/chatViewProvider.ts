@@ -716,6 +716,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       maxContextFileKB: cfg.maxContextFileKB,
       singleMessageSharePct: cfg.singleMessageSharePct,
       maxOutputTokens: cfg.maxOutputTokens,
+      maxOutputTokensCeiling: cfg.maxOutputTokensCeiling,
     };
   }
 

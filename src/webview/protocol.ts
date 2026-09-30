@@ -103,6 +103,7 @@ export interface SettingsSnapshot {
   maxContextFileKB: number;
   singleMessageSharePct: number;
   maxOutputTokens: number;
+  maxOutputTokensCeiling: number;
 }
 
 /** Item "ability to kill commands while they are running from the chat window" — see tools/backgroundProcessManager.ts. */

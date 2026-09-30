@@ -627,7 +627,7 @@ export async function runAgentTurn(
         keepAliveMinutes: keepAliveOpt(cfg.keepAliveMinutes),
         format: structuredOutputEnabled ? STRUCTURED_RESPONSE_SCHEMA : undefined,
         thinking: thinkingForStep(cfg.thinking, failedRunsInARow),
-        maxTokens: resolveEffectiveMaxOutputTokens(cfg.maxOutputTokens, numCtx),
+        maxTokens: resolveEffectiveMaxOutputTokens(cfg.maxOutputTokens, numCtx, cfg.maxOutputTokensCeiling),
         onToken: (token) => emit({ type: 'token', text: token }),
         onMetrics: (metrics) => {
           iterState.metrics = metrics;

@@ -82,6 +82,9 @@ async function main() {
   ok(resolveEffectiveMaxOutputTokens(0, 12000) === 16384, 'auto cap floors at 16384');
   ok(resolveEffectiveMaxOutputTokens(0, 0) === 65536, 'auto with unknown context assumes 131072 → half floored at 16384');
   ok(resolveEffectiveMaxOutputTokens(6000, 32768) === 6000, 'explicit user cap is respected');
+  ok(resolveEffectiveMaxOutputTokens(0, 131072, 32768) === 32768, 'auto respects maxOutputTokensCeiling when set');
+  ok(resolveEffectiveMaxOutputTokens(0, 131072, 0) === 65536, 'auto with no ceiling uses half of 131072 context');
+  ok(resolveEffectiveMaxOutputTokens(50_000, 131072, 32768) === 50_000, 'explicit maxOutputTokens ignores ceiling');
 
   const partial =
     '```forge_action\n{"tool":"write_file","args":{"path":"src/big_module.py","content":"' + 'A'.repeat(200);
@@ -138,6 +141,10 @@ async function main() {
     const m2 = scripted([['done', 'stop']]);
     await runAgentTurn([], 'go', deps(workspace(), m2), () => {}, new vscode.CancellationTokenSource().token, 'fake', { mode: 'auto', numCtx: 32768 });
     ok(m2.seen[0].maxTokens === 12000, 'explicit forge.maxOutputTokens overrides auto');
+    vs.__setConfig({ 'forge.maxOutputTokens': 0, 'forge.maxOutputTokensCeiling': 8192 });
+    const m3 = scripted([['done', 'stop']]);
+    await runAgentTurn([], 'go', deps(workspace(), m3), () => {}, new vscode.CancellationTokenSource().token, 'fake', { mode: 'auto', numCtx: 131072 });
+    ok(m3.seen[0].maxTokens === 8192, 'agent loop applies maxOutputTokensCeiling in auto mode');
     vs.__resetConfig();
   }
 

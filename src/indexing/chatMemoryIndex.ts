@@ -7,7 +7,7 @@ import { cosineSimilarity } from '../util/vector';
 import { logger } from '../util/logger';
 
 const CHUNK_CHAR_BUDGET = 1500;
-const MAX_CHUNKS_PER_SESSION = 200;
+const MAX_CHUNKS_PER_SESSION = 1000;
 const EMBED_CONCURRENCY = 4;
 
 export interface ChatChunk {

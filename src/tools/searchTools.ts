@@ -3,9 +3,9 @@ import { ToolExecContext, ToolResult } from '../agent/types';
 import { requireStringArg } from './argErrors';
 import { isIgnoredDir, looksBinary, toRelative } from '../util/paths';
 
-const MAX_FILES_SCANNED = 3000;
-const MAX_MATCHES = 60;
-const MAX_FILE_KB_FOR_SEARCH = 512;
+const MAX_FILES_SCANNED = 10_000;
+const MAX_MATCHES = 200;
+const MAX_FILE_KB_FOR_SEARCH = 8192;
 
 export async function searchCodeTool(args: Record<string, any>, ctx: ToolExecContext): Promise<ToolResult> {
   const queryCheck = requireStringArg(
