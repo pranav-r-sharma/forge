@@ -442,11 +442,6 @@
           "default": true,
           "description": "Include the requirements checklist in the per-step prompt tail (not the system message)."
         },
-        "forge.requirements.llmExtract": {
-          "type": "boolean",
-          "default": false,
-          "description": "Reserved: optional LLM-based requirement extraction. Not implemented; heuristic extraction is used instead."
-        },
         "forge.verifyBeforeDone": {
           "type": "string",
           "enum": ["off", "auto", "custom"],

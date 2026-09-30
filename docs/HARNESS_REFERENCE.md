@@ -20,7 +20,7 @@ Each item: **purpose · trigger · location · settings · mutates**
 | F4 | Environment facts | PATH/project test hints in system | Turn start | `environment.ts`; session wiring | — | System prompt |
 | F5 | Turn context prefix | Memory, log, milestones, ledger on **user** tail (KV-stable) | Turn start | `buildTurnContextPrefix`; `agentLoop.ts` ~379–407 | — | First user message |
 | F6 | Plan-first | Extra planning LLM call + inject plan (cost: one full LLM round before the loop) | `planFirst.enabled` + agent/auto/outcome | `planFirst.ts` | default **false** | User message prefix |
-| F7 | Requirements extract | Heuristic checklist from user text | `requirements.enabled`, depth 0 only | `requirements.ts` | enabled **false**; `maxNudges` 2; `showInPrompt` true; `llmExtract` false | In-memory state |
+| F7 | Requirements extract | Heuristic checklist from user text | `requirements.enabled`, depth 0 only | `requirements.ts` | enabled **false**; `maxNudges` 2; `showInPrompt` true | In-memory state |
 | F8 | Structured output | Ollama `format` JSON envelope | `structuredOutput.enabled`, mode ≠ plan | `structuredOutput.ts`, `resolveModelResponse` | **false** | Request format; parsing |
 | F9 | Autonomous approvals | Skip write/command approval | auto/outcome | `isAutonomousMode`; `approvalBroker` | `requireApprovalForWrites/Commands` true (ignored) | Tool ctx |
 | F10 | Sub-agent spawn | Nested `runAgentTurn` in auto | `spawn_subagent` | `agentLoop.ts` ~428–517; `subAgentTool.ts` | `subAgentModel` ''; `subAgentMaxIterations` 200; `maxSubAgentDepth` 2 (hard max 4) | Parent tool result only |
@@ -130,7 +130,7 @@ Read via `getConfig()` in `src/util/config.ts` unless noted. **Panel?** = listed
 | `forge.loopDetection.enabled` | true | Yes | Loop detector |
 | `forge.structuredOutput.enabled` | false | Yes | JSON envelope |
 | `forge.planFirst.enabled` | false | Yes | Plan-first pass |
-| `forge.requirements.*` | off, 2, true, false | Partial (not `enabled` default in panel list — **enabled is in panel**) | Checklist + nudges |
+| `forge.requirements.*` | off, 2, true | Partial (not `enabled` default in panel list — **enabled is in panel**) | Checklist + nudges |
 | `forge.verifyBeforeDone` | auto | Yes | Definition-of-done |
 | `forge.verifyCommand` / `verifyTimeoutSec` | "" / 300 | Yes | Custom verify |
 | `forge.selfCritique.*` / `forge.bestOfN.*` | off | Yes | Post-edit extras |

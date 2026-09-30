@@ -75,3 +75,51 @@ Equivalent per task via `run_task.ts`: `--requirements true|false`, tasks **t11-
 - Turn completes without losing the instruction.
 
 **Note:** May combine with a scripted long `_devtools/e2e` run once a dedicated compaction stress task exists; until then manual trace inspection is acceptable.
+
+---
+
+## LIVE-004 — MLX server restarts when context window changes (managed server)
+
+**Why:** `forge.mlx.contextTokens` (and the settings panel “Context window” via `numCtx` remap when provider is MLX) must reload `mlx_lm.server` with the new `--ctx-size`. Forge-only compaction math is not enough — the running server must match.
+
+**How:**
+
+1. One model at a time; MLX provider with managed `mlx.autoStart` (default). Use gpt-oss-20b MXFP4-Q8 snapshot per `CLAUDE.md` 0.2c if exercising a real model load.
+2. Note current `forge.mlx.contextTokens` (e.g. 131072). Confirm server healthy (`Forge: MLX` status / `curl` health on `forge.mlx.baseUrl`).
+3. Change context in VS Code settings or panel (e.g. 65536), save.
+4. Observe: previous managed child receives SIGTERM; new server starts with updated ctx in `mlxServer.ts` ensure key (`test_v15_mlxserver.ts` `testRestartAdoptSerialize` covers unit behavior).
+
+**Pass criteria:**
+
+- Managed MLX process restarts (not silent Forge-only update).
+- New server accepts chat with the new context limit (no stale ctx errors).
+- Unit test `changing forge.mlx.contextTokens restarts the managed server` still passes in CI (`npm test`).
+
+**Prerequisites:** MLX venv `_devtools/mlx-venv`; rule 4 memory safety — unload other models, check free RAM/swap before load; abort on pressure.
+
+**Status:** pending  
+**Date:** —
+
+---
+
+## LIVE-005 — MLX settings change mid-turn defers restart until turn ends
+
+**Why:** Changing MLX server keys during an active agent turn must not SIGTERM the server under an in-flight `chat()` call. Restart should defer and surface “MLX restart pending…” until the turn completes.
+
+**How:**
+
+1. MLX provider; start a long agent turn (e.g. e2e task with high `max-iters` or a harness that holds the turn open across several model calls).
+2. Mid-turn, change a restart-triggering setting (`forge.mlx.promptCacheGB`, `forge.mlx.contextTokens`, draft model, etc.) via settings UI.
+3. Watch status bar and logs: restart must **not** run until the turn ends.
+4. End or cancel the turn; restart should run once (`mlxRestartCoord.ts`).
+
+**Pass criteria:**
+
+- While `activeAgentTurnCount() > 0`, `requestMlxRestartAfterSettingsChange()` sets pending but does not call ensure (see `test_v15_second_audit_fixes.ts` `testMlxRestartDeferral`).
+- No failed mid-turn chat from server disappearance; after turn end, server matches new settings.
+- Status bar indicates pending restart during the deferral window (manual UI check).
+
+**Prerequisites:** Same as LIVE-004 for real MLX; rule 4 memory safety.
+
+**Status:** pending  
+**Date:** —

@@ -46,7 +46,7 @@ Method: Re-derived from `src/` (especially `agentLoop.ts` after `9aea0a0`, `2bc0
 | plan | none | no | n/a | no | if enabled | **off** |
 | sub-agent (`spawn_subagent`) | auto child | **not passed** | auto | **not in sub options** | **off** (`subAgentDepth>0`) | inherits parent cfg |
 
-Provider: chat/agent uses `forge.provider`; embeddings + Tab FIM fall back to Ollama when MLX/openai-compat lack capability (`factory.ts` 41–44). `forge.requirements.llmExtract` is in config/panel but **unused** in code (heuristic only).
+Provider: chat/agent uses `forge.provider`; embeddings + Tab FIM fall back to Ollama when MLX/openai-compat lack capability (`factory.ts` 41–44). Requirements extraction is heuristic-only (`requirements.ts`).
 
 ## Tools (validation / safety)
 
@@ -70,7 +70,7 @@ Provider: chat/agent uses `forge.provider`; embeddings + Tab FIM fall back to Ol
 | **cosmetic** | Loop/iteration cap no `final` | `agentLoop.ts` | `final`+`done` | **fixed** |
 | **cosmetic** | Loop detection setting copy | `package.json` | Doc fix | **fixed** |
 | **cosmetic** | Verify cancel / context-full missing `done` | `agentLoop.ts` | Emit `done` | **fixed** |
-| **cosmetic** | System prompt rewrite every turn | `agentLoop.ts` | (cache optimization — deferred) | **open** (cosmetic, intentional behavior) |
+| **cosmetic** | System prompt rewrite every turn | `agentLoop.ts` | (cache optimization — deferred) | **not an issue** (byte-identical when turn-stable inputs unchanged; `test_v15_promptview.ts` `testRealLoop`, `test_v15_prompt_prefix.ts`, `test_v11.ts`) |
 | **cosmetic** | Sub-agent model wording Ollama-only | `package.json` `subAgentModel` | Wording | **fixed** |
 
 
@@ -138,7 +138,6 @@ Provider: chat/agent uses `forge.provider`; embeddings + Tab FIM fall back to Ol
 | `requireApprovalForCommands` | True | true | ~ | Y | yes | — |
 | `requireApprovalForWrites` | True | true | ~ | Y | yes | — |
 | `requirements.enabled` | False | false | ~ | Y | yes | — |
-| `requirements.llmExtract` | False | false | ~ | Y | yes | — |
 | `requirements.maxNudges` | 2 | max(0, floor(...)) | ~ | Y | yes | — |
 | `requirements.showInPrompt` | True | true | ~ | Y | yes | — |
 | `selfCritique.enabled` | False | false | ~ | Y | yes | — |

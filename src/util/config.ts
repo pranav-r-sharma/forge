@@ -104,8 +104,6 @@ export interface ForgeConfig {
   requirementsEnabled: boolean;
   requirementsMaxNudges: number;
   requirementsShowInPrompt: boolean;
-  /** Optional LLM extraction for requirements (not implemented — heuristic extract only). */
-  requirementsLlmExtract: boolean;
   /** Run a workspace check before accepting a final answer after file edits (auto-detect or custom command). */
   verifyBeforeDone: 'off' | 'auto' | 'custom';
   /** Shell command when forge.verifyBeforeDone is custom. */
@@ -234,7 +232,6 @@ export function getConfig(): ForgeConfig {
     requirementsEnabled: cfg.get<boolean>('requirements.enabled') ?? false,
     requirementsMaxNudges: Math.max(0, Math.floor(cfg.get<number>('requirements.maxNudges') ?? 2)),
     requirementsShowInPrompt: cfg.get<boolean>('requirements.showInPrompt') ?? true,
-    requirementsLlmExtract: cfg.get<boolean>('requirements.llmExtract') ?? false,
     verifyBeforeDone: (() => {
       const v = cfg.get<string>('verifyBeforeDone');
       return v === 'off' || v === 'custom' ? v : 'auto';
@@ -347,7 +344,6 @@ export const SETTINGS_PANEL_KEYS = [
   'requirements.enabled',
   'requirements.maxNudges',
   'requirements.showInPrompt',
-  'requirements.llmExtract',
   'verifyBeforeDone',
   'verifyCommand',
   'verifyTimeoutSec',
