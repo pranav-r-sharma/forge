@@ -55,3 +55,4 @@ Goal (one line) · Done (bullets, one per finished step) · Next (the single nex
 - Source in `src/`; tests are ad-hoc `ts-node` scripts in `_devtools/runtime_test/` (they import `vscode`, which needs a stub module not present in this checkout — restoring it is plan step P0-1). No `npm test` yet.
 - Typecheck: `npm run typecheck`. Build: `npm run compile`.
 - Benchmark/probe scripts live in `_devtools/bench/` (Python, standard library only).
+- **Harness reference:** `docs/HARNESS_REFERENCE.md` documents every feature, algorithm, setting and their interactions. Update it in the same commit whenever you add/change/remove a feature, setting, nudge or check; re-check the "Interactions" and "Known conflicts" sections.
