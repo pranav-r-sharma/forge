@@ -186,6 +186,9 @@ async function testRestartAdoptSerialize() {
   r.healthyAfterPolls(1);
   await r.mgr.ensure(cfgFor(d2, { port: 9000 }));
   ok(r.spawns.length === 3 && r.spawns[2].args.includes('9000'), 'changing the port restarts on the new port');
+  r.healthyAfterPolls(1);
+  await r.mgr.ensure(cfgFor(d2, { contextTokens: 65536 }));
+  ok(r.spawns.length === 4 && r.children[2].signals.includes('SIGTERM'), 'changing forge.mlx.contextTokens restarts the managed server');
   // concurrent callers share one start
   const c = rig();
   const d = makeModelDir();
@@ -238,7 +241,7 @@ async function testMemoryGuard() {
 async function testEnsureFunction() {
   const calls: MlxServerConfig[] = [];
   const mgr: any = { ensure: async (c: MlxServerConfig) => { calls.push(c); } };
-  const base = { provider: 'mlx', mlxBaseUrl: 'http://127.0.0.1:8123', mlxModel: 'org/m', mlxPythonPath: '/py', mlxAutoStart: true, mlxPromptCacheGB: 4, mlxPrefillStepSize: 0, mlxPromptCacheSize: 0, mlxExtraArgs: ['--x'] };
+  const base = { provider: 'mlx', mlxBaseUrl: 'http://127.0.0.1:8123', mlxModel: 'org/m', mlxPythonPath: '/py', mlxAutoStart: true, mlxPromptCacheGB: 4, mlxPrefillStepSize: 0, mlxPromptCacheSize: 0, mlxDecodeConcurrency: 0, mlxPromptConcurrency: 0, mlxDraftModel: '', mlxNumDraftTokens: 0, mlxContextTokens: 131072, mlxExtraArgs: ['--x'] };
   let cfg = { ...base };
   const ensure = makeEnsureMlx(() => cfg, mgr, async () => false, (c) => c || 'python3');
   await ensure();

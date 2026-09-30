@@ -137,8 +137,8 @@ async function main() {
     'fake-model',
     { mode: 'outcome', verifyCommand: 'node -e "process.exit(1)"' }
   );
-  const errorEvent = events2.find((e): e is Extract<AgentEvent, { type: 'error' }> => e.type === 'error');
-  ok(!!errorEvent && /loop/i.test(errorEvent.message), 'an always-failing definition-of-done check trips the loop detector with a clear message instead of exhausting the whole iteration budget silently');
+  const loopFinal = events2.find((e): e is Extract<AgentEvent, { type: 'final' }> => e.type === 'final' && /loop/i.test(e.text));
+  ok(!!loopFinal, 'an always-failing definition-of-done check trips the loop detector with a clear message instead of exhausting the whole iteration budget silently');
   ok(chatCalls2 < 20, `the loop detector stopped this well short of the 20-iteration cap (stopped after ${chatCalls2} model calls)`);
 
   console.log(`\n${passed} passed, ${failed} failed.`);

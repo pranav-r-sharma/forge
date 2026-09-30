@@ -188,8 +188,8 @@ function testCheckLoopOnByDefaultAndCatchesRepetition() {
   }
   ok(warnCount === 1, 'first loop trip emits one targeted warning instead of stopping immediately');
   ok(stopped === true, 'loop detection is ON by default and still hard-stops after the warning is ignored');
-  ok(events.some((e) => e.type === 'error' && /loop/i.test(e.message)), 'a loop-detected error event was emitted with an explanatory message');
-  ok(events.some((e) => e.type === 'done'), 'a done event follows the loop-detected error, ending the turn');
+  ok(events.some((e) => e.type === 'final' && /loop/i.test(e.text)), 'a loop-detected final was emitted with an explanatory message');
+  ok(events.some((e) => e.type === 'done'), 'a done event follows the loop-detected final, ending the turn');
 }
 
 function testCheckLoopCanBeDisabledViaSetting() {

@@ -295,7 +295,7 @@
         "forge.subAgentModel": {
           "type": "string",
           "default": "",
-          "description": "Ollama model tag used for spawn_subagent turns (the 'ability to spawn sub agents' feature). Leave empty to reuse whichever model the spawning turn itself is using — a good default is a smaller/faster model here, since sub-agents run tightly-scoped tasks."
+          "description": "Model id for spawn_subagent turns on the active provider (Ollama tag, MLX model path/id, etc.). Leave empty to reuse whichever model the spawning turn itself is using — a good default is a smaller/faster model here, since sub-agents run tightly-scoped tasks."
         },
         "forge.subAgentMaxIterations": {
           "type": "number",
@@ -315,7 +315,7 @@
         "forge.loopDetection.enabled": {
           "type": "boolean",
           "default": true,
-          "description": "Detect and stop likely infinite loops in Auto/Outcome mode (repeating the same tool call with the same result over and over). Turn this off if it's incorrectly triggering on legitimately repetitive work. check_background_command is always exempt from loop detection, regardless of this setting."
+          "description": "Detect and stop likely infinite loops in any agent mode (repeating the same tool call with the same result over and over). Turn this off if it's incorrectly triggering on legitimately repetitive work. check_background_command is always exempt from loop detection, regardless of this setting."
         },
         "forge.terseSteps": {
           "type": "boolean",

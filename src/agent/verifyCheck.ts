@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { spawn } from 'child_process';
+import { runShellProcessTree } from '../util/shellProcessTree';
 
 const MAX_OUTPUT_CHARS = 4000;
 const DEFAULT_TIMEOUT_MS = 300_000;
@@ -27,46 +27,15 @@ export function runVerifyCommand(
   timeoutMs: number = DEFAULT_TIMEOUT_MS,
 ): Promise<VerifyCheckResult> {
   const timeout = timeoutMs > 0 ? timeoutMs : DEFAULT_TIMEOUT_MS;
-  return new Promise((resolve) => {
-    let output = '';
-    let settled = false;
-    let child: ReturnType<typeof spawn>;
-    try {
-      child = spawn(command, { shell: true, cwd, timeout, env: { ...process.env, CI: '1', FORGE_AGENT: '1' } });
-    } catch (err: any) {
-      resolve({ ok: false, output: `Failed to run verify command: ${err?.message || err}` });
-      return;
-    }
-
-    const onData = (buf: Buffer) => {
-      if (output.length < MAX_OUTPUT_CHARS) output += buf.toString('utf8');
-    };
-    child.stdout?.on('data', onData);
-    child.stderr?.on('data', onData);
-
-    const cancelListener = cancellation.onCancellationRequested(() => {
-      if (!settled) {
-        try {
-          child.kill();
-        } catch {
-          /* noop */
-        }
-      }
-    });
-
-    child.on('error', (err: any) => {
-      if (settled) return;
-      settled = true;
-      cancelListener.dispose();
-      resolve({ ok: false, output: `Failed to run verify command: ${err?.message || err}` });
-    });
-
-    child.on('close', (code: number | null) => {
-      if (settled) return;
-      settled = true;
-      cancelListener.dispose();
-      const truncated = output.length >= MAX_OUTPUT_CHARS ? '\n... output truncated' : '';
-      resolve({ ok: code === 0, output: `$ ${command}\n(exit code: ${code ?? 'unknown'})\n${output.trim() || '(no output)'}${truncated}` });
-    });
+  return runShellProcessTree({
+    command,
+    cwd,
+    timeoutMs: timeout,
+    cancellation,
+    maxOutputChars: MAX_OUTPUT_CHARS,
+    formatOutput: ({ command: cmd, code, output, truncated, killedNote }) => {
+      const trunc = truncated ? '\n... output truncated' : '';
+      return `$ ${cmd}\n(exit code: ${code ?? 'unknown'})\n${output}${trunc}${killedNote}`;
+    },
   });
 }

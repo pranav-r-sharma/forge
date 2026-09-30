@@ -11,6 +11,7 @@ import {
   findRequirementsNudgeGaps,
   stripRequirementsBlockFromContent,
   formatRequirementsGateNudge,
+  formatRequirementsFinalUnmetSection,
   extendRequirementsPromptView,
   isRequirementsChecklistPromptMessage,
   estimateChecklistPromptChars,
@@ -181,6 +182,9 @@ function testGateNudgeAndCap() {
   const nudge = formatRequirementsGateNudge(gaps);
   ok(nudge.includes('[System check]') && nudge.includes('Requirements:'), 'gate nudge lists missing items and format');
   ok(classifyRequirementKind('Run command form: `python3 main.py demo`.') === 'checkable', 'command forms checkable');
+  const gateGaps = findRequirementsGateGaps(state);
+  const finalTail = formatRequirementsFinalUnmetSection(gateGaps);
+  ok(finalTail.includes('Unmet requirements') && finalTail.includes('py_compile'), 'final bubble lists open checkable items after nudges exhausted');
 }
 
 function testCompactChecklist() {

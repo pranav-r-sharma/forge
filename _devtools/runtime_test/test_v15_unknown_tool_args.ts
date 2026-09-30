@@ -81,7 +81,7 @@ function ok(cond: boolean, label: string) {
   ok(warnings[0].includes('No changes'), 'warning includes first line of last result');
   ok(warnings[0].includes('python3 demo') && warnings[0].includes('SyntaxError'), 'warning includes failing command context');
   ok(stopped === true, 'hard stop after the warning is ignored');
-  ok(events.some((e) => e.type === 'error' && /loop/i.test(e.message)), 'loop error still emitted on second trip');
+  ok(events.some((e) => e.type === 'final' && /loop/i.test(e.text)), 'loop final still emitted on second trip');
   vs.__resetConfig();
 }
 

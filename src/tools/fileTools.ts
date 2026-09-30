@@ -1,3 +1,4 @@
+import * as fs from 'fs';
 import * as vscode from 'vscode';
 import { ToolExecContext, ToolResult } from '../agent/types';
 import { requireStringArg } from './argErrors';
@@ -392,6 +393,21 @@ export async function writeFileTool(args: Record<string, any>, ctx: ToolExecCont
       }
       if (existing === undefined) {
         return { ok: false, content: `Cannot append to "${relPath}": file does not exist yet. Use write_file with "content" (no append) to create the first chunk.` };
+      }
+      const maxBytes = (ctx.config?.maxContextFileKB ?? 8192) * 1024;
+      let existingBytes = 0;
+      try {
+        existingBytes = fs.statSync(uri.fsPath).size;
+      } catch {
+        existingBytes = Buffer.byteLength(existing, 'utf8');
+      }
+      const appendBytes = Buffer.byteLength(args.content, 'utf8');
+      if (existingBytes + appendBytes > maxBytes) {
+        const limitKb = ctx.config?.maxContextFileKB ?? 8192;
+        return {
+          ok: false,
+          content: `Cannot append to "${relPath}": combined size would be ~${Math.ceil((existingBytes + appendBytes) / 1024)} KB (limit ${limitKb} KB per forge.maxContextFileKB). Page with read_file start_line/end_line, or split the append into smaller chunks.`,
+        };
       }
       newText = existing + args.content;
       kind = 'modify';

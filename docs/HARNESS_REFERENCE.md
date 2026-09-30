@@ -69,7 +69,7 @@ Each item: **purpose · trigger · location · settings · mutates**
 | F38 | Task command forms | User-specified cmd shapes not run | Final | `formatTaskCommandNudge` | **3** (progress-gated) | User msg |
 | F39 | Claimed command | Said ran `\`cmd\``; per-file gaps | Final | `evaluateClaimedCommands` (task forms via F38 only) | **1** | User msg |
 | F40 | Unresolved run failure | Final after failed run_command | `unresolvedRunFailure` | `formatUnresolvedFailureNudge` | **1** | User msg |
-| F41 | Requirements gate nudge | Checkable items missing evidence | Final | `formatRequirementsGateNudge` | `requirements.maxNudges` 2; skips overlap w/ F38 | User msg |
+| F41 | Requirements gate nudge | Checkable items missing evidence | Final | `formatRequirementsGateNudge`; after nudges exhausted `formatRequirementsFinalUnmetSection` on final text | `requirements.maxNudges` 2; skips overlap w/ F38 | User msg + final list |
 | F42 | Final unverified markers | UI tags on bubble | After nudges exhausted | `agentLoop.ts` ~846–858 | — | `final.unverifiedClaims` |
 | F43 | Verify before done | Shell check before accept | Final; agent/auto/outcome | `resolveVerifyCommandForFinal`, `runVerifyCommand` | `verifyBeforeDone` **auto**; `verifyCommand`; `verifyTimeoutSec` 300; session `verifyCommand` wins | Run cmd; fail → continue |
 | F44 | Verify gaming warning | Heuristic bypass scan | Pass after prior fail | `gamingDetection.ts` | — | UI warning only |
@@ -86,7 +86,7 @@ Each item: **purpose · trigger · location · settings · mutates**
 | F48 | Unknown tool args | Hint typos in result | Successful tool | `unknownToolArgs.ts` | — | Tool result text |
 | F49 | Redundant read note | Same lines re-read | read_file ok | `readCoverage.ts` | — | Tool result + trace |
 | F50 | Self-critique | Extra model review of edit | write_file ok, lines ≥ min | `selfCritique.ts` | enabled **false**; minLines 40 | Tool result appendix |
-| F51 | write_file append | Chunk large creates | `append:true` | `fileTools.ts` | (prompt instructs) | File bytes |
+| F51 | write_file append | Chunk large creates | `append:true` | `fileTools.ts` | `maxContextFileKB` on existing+append bytes | File bytes |
 | F52 | Edit engine | search/replace, reindent, dup-def warn | write_file | `fileTools.ts`, `editApply.ts` | — | Files + echo region |
 | F53 | Forge hooks | `.forge/hooks/*` stdin JSON | write/command | `hooks.ts` | — | Block/allow |
 | F54 | MCP tools | `mcp__server__tool` | agent/auto/outcome | `mcpManager.ts` | `mcp.servers` [] | Same pipeline |
@@ -242,19 +242,20 @@ Verified by reviewer 2026-09-30: row 1 re-classified (false positive).
 | **cosmetic** | Sub-agent feature subset | No requirements extract, empty history, auto mode; shares memory/log | `spawn_subagent` tool describe in `tools/index.ts` | **Fixed 2026-09-30:** documented in tool description |
 | **cosmetic** | Plan-first double user content | Plan call and main turn both see raw user message | F6 inventory | **Fixed 2026-09-30:** documented cost (kept behavior) |
 
-### Second audit (2026-09-30, `b24795c`, report `_devtools/bench/results/2026-09-30-second-audit.md`)
+### Second audit (2026-09-30, report `_devtools/bench/results/2026-09-30-second-audit.md`)
 
-| Sev | Issue | Scenario | Evidence | Suggested fix (report only) |
-|-----|-------|----------|----------|------------------------------|
-| **risk** | `mlx.contextTokens` vs running server | User raises context in panel; compaction/output math changes but server window unchanged | `extension.ts` MLX restart allowlist; `mlxServer.ts` `doEnsure` key | Restart server or document Forge-only semantics |
-| **risk** | MLX restart during active turn | Settings change mid-`runAgentTurn` races `ensureMlx` | `extension.ts` 106; `agentLoop.ts` chat error path | Defer restart until no busy session |
-| **risk** | `thinking: default` coercion | settings.json `default` behaves as `auto`, not model default | `config.ts` 223; `package.json` thinking enum | Map `default` → `undefined` in `thinkingForStep` |
-| **risk** | Soft requirements gate | After `maxNudges`, final still ships with markers only | `agentLoop.ts` 873–904 | Optional hard cap |
-| **risk** | Append OOM | `write_file` append unbounded read of existing file | `fileTools.ts` 393–396 | Size guard like read path |
-| **risk** | Verify spawn hang | Verify command lacks `run_command` process-group kill | `verifyCheck.ts` vs `commandTool.ts` | Share kill-tree helper |
-| **cosmetic** | Uneven terminal events | Iteration/loop stops use `error` not `final` | `agentLoop.ts` 1257–1330 | Unify UX |
-| **cosmetic** | Loop detection scope copy | Setting text says Auto/Outcome; code runs in all modes | `checkLoop`; `package.json` loopDetection | Doc or gate |
-| **cosmetic** | Missing `done` on some exits | `aborted`, context-full | `agentLoop.ts` 687–689, 937–939 | Emit `done` for symmetry |
+| Sev | Issue | Scenario | Evidence | Status |
+|-----|-------|----------|----------|--------|
+| **risk** | `mlx.contextTokens` vs running server | Context panel change must restart managed MLX server | `extension.ts`; `mlxServer.ts` `doEnsure` key includes `contextTokens` | **Fixed 2026-09-30** (second-audit pass) |
+| **risk** | MLX restart during active turn | Mid-turn settings change must not restart under `chat()` | `mlxRestartCoord.ts`; `chatSession.ts` turn hooks | **Fixed 2026-09-30:** defer + status bar “MLX restart pending…” |
+| **risk** | `thinking: default` coercion | `default` must mean model default (`undefined` in API) | `config.ts`; `thinkingForStep` | **Fixed 2026-09-30** |
+| **risk** | Soft requirements gate | After `maxNudges`, final must list unmet checkable items | `formatRequirementsFinalUnmetSection`; `agentLoop.ts` final path | **Fixed 2026-09-30:** soft gate + explicit final list |
+| **risk** | Append OOM | `write_file` append size guard | `fileTools.ts` (`maxContextFileKB`) | **Fixed 2026-09-30** |
+| **risk** | Verify spawn hang | Verify uses process-group kill tree | `shellProcessTree.ts`; `verifyCheck.ts` | **Fixed 2026-09-30** |
+| **cosmetic** | Uneven terminal events | Loop/iteration caps emit `final`+`done` | `checkLoop`; iteration cap in `agentLoop.ts` | **Fixed 2026-09-30** |
+| **cosmetic** | Loop detection scope copy | Setting description matches all modes | `package.json` `loopDetection.enabled` | **Fixed 2026-09-30** (doc) |
+| **cosmetic** | Missing `done` on some exits | Context-full + verify cancel | `agentLoop.ts` | **Fixed 2026-09-30** |
+| **cosmetic** | Sub-agent model copy | Wording not Ollama-only | `package.json` `subAgentModel` | **Fixed 2026-09-30** |
 
 ---
 

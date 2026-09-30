@@ -437,6 +437,20 @@ export function requirementGateMarkers(missing: RequirementItem[]): string[] {
   return missing.map((it) => `requirement open: ${it.id} ${it.text.slice(0, 120)}`);
 }
 
+/**
+ * Plain-language list of still-unmet checkable requirements for the final bubble
+ * (after nudges are exhausted the gate stays soft, but the user must see what is open).
+ */
+export function formatRequirementsFinalUnmetSection(missing: RequirementItem[]): string {
+  const checkable = missing.filter((it) => it.kind === 'checkable');
+  if (checkable.length === 0) return '';
+  const lines = checkable
+    .slice(0, 20)
+    .map((it) => `  • ${it.id}. ${it.text}${it.status === 'unverified' && it.evidence ? '' : ' (needs tool evidence or an honest Requirements: note)'}`);
+  const more = checkable.length > 20 ? `\n  … and ${checkable.length - 20} more` : '';
+  return `\n\n**Unmet requirements (checklist):**\n${lines.join('\n')}${more}`;
+}
+
 export function estimateChecklistPromptChars(state: RequirementsState): number {
   return renderRequirementsChecklistForPrompt(state).length;
 }

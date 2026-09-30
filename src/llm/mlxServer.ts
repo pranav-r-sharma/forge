@@ -41,6 +41,8 @@ export interface MlxServerConfig {
   numDraftTokens?: number;
   extraArgs?: string[];
   startupTimeoutMs?: number;
+  /** Context window Forge assumes for this server (forge.mlx.contextTokens); included in the restart key so changes trigger a reload. */
+  contextTokens?: number;
 }
 
 export class MlxServerError extends Error {
@@ -262,6 +264,7 @@ export class MlxServerManager {
       cfg.promptConcurrency ?? 0,
       draftResolved,
       cfg.numDraftTokens ?? 0,
+      cfg.contextTokens ?? 0,
       cfg.extraArgs ?? [],
     ]);
     if (this._state === 'ready' && this.key === key && (this.external || (this.child && (await isHealthy(cfg.port))))) return;
@@ -418,6 +421,7 @@ export interface MlxEnsureConfig {
   mlxDraftModel: string;
   mlxNumDraftTokens: number;
   mlxExtraArgs: string[];
+  mlxContextTokens: number;
   mlxModelLibraryPath?: string;
   mlxExtraModelFolders?: string[];
 }
@@ -455,6 +459,7 @@ export function makeEnsureMlx(
       draftModel: (c.mlxDraftModel || '').trim() || undefined,
       numDraftTokens: (c.mlxDraftModel || '').trim() && (c.mlxNumDraftTokens ?? 0) > 0 ? c.mlxNumDraftTokens : undefined,
       extraArgs: c.mlxExtraArgs,
+      contextTokens: c.mlxContextTokens > 0 ? c.mlxContextTokens : 131072,
     });
   };
 }

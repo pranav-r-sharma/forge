@@ -31,6 +31,7 @@ function pureTests() {
   vs.__resetConfig();
   ok(getConfig().thinking === 'auto', "the default setting is 'auto'");
   vs.__setConfig({ 'forge.thinking': 'off' }); ok(getConfig().thinking === 'off', "'off' is read");
+  vs.__setConfig({ 'forge.thinking': 'default' }); ok(getConfig().thinking === 'default', "'default' is preserved (model default via thinkingForStep)");
   vs.__setConfig({ 'forge.thinking': 'nonsense' }); ok(getConfig().thinking === 'auto', 'a garbled value degrades to auto');
   vs.__resetConfig();
 }

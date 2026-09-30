@@ -42,6 +42,7 @@ import {
   findRequirementsGateGaps,
   findRequirementsNudgeGaps,
   formatRequirementsGateNudge,
+  formatRequirementsFinalUnmetSection,
   extendRequirementsPromptView,
   renderRequirementsChecklistForPrompt,
   requirementsChecklistMaxChars,
@@ -685,6 +686,7 @@ export async function runAgentTurn(
         compacted: promptView.some((m) => m.content.startsWith('[Earlier conversation summary')),
       };
       emit({ type: 'final', text: fullMsg });
+      emit({ type: 'done' });
       traceIter({ note: 'context-full', final: true });
       return { messages, compactionCache };
     }
@@ -936,6 +938,7 @@ export async function runAgentTurn(
         emit({ type: 'verify_result', command: effectiveVerify, ok: verify.ok, summary: summarize(verify.output) });
         if (cancellation.isCancellationRequested) {
           emit({ type: 'aborted' });
+          emit({ type: 'done' });
           return { messages, compactionCache };
         }
         if (!verify.ok) {
@@ -967,6 +970,10 @@ export async function runAgentTurn(
         finalDisplayText += formatVerifyFinalNote(effectiveVerify, true);
       } else if (effectiveVerify && skipRepeatVerify) {
         finalDisplayText += formatVerifyFinalNote(effectiveVerify, true);
+      }
+
+      if (requirementsGateMissing.length > 0) {
+        finalDisplayText += formatRequirementsFinalUnmetSection(requirementsGateMissing);
       }
 
       pushAssistant(fullText);
@@ -1255,10 +1262,8 @@ export async function runAgentTurn(
   }
 
   const iterationSetting = autoMode ? 'forge.autoModeMaxIterations' : 'forge.maxAgentIterations';
-  emit({
-    type: 'error',
-    message: `Stopped after ${maxIterations} steps without a final answer (cap: ${iterationSetting}). Raise that setting in the Forge Settings panel or settings.json, then ask me to continue.`,
-  });
+  const capMsg = `Stopped after ${maxIterations} steps without a final answer (cap: ${iterationSetting}). Raise that setting in the Forge Settings panel or settings.json, then ask me to continue.`;
+  emit({ type: 'final', text: capMsg });
   emit({ type: 'done' });
   return { messages, compactionCache };
 }
@@ -1322,10 +1327,8 @@ export function checkLoop(
     hooks?.traceNote?.('loop-warning');
     return false;
   }
-  emit({
-    type: 'error',
-    message: `Forge stopped: possible loop detected. ${check.reason} You can ask me to try a different approach, or continue if this was actually expected. (Loop detection can be turned off in Settings if this keeps happening for legitimately repetitive work.)`,
-  });
+  const loopMsg = `Forge stopped: possible loop detected. ${check.reason} You can ask me to try a different approach, or continue if this was actually expected. (Loop detection can be turned off in Settings if this keeps happening for legitimately repetitive work.)`;
+  emit({ type: 'final', text: loopMsg });
   emit({ type: 'done' });
   return true;
 }

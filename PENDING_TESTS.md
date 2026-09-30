@@ -7,6 +7,8 @@ Tests listed here require loading **gpt-oss-20b MXFP4-Q8 (MLX)** per `CLAUDE.md`
 | LIVE-001 | Round 3 — requirements checklist A/B after cache fix bcd8a8a | pending | 2026-09-30 |
 | LIVE-002 | Verify-before-done auto picks `bash check.sh` on t09/t11 | pending | 2026-09-30 |
 | LIVE-003 | Pinned user follow-ups survive compaction in a long run | pending | 2026-09-30 |
+| LIVE-004 | MLX server restarts when `forge.mlx.contextTokens` / panel context changes (managed server) | pending | 2026-09-30 |
+| LIVE-005 | MLX settings change mid-agent-turn defers restart until turn ends (status + no in-flight `chat()` break) | pending | 2026-09-30 |
 
 ---
 

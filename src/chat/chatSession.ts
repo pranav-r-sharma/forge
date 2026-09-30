@@ -7,6 +7,7 @@ import { PendingEditManager } from '../tools/editApply';
 import { BackgroundProcessManager } from '../tools/backgroundProcessManager';
 import { ApprovalBroker } from '../agent/approvalBroker';
 import { runAgentTurn } from '../agent/agentLoop';
+import { notifyAgentTurnEnded, notifyAgentTurnStarted } from '../llm/mlxRestartCoord';
 import { AgentEvent } from '../agent/types';
 import { ForgeMode, isAutonomousMode, modeSupportsVerifyCommand } from '../agent/modes';
 import { CheckpointStore } from '../agent/checkpoints';
@@ -579,6 +580,7 @@ export class ChatSession {
 
     this.busy = true;
     this.post({ type: 'busy', sessionId: this.id, busy: true });
+    notifyAgentTurnStarted();
     this.cts = new vscode.CancellationTokenSource();
     this.startFlushTimer();
 
@@ -658,6 +660,7 @@ export class ChatSession {
     } finally {
       this.stopFlushTimer();
       this.busy = false;
+      notifyAgentTurnEnded();
       this.cts = undefined;
       this.post({ type: 'busy', sessionId: this.id, busy: false });
       // Milestone logging (item "documenting all milestones, logging

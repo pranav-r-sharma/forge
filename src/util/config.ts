@@ -33,6 +33,8 @@ export interface ForgeConfig {
   /** mlx_lm.server --num-draft-tokens when mlxDraftModel is set (0 = server default). */
   mlxNumDraftTokens: number;
   mlxExtraArgs: string[];
+  /** Context window (tokens) for MLX compaction/meter; part of managed server restart key. */
+  mlxContextTokens: number;
   /** Ollama options.num_batch per chat request (0 = server default). */
   ollamaNumBatch: number;
   openaiCompatBaseUrl: string;
@@ -181,6 +183,7 @@ export function getConfig(): ForgeConfig {
     mlxDraftModel: (cfg.get<string>('mlx.draftModel') || '').trim(),
     mlxNumDraftTokens: Math.max(0, Math.floor(cfg.get<number>('mlx.numDraftTokens') ?? 0)),
     mlxExtraArgs: (cfg.get<string[]>('mlx.extraArgs') || []).filter((a) => typeof a === 'string'),
+    mlxContextTokens: Math.max(0, Math.floor(cfg.get<number>('mlx.contextTokens') ?? 131072)),
     ollamaNumBatch: Math.max(0, Math.floor(cfg.get<number>('ollama.numBatch') ?? 0)),
     openaiCompatBaseUrl: (cfg.get<string>('openaiCompat.baseUrl') || 'http://127.0.0.1:1234').replace(/\/+$/, ''),
     ollamaBaseUrl: (cfg.get<string>('ollamaBaseUrl') || 'http://localhost:11434').replace(/\/+$/, ''),
@@ -220,7 +223,7 @@ export function getConfig(): ForgeConfig {
     loopDetectionEnabled: cfg.get<boolean>('loopDetection.enabled') ?? true,
     traceEnabled: cfg.get<boolean>('trace.enabled') ?? true,
     contextAppendOnly: cfg.get<boolean>('context.appendOnly') ?? true,
-    thinking: ((v) => (v === 'off' || v === 'on' || v === 'auto' ? v : 'auto'))(cfg.get<string>('thinking')),
+    thinking: ((v) => (v === 'off' || v === 'on' || v === 'auto' || v === 'default' ? v : 'auto'))(cfg.get<string>('thinking')),
     terseSteps: cfg.get<boolean>('terseSteps') ?? true,
     maxOutputTokens: Math.max(0, Math.floor(cfg.get<number>('maxOutputTokens') ?? 0)),
     maxOutputTokensCeiling: Math.max(0, Math.floor(cfg.get<number>('maxOutputTokensCeiling') ?? 0)),

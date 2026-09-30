@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import * as os from 'os';
 import { SwitchableProvider } from './llm/factory';
 import { MlxServerManager, makeEnsureMlx } from './llm/mlxServer';
+import { registerMlxEnsureRunner, requestMlxRestartAfterSettingsChange } from './llm/mlxRestartCoord';
 import { readMemorySample } from './util/hwSampler';
 import { getConfig } from './util/config';
 import { logger } from './util/logger';
@@ -77,6 +78,7 @@ export async function activate(context: vscode.ExtensionContext) {
   });
   activeMlxServer = mlxServer;
   const ensureMlx = makeEnsureMlx(() => getConfig(), mlxServer);
+  registerMlxEnsureRunner(ensureMlx);
   const ollama = new SwitchableProvider(() => getConfig(), {
     getResident: async () => mlxServer.resident(),
     ensureReady: ensureMlx,
@@ -101,9 +103,11 @@ export async function activate(context: vscode.ExtensionContext) {
             e.affectsConfiguration('forge.mlx.promptConcurrency') ||
             e.affectsConfiguration('forge.mlx.draftModel') ||
             e.affectsConfiguration('forge.mlx.numDraftTokens') ||
+            e.affectsConfiguration('forge.mlx.contextTokens') ||
+            e.affectsConfiguration('forge.numCtx') ||
             e.affectsConfiguration('forge.mlx.extraArgs'))
         ) {
-          void ensureMlx().catch((err) => logger.warn('MLX server restart after settings change failed', String(err)));
+          requestMlxRestartAfterSettingsChange();
         }
       } catch {
         /* never let a settings event break the extension */

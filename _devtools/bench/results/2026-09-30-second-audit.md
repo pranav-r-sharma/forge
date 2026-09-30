@@ -59,20 +59,19 @@ Provider: chat/agent uses `forge.provider`; embeddings + Tab FIM fall back to Ol
 ## Findings
 
 
-| Sev | Scenario | Evidence | Suggested fix |
-|-----|----------|----------|---------------|
-| **risk** | `forge.mlx.contextTokens` / panel context window changes do not restart `mlx_lm.server`; Forge compaction + output cap use the new value while the running server may still use the window from its last start | `extension.ts` 92–107 (restart list omits `mlx.contextTokens`); `mlxServer.ts` `doEnsure` key tuple has no context size | Document clearly; optionally restart when contextTokens changes, or read actual limit from server if exposed |
-| **risk** | MLX settings change mid-turn triggers async `ensureMlx()` while `runAgentTurn` may be inside `chat()`; next iteration can hit a restarted server or fail the in-flight request | `extension.ts` 106; `agentLoop.ts` 713–740 (generic error end) | Serialize restart with in-flight turns, or defer restart until no busy session |
-| **risk** | `thinking` enum includes `default` in `package.json` but `getConfig()` maps any value other than off/on/auto to **`auto`**, not “leave model default” (`undefined` in `thinkingForStep`) | `package.json` 337–340; `config.ts` 223; `thinkingForStep` `agentLoop.ts` 93–97 | Treat `default` explicitly like `thinkingForStep('default')` → `undefined` |
-| **risk** | Requirements gate is soft after nudges exhausted: `findRequirementsGateGaps` only blocks via nudges; final still emitted with `unverifiedClaims` markers | `agentLoop.ts` 873–904, 976–982; `requirements.ts` 408–426 | Optional hard cap (like incomplete-action) when `requirements.enabled` and gaps remain |
-| **risk** | `write_file` append loads full existing file + append into memory with no `maxContextFileKB` guard (read path has cap) | `fileTools.ts` 393–396; read cap `fileTools.ts` ~32 | Reuse size guard or stream append for huge files |
-| **risk** | Verify command uses `spawn(..., { shell: true, timeout })` without detached process-group kill tree (unlike `run_command`); hung grandchildren can delay cancel | `verifyCheck.ts` 35; compare `commandTool.ts` 110–120 | Share escalation helper with `run_command` |
-| **cosmetic** | Loop-detector hard stop and iteration cap emit `error`+`done` but **no** `final`; incomplete/foreign caps emit `final`+`done` — uneven UX | `agentLoop.ts` 1257–1263, 1325–1330 vs 784–825 | Emit a short `final` summary or unify on one event type |
-| **cosmetic** | `forge.loopDetection.enabled` description says Auto/Outcome; `checkLoop` runs in **all** modes (only `check_background_command` exempt) | `package.json` 315–318; `checkLoop` `agentLoop.ts` 1298–1299 | Doc fix or gate on `isAutonomousMode` if intentional |
-| **cosmetic** | Cancel during verify returns `aborted` without `done` (harmless: `ChatSession.send` `finally` clears `busy`) | `agentLoop.ts` 937–939 | Emit `done` for symmetry |
-| **cosmetic** | Context-full exit emits `final` but not `done` | `agentLoop.ts` 687–689 | Add `done` for symmetry |
-| **cosmetic** | `messages[0]` system prompt rewritten every turn (mode/rules/terse) — intentional cache break; first audit understates impact on MLX prefix cache when rules change rarely | `agentLoop.ts` 368–371; `systemPrompt.ts` | Split static tool contract from volatile tail if cache hit rate matters |
-| **cosmetic** | Sub-agent tool description says “Ollama model tag” while `subAgentModel` is just a model id string for active provider | `tools/index.ts` / `config.ts` 59 | Wording only |
+| Sev | Scenario | Evidence | Suggested fix | Status |
+|-----|----------|----------|---------------|--------|
+| **risk** | `forge.mlx.contextTokens` / panel context window changes do not restart `mlx_lm.server` | `extension.ts`; `mlxServer.ts` `doEnsure` key | Restart when contextTokens changes | **fixed** (second-audit code pass) |
+| **risk** | MLX settings change mid-turn races `ensureMlx()` | `extension.ts`; `chatSession.ts` | Defer restart until turn ends | **fixed** (`mlxRestartCoord.ts`) |
+| **risk** | `thinking: default` coerced to `auto` | `config.ts`; `thinkingForStep` | Map `default` → model default | **fixed** |
+| **risk** | Requirements gate soft after nudges exhausted | `agentLoop.ts`; `requirements.ts` | Final lists unmet checkable items | **fixed** (`formatRequirementsFinalUnmetSection`) |
+| **risk** | `write_file` append unbounded | `fileTools.ts` | `maxContextFileKB` guard | **fixed** |
+| **risk** | Verify spawn without kill tree | `verifyCheck.ts` | `shellProcessTree.ts` | **fixed** |
+| **cosmetic** | Loop/iteration cap no `final` | `agentLoop.ts` | `final`+`done` | **fixed** |
+| **cosmetic** | Loop detection setting copy | `package.json` | Doc fix | **fixed** |
+| **cosmetic** | Verify cancel / context-full missing `done` | `agentLoop.ts` | Emit `done` | **fixed** |
+| **cosmetic** | System prompt rewrite every turn | `agentLoop.ts` | (cache optimization — deferred) | **open** (cosmetic, intentional behavior) |
+| **cosmetic** | Sub-agent model wording Ollama-only | `package.json` `subAgentModel` | Wording | **fixed** |
 
 
 ## First audit (`de94213` / §4) — missed or imprecise
@@ -116,7 +115,7 @@ Provider: chat/agent uses `forge.provider`; embeddings + Tab FIM fall back to Ol
 | `mcp.servers` | [] | [] | Y | Y | no | Reload MCP command |
 | `mlx.autoStart` | True | true | ~ | Y | no | — |
 | `mlx.baseUrl` | http://127.0.0.1:8123 | default `http://127.0.0.1:8123` | ~ | Y | no | MLX restart |
-| `mlx.contextTokens` | 131072 | 131072 | Y | Y | via panel `numCtx` remap | no server restart (Forge-only meter/compaction) |
+| `mlx.contextTokens` | 131072 | 131072 | Y | Y | via panel `numCtx` remap | MLX restart when changed (managed server key) |
 | `mlx.decodeConcurrency` | 0 | 0 | Y | Y | yes | MLX restart |
 | `mlx.draftModel` |  | '' | Y | Y | yes | MLX restart |
 | `mlx.extraArgs` | [] | [] | Y | Y | no | MLX restart |
@@ -154,7 +153,7 @@ Provider: chat/agent uses `forge.provider`; embeddings + Tab FIM fall back to Ol
 | `taskLedger.reviewExpensivePlans` | True | true | ~ | Y | yes | — |
 | `temperature` | 0.2 | 0.2 | Y | Y | yes | — |
 | `terseSteps` | True | true | ~ | Y | yes | — |
-| `thinking` | auto | `off`|`on`|`auto`; any other value (incl. enum `default`) → `auto` | ~ | Y | yes | — |
+| `thinking` | auto | `off`|`on`|`auto`|`default`; other → `auto` | ~ | Y | yes | `default` → model default in API |
 | `trace.enabled` | True | true | ~ | Y | yes | — |
 | `verifyBeforeDone` | auto | `off`|`custom`; else `auto` | ~ | Y | yes | — |
 | `verifyCommand` |  | '' | Y | Y | yes | — |
