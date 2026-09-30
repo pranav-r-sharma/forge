@@ -468,6 +468,84 @@
     return `<div class="setting-row"><div class="setting-label">${escapeHtml(label)}${hint ? `<div class="setting-hint">${escapeHtml(hint)}</div>` : ''}</div><div class="setting-control">${inputHtml}</div></div>`;
   }
 
+  const RECO_INPUT_IDS = {
+    numCtx: 'set-numCtx',
+    'mlx.promptCacheGB': 'set-mlx-promptCacheGB',
+    'mlx.prefillStepSize': 'set-mlx-prefillStepSize',
+    'mlx.promptCacheSize': 'set-mlx-promptCacheSize',
+    maxOutputTokens: 'set-maxOutputTokens',
+    maxOutputTokensCeiling: 'set-maxOutputTokensCeiling',
+    keepAliveMinutes: 'set-keepAliveMinutes',
+    maxContextFileKB: 'set-maxContextFileKB',
+  };
+
+  function formatRecoValue(v) {
+    if (v === -1) return '-1';
+    return Number.isInteger(v) ? v.toLocaleString() : String(v);
+  }
+
+  function recoForKey(key) {
+    const recs = (state.settings && state.settings.recommendations) || [];
+    return recs.find((r) => r.settingKey === key);
+  }
+
+  function settingRecoHtml(key) {
+    const r = recoForKey(key);
+    if (!r) return '';
+    return `<div class="setting-reco" data-reco-key="${escapeAttr(key)}">
+      <div class="setting-reco-text">Recommended: ${escapeHtml(formatRecoValue(r.recommended))} — ${escapeHtml(r.reason)}</div>
+      <button type="button" class="setting-reco-apply" data-key="${escapeAttr(key)}" data-value="${r.recommended}">Apply</button>
+    </div>`;
+  }
+
+  function settingRowWithReco(key, label, hint, inputHtml) {
+    return settingRow(label, hint, inputHtml + settingRecoHtml(key));
+  }
+
+  function bindRecommendationButtons() {
+    document.querySelectorAll('.setting-reco-apply').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const key = btn.dataset.key;
+        const value = parseFloat(btn.dataset.value);
+        if (!key || !Number.isFinite(value)) return;
+        const inputId = RECO_INPUT_IDS[key];
+        const input = inputId ? document.getElementById(inputId) : null;
+        if (input) input.value = value;
+        vscodeApi.postMessage({ type: 'updateSetting', key, value });
+      });
+    });
+    const applyAll = document.getElementById('btn-settings-apply-all');
+    if (applyAll) {
+      applyAll.addEventListener('click', () => {
+        const recs = (state.settings && state.settings.recommendations) || [];
+        const cur = state.settings;
+        if (!cur || !recs.length) return;
+        const currentByKey = {
+          numCtx: cur.numCtx,
+          'mlx.promptCacheGB': cur.mlxPromptCacheGB,
+          'mlx.prefillStepSize': cur.mlxPrefillStepSize,
+          'mlx.promptCacheSize': cur.mlxPromptCacheSize,
+          maxOutputTokens: cur.maxOutputTokens,
+          maxOutputTokensCeiling: cur.maxOutputTokensCeiling,
+          keepAliveMinutes: cur.keepAliveMinutes,
+          maxContextFileKB: cur.maxContextFileKB,
+        };
+        for (const r of recs) {
+          const now = currentByKey[r.settingKey];
+          if (now === r.recommended) continue;
+          const inputId = RECO_INPUT_IDS[r.settingKey];
+          const input = inputId ? document.getElementById(inputId) : null;
+          if (input) input.value = r.recommended;
+          vscodeApi.postMessage({ type: 'updateSetting', key: r.settingKey, value: r.recommended });
+        }
+      });
+    }
+    const refreshBtn = document.getElementById('btn-settings-refresh');
+    if (refreshBtn) {
+      refreshBtn.addEventListener('click', () => vscodeApi.postMessage({ type: 'refreshSettings' }));
+    }
+  }
+
   // Item "lot of ram sitting idle, can that be somehow leveraged for
   // increased context": a best-effort, clearly-hedged suggestion (see
   // util/hwMetrics.ts's estimateSuggestedNumCtx doc comment for exactly
@@ -567,7 +645,15 @@
       el.settingsBody.innerHTML = '<div class="search-empty">Loading…</div>';
       return;
     }
+    const profileLine = s.machineProfileSummary
+      ? `<div class="settings-machine-profile">${escapeHtml(s.machineProfileSummary)}</div>`
+      : '';
     el.settingsBody.innerHTML = `
+      <div class="settings-toolbar">
+        <button type="button" id="btn-settings-refresh" class="setting-reco-apply">Refresh</button>
+        <button type="button" id="btn-settings-apply-all" class="setting-reco-apply">Apply all recommended</button>
+      </div>
+      ${profileLine}
       <div class="settings-section-title">This chat</div>
       ${settingRow(
         'Context window override',
@@ -577,20 +663,20 @@
       <div id="settings-numctx-suggestion-host">${renderNumCtxSuggestionHtml()}</div>
       ${sessionModelSettingRow()}
       <div class="settings-section-title">Global defaults</div>
-      ${settingRow('Context window (global)', 'Applies to all chats that do not have their own context override. For MLX and OpenAI-compatible runtimes this is forge.mlx.contextTokens; for Ollama it is forge.numCtx.', `<input id="set-numCtx" type="number" min="512" step="512" value="${s.numCtx}" />`)}
-      ${settingRow('Max output tokens per reply', '0 = auto (half the context window, at least 16384). Thinking tokens count too. Never leaves the limit unset — mlx_lm.server defaults to 512.', `<input id="set-maxOutputTokens" type="number" min="0" step="512" value="${s.maxOutputTokens}" />`)}
-      ${settingRow('Max output tokens ceiling (auto mode)', '0 = no ceiling. When max output is auto, cap the derived limit here (explicit max output still wins).', `<input id="set-maxOutputTokensCeiling" type="number" min="0" step="512" value="${s.maxOutputTokensCeiling ?? 0}" />`)}
+      ${settingRowWithReco('numCtx', 'Context window (global)', 'Applies to all chats that do not have their own context override. For MLX and OpenAI-compatible runtimes this is forge.mlx.contextTokens; for Ollama it is forge.numCtx.', `<input id="set-numCtx" type="number" min="512" step="512" value="${s.numCtx}" />`)}
+      ${settingRowWithReco('maxOutputTokens', 'Max output tokens per reply', '0 = auto (half the context window, at least 16384). Thinking tokens count too. Never leaves the limit unset — mlx_lm.server defaults to 512.', `<input id="set-maxOutputTokens" type="number" min="0" step="512" value="${s.maxOutputTokens}" />`)}
+      ${settingRowWithReco('maxOutputTokensCeiling', 'Max output tokens ceiling (auto mode)', '0 = no ceiling. When max output is auto, cap the derived limit here (explicit max output still wins).', `<input id="set-maxOutputTokensCeiling" type="number" min="0" step="512" value="${s.maxOutputTokensCeiling ?? 0}" />`)}
       ${settingRow('Temperature', '', `<input id="set-temperature" type="number" min="0" max="2" step="0.1" value="${s.temperature}" />`)}
-      ${settingRow('Keep model loaded (minutes)', '-1 = never unload between messages, 0 = Ollama default (~5 min).', `<input id="set-keepAliveMinutes" type="number" step="1" value="${s.keepAliveMinutes}" />`)}
+      ${settingRowWithReco('keepAliveMinutes', 'Keep model loaded (minutes)', '-1 = never unload between messages, 0 = Ollama default (~5 min).', `<input id="set-keepAliveMinutes" type="number" step="1" value="${s.keepAliveMinutes}" />`)}
       ${settingRow('Require approval for file edits', '', `<input id="set-requireApprovalForWrites" type="checkbox" ${s.requireApprovalForWrites ? 'checked' : ''} />`)}
       ${settingRow('Require approval for commands', '', `<input id="set-requireApprovalForCommands" type="checkbox" ${s.requireApprovalForCommands ? 'checked' : ''} />`)}
       ${settingRow('Show brief status messages', 'e.g. "Reading foo.ts…" while the agent works.', `<input id="set-showStatusMessages" type="checkbox" ${s.showStatusMessages ? 'checked' : ''} />`)}
       ${settingRow('Loop detection (Auto/Outcome mode)', 'Stops the agent if it looks like it\'s repeating the same action in a loop. check_background_command is always exempt regardless of this setting. Turn off if it\'s incorrectly triggering on legitimately repetitive work.', `<input id="set-loopDetectionEnabled" type="checkbox" ${s.loopDetectionEnabled ? 'checked' : ''} />`)}
       <div class="settings-section-title">Performance (MLX)</div>
-      ${settingRow('MLX prompt cache (GB)', 'In-memory prompt cache on mlx_lm.server (0 = server default). Restarts the managed MLX server when changed.', `<input id="set-mlx-promptCacheGB" type="number" min="0" step="0.5" value="${s.mlxPromptCacheGB}" />`)}
-      ${settingRow('MLX prefill step size', 'Tokens per prefill step (--prefill-step-size; 0 = server default). Restarts the managed MLX server when changed.', `<input id="set-mlx-prefillStepSize" type="number" min="0" step="256" value="${s.mlxPrefillStepSize}" />`)}
-      ${settingRow('MLX prompt cache entries', 'Max distinct cached prompts (--prompt-cache-size; 0 = server default). Restarts the managed MLX server when changed.', `<input id="set-mlx-promptCacheSize" type="number" min="0" step="1" value="${s.mlxPromptCacheSize}" />`)}
-      ${settingRow('Max file read size (KB)', 'Files larger than this are skipped for indexing and read_file. Applies on the next agent turn.', `<input id="set-maxContextFileKB" type="number" min="1" step="1" value="${s.maxContextFileKB}" />`)}
+      ${settingRowWithReco('mlx.promptCacheGB', 'MLX prompt cache (GB)', 'In-memory prompt cache on mlx_lm.server (0 = server default). Restarts the managed MLX server when changed.', `<input id="set-mlx-promptCacheGB" type="number" min="0" step="0.5" value="${s.mlxPromptCacheGB}" />`)}
+      ${settingRowWithReco('mlx.prefillStepSize', 'MLX prefill step size', 'Tokens per prefill step (--prefill-step-size; 0 = server default). Restarts the managed MLX server when changed.', `<input id="set-mlx-prefillStepSize" type="number" min="0" step="256" value="${s.mlxPrefillStepSize}" />`)}
+      ${settingRowWithReco('mlx.promptCacheSize', 'MLX prompt cache entries', 'Max distinct cached prompts (--prompt-cache-size; 0 = server default). Restarts the managed MLX server when changed.', `<input id="set-mlx-promptCacheSize" type="number" min="0" step="1" value="${s.mlxPromptCacheSize}" />`)}
+      ${settingRowWithReco('maxContextFileKB', 'Max file read size (KB)', 'Files larger than this are skipped for indexing and read_file. Applies on the next agent turn.', `<input id="set-maxContextFileKB" type="number" min="1" step="1" value="${s.maxContextFileKB}" />`)}
       ${settingRow('Single-message context share (%)', 'Percent of the context window one tool result may use before trimming in the prompt view (5–80). Applies on the next agent turn.', `<input id="set-singleMessageSharePct" type="number" min="5" max="80" step="1" value="${s.singleMessageSharePct}" />`)}
       <div class="settings-section-title">Task ledger &amp; cost-aware planning</div>
       ${settingRow('Cost-aware task planning', 'Estimate each planned task\'s rough cost (cheap/moderate/expensive — the model\'s own estimate when it gives one, a free keyword heuristic otherwise) so an expensive plan can be flagged before it starts. Costs no extra model calls.', `<input id="set-costAwarePlanningEnabled" type="checkbox" ${s.costAwarePlanningEnabled ? 'checked' : ''} />`)}
@@ -727,6 +813,7 @@
       const value = e.target.value.trim();
       searxngCommitTimer = setTimeout(() => vscodeApi.postMessage({ type: 'updateSetting', key: 'webSearch.searxngUrl', value }), 600);
     });
+    bindRecommendationButtons();
   }
 
   /** Connection status for every configured MCP server (forge.mcp.servers) — see mcp/mcpManager.ts. Read-only here; servers are configured in settings.json and reconnected via "Forge: Reload MCP Servers". */

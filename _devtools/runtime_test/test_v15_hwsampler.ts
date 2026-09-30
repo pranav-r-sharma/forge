@@ -6,7 +6,7 @@
 // ============================================================================
 import * as fs from 'fs';
 import * as path from 'path';
-import { parseVmStat, parseSwapUsage, parsePressureLevel, computeMemory, readMemorySample, parseIoregAccelerator, readGpuSamples, readGpuWiredLimitMB, averageOverWindow, HwSampler, hwFieldsForUi, ExecFn } from '../../src/util/hwSampler';
+import { parseVmStat, parseSwapUsage, parsePressureLevel, computeMemory, readMemorySample, parseIoregAccelerator, readGpuSamples, readGpuWiredLimitMB, readGpuWiredLimitRawMB, effectiveGpuMemoryBudgetGB, readMachineProfile, averageOverWindow, HwSampler, hwFieldsForUi, ExecFn } from '../../src/util/hwSampler';
 
 let passed = 0;
 let failed = 0;
@@ -204,6 +204,35 @@ async function testUiMapping() {
   ok(empty.memory === undefined && empty.gpus === undefined, 'no data → both undefined so the UI renders "n/a"');
 }
 
+function testGpuBudgetDefault() {
+  const b = effectiveGpuMemoryBudgetGB(128, 0);
+  ok(b.usesSystemDefault && near(b.budgetGB, 96, 0.2), `128 GB with sysctl 0 → ~75% GPU budget (${b.budgetGB} GB)`);
+  ok(effectiveGpuMemoryBudgetGB(128, 65536).budgetGB === 64, 'explicit wired limit overrides default fraction');
+}
+
+async function testMachineProfileFakes() {
+  const exec: ExecFn = async (cmd, args) => {
+    const key = `${cmd} ${args.join(' ')}`;
+    if (key === 'sysctl -n hw.memsize') return String(128 * GB) + '\n';
+    if (key === 'sysctl -n machdep.cpu.brand_string') return 'Apple M5 Max\n';
+    if (key === 'sysctl -n hw.perflevel0.physicalcpu') return '12\n';
+    if (key === 'sysctl -n hw.perflevel1.physicalcpu') return '4\n';
+    if (key === 'sysctl -n iogpu.wired_limit_mb') return '0\n';
+    if (cmd === 'vm_stat') return REAL_VM;
+    if (key === 'sysctl -n vm.swapusage') return 'total = 0.00M  used = 0.00M  free = 0.00M';
+    if (key === 'sysctl -n kern.memorystatus_vm_pressure_level') return '1\n';
+    if (key === 'sysctl -n kern.memorystatus_level') return '90\n';
+    if (cmd === 'ioreg') return REAL_IOREG;
+    return undefined;
+  };
+  const p = await readMachineProfile(exec, 'darwin', { loadedModelSizeGB: 5.2 });
+  ok(p.chipName === 'Apple M5 Max' && p.performanceCoreCount === 12 && p.efficiencyCoreCount === 4, 'CPU brand and core counts read');
+  ok(near(p.totalRamGB, 128, 1), 'total RAM from hw.memsize');
+  ok(p.gpuWiredLimitUsesSystemDefault && near(p.effectiveGpuMemoryBudgetGB, 96, 1), 'wired limit 0 → documented default budget');
+  ok(p.loadedModelSizeGB === 5.2 && typeof p.gpuUtilizationPct === 'number', 'model size and GPU util carried through');
+  ok((await readGpuWiredLimitRawMB(exec, 'darwin')) === 0, 'raw wired limit can be 0');
+}
+
 async function testLiveMac() {
   if (process.platform !== 'darwin') { ok(true, '(skipped live check: not macOS)'); return; }
   const s = await readMemorySample();
@@ -231,6 +260,8 @@ async function main() {
   testSmoothing();
   await testSampler();
   await testUiMapping();
+  testGpuBudgetDefault();
+  await testMachineProfileFakes();
   await testLiveMac();
   console.log(`\n${passed} passed, ${failed} failed.`);
   if (failed > 0) { console.log('Some v0.15.0 hwSampler tests FAILED.'); process.exit(1); }

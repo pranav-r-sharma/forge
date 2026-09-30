@@ -1079,6 +1079,46 @@ body {
   background: var(--vscode-button-secondaryHoverBackground, rgba(128, 128, 128, 0.3));
 }
 
+.settings-toolbar {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  padding: 4px 0 8px;
+  flex-wrap: wrap;
+}
+.settings-machine-profile {
+  font-size: 11px;
+  opacity: 0.75;
+  padding: 0 0 8px;
+  line-height: 1.4;
+}
+.setting-reco {
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  max-width: 100%;
+}
+.setting-reco-text {
+  font-size: 11px;
+  opacity: 0.75;
+  line-height: 1.35;
+  text-align: right;
+}
+.setting-reco-apply {
+  background: var(--vscode-button-secondaryBackground, rgba(128, 128, 128, 0.2));
+  color: var(--vscode-button-secondaryForeground, currentColor);
+  border: none;
+  border-radius: 4px;
+  padding: 4px 10px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.setting-reco-apply:hover {
+  background: var(--vscode-button-secondaryHoverBackground, rgba(128, 128, 128, 0.3));
+}
+
 /* ---------- brief agent-activity status line ---------- */
 .forge-status-line {
   font-size: 11px;

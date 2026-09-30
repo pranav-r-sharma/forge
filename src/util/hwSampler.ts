@@ -215,13 +215,110 @@ export async function readGpuSamples(exec: ExecFn = defaultExec, platform: strin
  * MLX/Metal device info, not from sysctl; see the MLX provider (P0-11/12).
  */
 export async function readGpuWiredLimitMB(exec: ExecFn = defaultExec, platform: string = process.platform, timeoutMs = 1500): Promise<number | undefined> {
+  const raw = await readGpuWiredLimitRawMB(exec, platform, timeoutMs);
+  return raw !== undefined && raw > 0 ? raw : undefined;
+}
+
+/** Raw sysctl value for `iogpu.wired_limit_mb` (0 means macOS default — see effectiveGpuMemoryBudgetGB). */
+export async function readGpuWiredLimitRawMB(exec: ExecFn = defaultExec, platform: string = process.platform, timeoutMs = 1500): Promise<number | undefined> {
   if (platform !== 'darwin') return undefined;
   try {
     const n = Number(((await exec('sysctl', ['-n', 'iogpu.wired_limit_mb'], timeoutMs)) || '').trim());
-    return Number.isFinite(n) && n > 0 ? n : undefined;
+    return Number.isFinite(n) && n >= 0 ? n : undefined;
   } catch {
     return undefined;
   }
+}
+
+/**
+ * When `iogpu.wired_limit_mb` is 0, macOS applies its own GPU wired-memory cap (not readable without private APIs).
+ * On large unified-memory Macs this is commonly ~75% of physical RAM — used only for recommendations, never to change settings.
+ */
+export const IOGPU_WIRED_DEFAULT_RAM_FRACTION = 0.75;
+
+export function effectiveGpuMemoryBudgetGB(totalRamGB: number, wiredLimitRawMB?: number): { budgetGB: number; usesSystemDefault: boolean } {
+  if (!totalRamGB || totalRamGB <= 0) return { budgetGB: 0, usesSystemDefault: false };
+  if (wiredLimitRawMB !== undefined && wiredLimitRawMB > 0) {
+    return { budgetGB: round2(wiredLimitRawMB / 1024), usesSystemDefault: false };
+  }
+  return { budgetGB: round1(totalRamGB * IOGPU_WIRED_DEFAULT_RAM_FRACTION), usesSystemDefault: true };
+}
+
+/** Read-only machine profile for settings recommendations (never changes system state). */
+export interface MachineProfile {
+  chipName?: string;
+  performanceCoreCount?: number;
+  efficiencyCoreCount?: number;
+  totalRamBytes?: number;
+  totalRamGB?: number;
+  memory?: MemorySample;
+  gpuWiredLimitMB?: number;
+  gpuWiredLimitUsesSystemDefault?: boolean;
+  effectiveGpuMemoryBudgetGB?: number;
+  gpuUtilizationPct?: number;
+  gpuInUseGB?: number;
+  loadedModelSizeGB?: number;
+  sampledAtMs: number;
+}
+
+export function parseSysctlInt(text: string | undefined): number | undefined {
+  const n = Number((text || '').trim());
+  return Number.isFinite(n) && n >= 0 ? n : undefined;
+}
+
+/**
+ * Builds a machine profile from sysctl/vm_stat/ioreg (and optional resident model size from ps()).
+ * Reuses `hwSnapshot` when supplied so callers can avoid duplicate memory/GPU reads.
+ */
+export async function readMachineProfile(
+  rawExec: ExecFn = defaultExec,
+  platform: string = process.platform,
+  opts: { loadedModelSizeGB?: number; hwSnapshot?: HwSnapshot; timeoutMs?: number } = {}
+): Promise<MachineProfile> {
+  const exec: ExecFn = async (cmd, args, t) => {
+    try {
+      return await rawExec(cmd, args, t);
+    } catch {
+      return undefined;
+    }
+  };
+  const timeoutMs = opts.timeoutMs ?? 1500;
+  const tsMs = opts.hwSnapshot?.sampledAtMs ?? Date.now();
+  const memory = opts.hwSnapshot?.memory ?? (await readMemorySample(exec, platform, timeoutMs));
+  const gpus = opts.hwSnapshot?.gpus?.length ? opts.hwSnapshot.gpus : await readGpuSamples(exec, platform, timeoutMs);
+  const wiredFromSnap = opts.hwSnapshot?.gpuWiredLimitMB;
+  const wiredRaw =
+    wiredFromSnap !== undefined
+      ? wiredFromSnap
+      : await readGpuWiredLimitRawMB(exec, platform, timeoutMs);
+  const [memsizeText, brand, p0, p1] =
+    platform === 'darwin'
+      ? await Promise.all([
+          exec('sysctl', ['-n', 'hw.memsize'], timeoutMs),
+          exec('sysctl', ['-n', 'machdep.cpu.brand_string'], timeoutMs),
+          exec('sysctl', ['-n', 'hw.perflevel0.physicalcpu'], timeoutMs),
+          exec('sysctl', ['-n', 'hw.perflevel1.physicalcpu'], timeoutMs),
+        ])
+      : [undefined, undefined, undefined, undefined];
+  const totalRamBytes = parseSysctlInt(memsizeText) ?? (memory ? Math.round(memory.totalGB * GB) : undefined);
+  const totalRamGB = memory?.totalGB ?? (totalRamBytes ? round1(totalRamBytes / GB) : undefined);
+  const { budgetGB, usesSystemDefault } = effectiveGpuMemoryBudgetGB(totalRamGB ?? 0, wiredRaw);
+  const primaryGpu = gpus[0];
+  return {
+    chipName: brand?.trim() || undefined,
+    performanceCoreCount: parseSysctlInt(p0),
+    efficiencyCoreCount: parseSysctlInt(p1),
+    totalRamBytes,
+    totalRamGB,
+    memory,
+    gpuWiredLimitMB: wiredRaw !== undefined && wiredRaw > 0 ? wiredRaw : undefined,
+    gpuWiredLimitUsesSystemDefault: usesSystemDefault,
+    effectiveGpuMemoryBudgetGB: totalRamGB ? budgetGB : undefined,
+    gpuUtilizationPct: primaryGpu?.utilizationPct,
+    gpuInUseGB: primaryGpu?.inUseGB,
+    loadedModelSizeGB: opts.loadedModelSizeGB,
+    sampledAtMs: tsMs,
+  };
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------------------

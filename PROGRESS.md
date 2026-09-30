@@ -298,3 +298,11 @@ Standing rule 10 (M5 Max 128 GB): raised work-limiting defaults; added `forge.ma
 | Chat attachment paste cap | 20000 | 100000 | Large pasted context |
 
 Unchanged (safety): loop detection, truncation nudge count (3), `HARD_MAX_SUBAGENT_DEPTH`, approval guards, `MAX_EDITS_PER_CALL`, background concurrency.
+
+## Machine profile + recommended settings (2026-09-30)
+
+**Machine profile** (`src/util/hwSampler.ts` `readMachineProfile`): read-only sysctl/vm_stat/ioreg — `hw.memsize`, `machdep.cpu.brand_string`, `hw.perflevel0/1.physicalcpu`, memory pressure/swap/available, GPU util + in-use GB, `iogpu.wired_limit_mb` (0 → budget uses documented ~75% of RAM assumption). Optional resident model size from `ps()`.
+
+**Recommendations** (`src/util/recommendations.ts` `recommend()`): KV budget = min(available, GPU budget − model weights) − 15% headroom (more under warn/critical/swap); drives `numCtx`, MLX cache/prefill, output ceiling, keep-alive, `maxContextFileKB`. Settings panel shows Recommended + Apply per field, Refresh + Apply all; wired through `settingsData` / `refreshSettings`.
+
+**Tests:** `test_v15_hwsampler.ts` (machine profile), `test_v15_recommendations.ts`.

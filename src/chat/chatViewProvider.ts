@@ -21,11 +21,12 @@ import { genId } from '../util/ids';
 import { resolveWorkspacePath, toRelative } from '../util/paths';
 import { WorkspaceEntryIndex } from '../util/fileSearch';
 import { estimateSuggestedNumCtx, getGpuStatus, getRamStatus } from '../util/hwMetrics';
-import { HwSampler, hwFieldsForUi } from '../util/hwSampler';
+import { HwSampler, hwFieldsForUi, readMachineProfile } from '../util/hwSampler';
+import { recommend } from '../util/recommendations';
 import { logger } from '../util/logger';
 import { ChatSession, ChatSessionServices } from './chatSession';
 import { ExtensionToWebviewMessage, HwStatus, InitState, SearchResultItem, SettingsSnapshot, UiTranscriptEntry, WebviewToExtensionMessage } from '../webview/protocol';
-import { OllamaCallMetrics } from '../ollama/types';
+import { OllamaCallMetrics, OllamaPsModel } from '../ollama/types';
 
 /**
  * Thin webview host + multi-session ("multitask") manager. All the actual
@@ -584,7 +585,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         return;
       }
       case 'getSettings': {
-        this.post({ type: 'settingsData', settings: await this.buildSettingsSnapshot() });
+        this.post({ type: 'settingsData', settings: await this.buildSettingsSnapshot(true) });
+        return;
+      }
+      case 'refreshSettings': {
+        this.post({ type: 'settingsData', settings: await this.buildSettingsSnapshot(true) });
         return;
       }
       case 'updateSetting': {
@@ -672,8 +677,16 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     }
   }
 
+  private async loadedModelsCached(): Promise<OllamaPsModel[]> {
+    const now = Date.now();
+    if (!this.psCache || now - this.psCache.at > 4000) {
+      this.psCache = { at: now, value: await this.ollama.ps().catch(() => []) };
+    }
+    return this.psCache.value;
+  }
+
   /** Snapshot of every setting the in-webview Settings panel can read/write — see util/config.ts's SETTINGS_PANEL_KEYS. Async because provider-configured status reads vscode.SecretStorage. */
-  private async buildSettingsSnapshot(): Promise<SettingsSnapshot> {
+  private async buildSettingsSnapshot(refreshHw = false): Promise<SettingsSnapshot> {
     const cfg = getConfig();
     const webSearchProviders = await Promise.all(
       PROVIDERS.map(async (p) => {
@@ -683,7 +696,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         return { id: p.id, displayName: p.displayName, requiresApiKey: p.requiresApiKey, configured: p.isConfigured(creds) };
       })
     );
-    return {
+    const snapshot: SettingsSnapshot = {
       numCtx: cfg.numCtx,
       maxAgentIterations: cfg.maxAgentIterations,
       autoModeMaxIterations: cfg.autoModeMaxIterations,
@@ -717,7 +730,37 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       singleMessageSharePct: cfg.singleMessageSharePct,
       maxOutputTokens: cfg.maxOutputTokens,
       maxOutputTokensCeiling: cfg.maxOutputTokensCeiling,
+      recommendations: [],
+      machineProfileSummary: undefined,
     };
+    const snap = refreshHw ? await this.hwSampler.sampleOnce() : this.hwSampler.latest().sampledAtMs ? this.hwSampler.latest() : await this.hwSampler.sampleOnce();
+    const loaded = await this.loadedModelsCached();
+    const loadedGb = loaded[0]?.size ? loaded[0].size / 1024 / 1024 / 1024 : undefined;
+    const profile = await readMachineProfile(undefined, process.platform, { loadedModelSizeGB: loadedGb, hwSnapshot: snap });
+    const recommendations = recommend(
+      profile,
+      {
+        provider: cfg.provider,
+        numCtx: cfg.numCtx,
+        mlxPromptCacheGB: cfg.mlxPromptCacheGB,
+        mlxPromptCacheSize: cfg.mlxPromptCacheSize,
+        mlxPrefillStepSize: cfg.mlxPrefillStepSize,
+        maxOutputTokens: cfg.maxOutputTokens,
+        maxOutputTokensCeiling: cfg.maxOutputTokensCeiling,
+        keepAliveMinutes: cfg.keepAliveMinutes,
+        maxContextFileKB: cfg.maxContextFileKB,
+      },
+      { modelSizeGB: loadedGb }
+    );
+    const parts: string[] = [];
+    if (profile.chipName) parts.push(profile.chipName);
+    if (profile.totalRamGB) parts.push(`${profile.totalRamGB} GB RAM`);
+    if (profile.memory) parts.push(`${profile.memory.availableGB} GB available`);
+    if (profile.memory?.pressure && profile.memory.pressure !== 'unknown') parts.push(`pressure ${profile.memory.pressure}`);
+    if (loadedGb) parts.push(`model ~${loadedGb.toFixed(1)} GB resident`);
+    snapshot.recommendations = recommendations;
+    snapshot.machineProfileSummary = parts.length ? parts.join(' · ') : undefined;
+    return snapshot;
   }
 
   /**
@@ -775,12 +818,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
    * (last call's prompt+eval token count vs. its configured ceiling).
    */
   private async buildHwStatus(): Promise<HwStatus> {
-    // ollama.ps() is an HTTP call — cache it briefly so the ~1-3 s hardware push doesn't hit Ollama every tick.
-    const now = Date.now();
-    if (!this.psCache || now - this.psCache.at > 4000) {
-      this.psCache = { at: now, value: await this.ollama.ps().catch(() => []) };
-    }
-    const loaded = this.psCache.value;
+    const loaded = await this.loadedModelsCached();
     const snap = this.hwSampler.latest().sampledAtMs ? this.hwSampler.latest() : await this.hwSampler.sampleOnce();
     const cfg = getConfig();
     const active = this.activeSession();

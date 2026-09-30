@@ -104,6 +104,16 @@ export interface SettingsSnapshot {
   singleMessageSharePct: number;
   maxOutputTokens: number;
   maxOutputTokensCeiling: number;
+  /** Dynamic suggestions from util/recommendations.ts (recomputed on panel open / Refresh). */
+  recommendations: SettingRecommendation[];
+  /** Short read-only summary of the machine profile used for recommendations. */
+  machineProfileSummary?: string;
+}
+
+export interface SettingRecommendation {
+  settingKey: string;
+  recommended: number;
+  reason: string;
 }
 
 /** Item "ability to kill commands while they are running from the chat window" — see tools/backgroundProcessManager.ts. */
@@ -244,6 +254,7 @@ export type WebviewToExtensionMessage =
   | { type: 'listAllChats' }
   | { type: 'renameSession'; id: string; title: string }
   | { type: 'getSettings' }
+  | { type: 'refreshSettings' }
   | { type: 'updateSetting'; key: string; value: any }
   | { type: 'setSessionNumCtx'; numCtx: number | null }
   | { type: 'setWebSearchApiKey' }
