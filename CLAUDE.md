@@ -20,6 +20,7 @@ Forge is a VS Code extension (TypeScript, **zero runtime npm dependencies**) tha
    - A background operation that repeats (a matrix/suite of runs) **stops at the first failure** to diagnose it, never runs the remaining reps on a setup already shown broken — this is separate from the budget rule but was also missed once (2026-09-27, 6 wasted MLX runs behind one `pkill` that didn't match the actual server process). Diagnose, fix, confirm the fix with one run, then resume the rest.
 8. **Final acceptance test:** create a test repo *inside this repo* (`_devtools/e2e/`), have the harness (on Ornith) write a multi-file program in it, monitor the run, and keep improving the harness until it works well.
 9. **Accuracy over completeness for measurements.** A missing number is fine; a wrong number is not. Report failures and skipped steps faithfully.
+10. **Target hardware: M5 Max, 128 GB memory (owner rule, 2026-09-30).** Forge is built for this Mac; it has plenty of memory. Use generous limits for the model wherever a limit applies (output tokens, context window, step caps, file-read sizes, caches) — never a small default that cuts work short. Rule 4 (one model at a time, check memory, abort on pressure) still applies.
 
 ## Dev cycle — work so a usage-limit cutoff never loses progress
 

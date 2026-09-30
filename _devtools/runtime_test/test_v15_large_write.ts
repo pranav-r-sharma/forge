@@ -78,8 +78,9 @@ const workspace = () => {
 async function main() {
   vs.__resetConfig();
   ok(getConfig().maxOutputTokens === 0, 'default maxOutputTokens is 0 (auto)');
-  ok(resolveEffectiveMaxOutputTokens(0, 32768) === 16384, 'auto cap = min(context/2, 32768), at least 8192');
-  ok(resolveEffectiveMaxOutputTokens(0, 12000) === 8192, 'auto cap floors at 8192');
+  ok(resolveEffectiveMaxOutputTokens(0, 32768) === 16384, 'auto cap = context/2, at least 16384');
+  ok(resolveEffectiveMaxOutputTokens(0, 12000) === 16384, 'auto cap floors at 16384');
+  ok(resolveEffectiveMaxOutputTokens(0, 0) === 65536, 'auto with unknown context assumes 131072 → half floored at 16384');
   ok(resolveEffectiveMaxOutputTokens(6000, 32768) === 6000, 'explicit user cap is respected');
 
   const partial =

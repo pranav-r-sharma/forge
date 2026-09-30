@@ -220,13 +220,14 @@ export function getConfig(): ForgeConfig {
 
 /**
  * Effective max output tokens for one model reply. configured=0 means auto:
- * min(contextTokens/2, 32768), never below 8192. Explicit user values win.
+ * floor(contextTokens/2), never below 16384 (assumes 131072 context when contextTokens<=0).
+ * Explicit user values win.
  */
 export function resolveEffectiveMaxOutputTokens(configured: number, contextTokens: number): number {
   if (configured > 0) return configured;
-  const ctx = contextTokens > 0 ? contextTokens : 32768;
+  const ctx = contextTokens > 0 ? contextTokens : 131072;
   const half = Math.floor(ctx / 2);
-  return Math.min(Math.max(half, 8192), 32768);
+  return Math.max(half, 16384);
 }
 
 export async function setChatModel(model: string) {
