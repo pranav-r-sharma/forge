@@ -307,6 +307,8 @@ Unchanged (safety): loop detection, truncation nudge count (3), `HARD_MAX_SUBAGE
 
 **Traces:** `promptTotalTokens`, `promptSentTokens`, `prefillTokPerSec`, improved `cachedTokens` via `promptCacheMetricsForTrace()` (Ollama: estimated cache from `estPromptTokens` − `prompt_eval_count` when server omits cached).
 
+**Live benchmark (bridge task D, 2026-09-30, gpt-oss Q8):** `_devtools/bench/results/2026-09-30-prompt-cache.md` — append-only agent steps ~97% cache hit, ~15× prefill speedup vs cold ~6.7k prompt; early-message edit ~46% hit. `buildSystemPrompt` byte-stable across steps; `mlx_prompt_cache_bench.ts` added.
+
 ## Machine profile + recommended settings (2026-09-30)
 
 **Machine profile** (`src/util/hwSampler.ts` `readMachineProfile`): read-only sysctl/vm_stat/ioreg — `hw.memsize`, `machdep.cpu.brand_string`, `hw.perflevel0/1.physicalcpu`, memory pressure/swap/available, GPU util + in-use GB, `iogpu.wired_limit_mb` (0 → budget uses documented ~75% of RAM assumption). Optional resident model size from `ps()`.

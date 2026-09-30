@@ -1,0 +1,188 @@
+{
+  "hardware": "Apple M5, 32 GB",
+  "model": "gpt-oss-20b MXFP4-Q8",
+  "snapshot": "/Users/pranavsharma/.cache/huggingface/hub/models--mlx-community--gpt-oss-20b-MXFP4-Q8/snapshots/773a7da77e569019bb0fd17a554b263738d669a3",
+  "commit": "bcee0dc",
+  "memBefore": {
+    "totalGB": 32,
+    "usedGB": 13.4,
+    "availableGB": 18.6,
+    "cachedGB": 17.3,
+    "freeGB": 0.4,
+    "wiredGB": 2.4,
+    "compressedGB": 0.8,
+    "pageSize": 16384,
+    "swapUsedGB": 0.99,
+    "swapTotalGB": 2,
+    "pressure": "normal",
+    "pressureLevelPct": 89,
+    "source": "darwin",
+    "tsMs": 1790774960543
+  },
+  "freePctBefore": 58.12500000000001,
+  "memAfter": {
+    "totalGB": 32,
+    "usedGB": 9.7,
+    "availableGB": 22.3,
+    "cachedGB": 7.1,
+    "freeGB": 14.3,
+    "wiredGB": 2.3,
+    "compressedGB": 3.4,
+    "pageSize": 16384,
+    "swapUsedGB": 0.99,
+    "swapTotalGB": 2,
+    "pressure": "normal",
+    "pressureLevelPct": 81,
+    "source": "darwin",
+    "tsMs": 1790774997721
+  },
+  "serverArgs": [
+    "-m",
+    "mlx_lm.server",
+    "--model",
+    "/Users/pranavsharma/.cache/huggingface/hub/models--mlx-community--gpt-oss-20b-MXFP4-Q8/snapshots/773a7da77e569019bb0fd17a554b263738d669a3",
+    "--host",
+    "127.0.0.1",
+    "--port",
+    "8127",
+    "--log-level",
+    "WARNING",
+    "--prompt-cache-bytes",
+    "34359738368"
+  ],
+  "prefixCheck": {
+    "identical": true,
+    "step1Bytes": 14692,
+    "step2Bytes": 14692
+  },
+  "logsTail": [
+    "127.0.0.1 - - [30/Sep/2026 09:29:41] \"POST /v1/chat/completions HTTP/1.1\" 200 -",
+    "127.0.0.1 - - [30/Sep/2026 09:29:45] \"POST /v1/chat/completions HTTP/1.1\" 200 -",
+    "127.0.0.1 - - [30/Sep/2026 09:29:48] \"POST /v1/chat/completions HTTP/1.1\" 200 -",
+    "127.0.0.1 - - [30/Sep/2026 09:29:49] \"POST /v1/chat/completions HTTP/1.1\" 200 -",
+    "127.0.0.1 - - [30/Sep/2026 09:29:51] \"POST /v1/chat/completions HTTP/1.1\" 200 -"
+  ],
+  "procsAfter": [],
+  "rows": [
+    {
+      "label": "R1-req1 cold+history",
+      "promptTotal": 6687,
+      "cached": 0,
+      "evaluated": 6687,
+      "prefillMs": 7058,
+      "prefillTokPerSec": 947,
+      "decodeTokPerSec": 34.8,
+      "hitPct": 0
+    },
+    {
+      "label": "R1-req2 append tool1",
+      "promptTotal": 6922,
+      "cached": 6686,
+      "evaluated": 236,
+      "prefillMs": 461,
+      "prefillTokPerSec": 512,
+      "decodeTokPerSec": 34,
+      "hitPct": 97
+    },
+    {
+      "label": "R1-req3 append tool2",
+      "promptTotal": 7118,
+      "cached": 6921,
+      "evaluated": 197,
+      "prefillMs": 433,
+      "prefillTokPerSec": 455,
+      "decodeTokPerSec": 35.1,
+      "hitPct": 97
+    },
+    {
+      "label": "R1-control early-msg edit (cache miss)",
+      "promptTotal": 7122,
+      "cached": 3283,
+      "evaluated": 3839,
+      "prefillMs": 2936,
+      "prefillTokPerSec": 1308,
+      "decodeTokPerSec": 35.2,
+      "hitPct": 46
+    },
+    {
+      "label": "R2-req1 cold+history",
+      "promptTotal": 6687,
+      "cached": 6686,
+      "evaluated": 1,
+      "prefillMs": 145,
+      "prefillTokPerSec": 7,
+      "decodeTokPerSec": 35.6,
+      "hitPct": 100
+    },
+    {
+      "label": "R2-req2 append tool1",
+      "promptTotal": 6922,
+      "cached": 6686,
+      "evaluated": 236,
+      "prefillMs": 452,
+      "prefillTokPerSec": 522,
+      "decodeTokPerSec": 35.3,
+      "hitPct": 97
+    },
+    {
+      "label": "R2-req3 append tool2",
+      "promptTotal": 7118,
+      "cached": 6921,
+      "evaluated": 197,
+      "prefillMs": 445,
+      "prefillTokPerSec": 443,
+      "decodeTokPerSec": 35.2,
+      "hitPct": 97
+    },
+    {
+      "label": "R2-control early-msg edit (cache miss)",
+      "promptTotal": 7122,
+      "cached": 3283,
+      "evaluated": 3839,
+      "prefillMs": 2931,
+      "prefillTokPerSec": 1310,
+      "decodeTokPerSec": 35,
+      "hitPct": 46
+    },
+    {
+      "label": "R3-req1 cold+history",
+      "promptTotal": 6687,
+      "cached": 3283,
+      "evaluated": 3404,
+      "prefillMs": 2615,
+      "prefillTokPerSec": 1302,
+      "decodeTokPerSec": 35.5,
+      "hitPct": 49
+    },
+    {
+      "label": "R3-req2 append tool1",
+      "promptTotal": 6922,
+      "cached": 6686,
+      "evaluated": 236,
+      "prefillMs": 456,
+      "prefillTokPerSec": 518,
+      "decodeTokPerSec": 35.2,
+      "hitPct": 97
+    },
+    {
+      "label": "R3-req3 append tool2",
+      "promptTotal": 7118,
+      "cached": 6921,
+      "evaluated": 197,
+      "prefillMs": 435,
+      "prefillTokPerSec": 453,
+      "decodeTokPerSec": 29.5,
+      "hitPct": 97
+    },
+    {
+      "label": "R3-control early-msg edit (cache miss)",
+      "promptTotal": 7122,
+      "cached": 3283,
+      "evaluated": 3839,
+      "prefillMs": 3154,
+      "prefillTokPerSec": 1217,
+      "decodeTokPerSec": 35.2,
+      "hitPct": 46
+    }
+  ]
+}
