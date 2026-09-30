@@ -715,6 +715,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       mlxPromptCacheSize: cfg.mlxPromptCacheSize,
       maxContextFileKB: cfg.maxContextFileKB,
       singleMessageSharePct: cfg.singleMessageSharePct,
+      maxOutputTokens: cfg.maxOutputTokens,
     };
   }
 

@@ -195,6 +195,9 @@ export function formatIncompleteActionNudge(raw: string, lengthTruncated: boolea
   if (target) {
     if (target.path) {
       const cutOff = lengthTruncated || !fenceClosed;
+      if (cutOff && lengthTruncated && target.tool === 'write_file') {
+        return `[System check] Your reply was cut off by the output-length limit while writing \`${target.path}\`. Do NOT resend the entire file from the start — that will hit the same limit again. Write it in smaller parts: first \`write_file\` with {"path":"${target.path}","content":"..."} for the initial chunk, then add more with {"path":"${target.path}","content":"...","append":true}. For files over ~300 lines, plan on multiple append steps. Finish \`${target.path}\` now using that approach.${INCOMPLETE_NUDGE_REASONING_HINT}`;
+      }
       if (cutOff) {
         return `[System check] You were in the middle of ${target.tool} on \`${target.path}\` and the reply was cut off. Finish that exact action on \`${target.path}\` now, in one forge_action block. Do not move on to a different file or action until it is done.${INCOMPLETE_NUDGE_REASONING_HINT}`;
       }

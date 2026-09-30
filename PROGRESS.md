@@ -263,3 +263,11 @@ Three commits (`d912e59`, `720e092`, `fc20381`) close the harness gap found in t
 - **t09 cycle 5:** INCOMPLETE — SIGTERM at 543.7 s / 61 iters (not a valid attempt). Evidence: checker false positive on `python3 main.py -h` as per-file check (unfixed); early "No changes" again (verify); task-command nudge + model re-running spec forms. Evidence: `t09-harder-build-gptossq8-cycle5.*`. Logged in `_devtools/e2e/ITERATION_LOG.md`.
 
 **Last updated:** 2026-09-27 19:47 (t09 cycle 5 re-run logged; MLX library + harness fixes; next: t09 cycle 6 new sitting)
+
+## Large-file write truncation fix (2026-09-30)
+
+**Root cause (confirmed):** `forge.maxOutputTokens` defaulted to 4096 and thinking/eval tokens share that cap; a single `write_file` with large `content` hits `finishReason: length`. Recovery nudges said “finish that exact action” so the model resent the whole file, hit the same cap, and after three nudges the run ended (`incomplete-action-cap`) with nothing written.
+
+**Fix:** `maxOutputTokens` default **0 = auto** (`resolveEffectiveMaxOutputTokens`: min(context/2, 32768), floor 8192) — always sent on agent chat, never MLX’s 512 default. `write_file` gains **`append: true`** for chunked writes; tool schema + system prompt document ~300+ line files. Length-truncated `write_file` nudges tell the model not to resend the whole file and to use append. Settings panel: `forge.maxOutputTokens` wired like other globals.
+
+**Tests:** `_devtools/runtime_test/test_v15_large_write.ts` (15 checks); truncation tests updated. `npm test`: **41/42 files, 1590 passed / 1 failed** (pre-existing: `test_v15_trace.ts` “write_file records no redundancy flag”). Typecheck + compile clean.

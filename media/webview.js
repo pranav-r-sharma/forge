@@ -578,6 +578,7 @@
       ${sessionModelSettingRow()}
       <div class="settings-section-title">Global defaults</div>
       ${settingRow('Context window (global)', 'Applies to all chats that do not have their own context override. For MLX and OpenAI-compatible runtimes this is forge.mlx.contextTokens; for Ollama it is forge.numCtx.', `<input id="set-numCtx" type="number" min="512" step="512" value="${s.numCtx}" />`)}
+      ${settingRow('Max output tokens per reply', '0 = auto (half the context window, at least 8192, capped at 32768). Thinking tokens count too. Never leaves the limit unset — mlx_lm.server defaults to 512.', `<input id="set-maxOutputTokens" type="number" min="0" step="512" value="${s.maxOutputTokens}" />`)}
       ${settingRow('Temperature', '', `<input id="set-temperature" type="number" min="0" max="2" step="0.1" value="${s.temperature}" />`)}
       ${settingRow('Keep model loaded (minutes)', '-1 = never unload between messages, 0 = Ollama default (~5 min).', `<input id="set-keepAliveMinutes" type="number" step="1" value="${s.keepAliveMinutes}" />`)}
       ${settingRow('Require approval for file edits', '', `<input id="set-requireApprovalForWrites" type="checkbox" ${s.requireApprovalForWrites ? 'checked' : ''} />`)}
@@ -649,7 +650,7 @@
         vscodeApi.postMessage({ type: 'setSessionNumCtx', numCtx: v });
       });
     }
-    for (const key of ['numCtx', 'temperature', 'keepAliveMinutes', 'subAgentMaxIterations', 'maxAgentIterations', 'autoModeMaxIterations', 'maxSubAgentDepth']) {
+    for (const key of ['numCtx', 'maxOutputTokens', 'temperature', 'keepAliveMinutes', 'subAgentMaxIterations', 'maxAgentIterations', 'autoModeMaxIterations', 'maxSubAgentDepth']) {
       document.getElementById(`set-${key}`).addEventListener('change', (e) => {
         const num = parseFloat(e.target.value);
         if (Number.isFinite(num)) vscodeApi.postMessage({ type: 'updateSetting', key, value: num });

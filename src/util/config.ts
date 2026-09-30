@@ -69,7 +69,7 @@ export interface ForgeConfig {
   contextAppendOnly: boolean;
   /** Thinking mode for chat/agent calls on runtimes that support it (MLX): 'default' = the model's own default, 'off' = faster tool steps, 'on' = force. */
   thinking: 'default' | 'off' | 'on' | 'auto';
-  /** Output-token limit per model reply (0 = the runtime's own default, which can be as low as 512 on MLX and silently cuts replies short). */
+  /** Output-token limit per model reply (0 = auto: derived from the context window via resolveEffectiveMaxOutputTokens — never the runtime default, which can be 512 on MLX). */
   maxOutputTokens: number;
   /** Ask the model for one-sentence tool steps and short final answers (generated tokens dominate step time on local models). */
   terseSteps: boolean;
@@ -193,7 +193,7 @@ export function getConfig(): ForgeConfig {
     contextAppendOnly: cfg.get<boolean>('context.appendOnly') ?? true,
     thinking: ((v) => (v === 'off' || v === 'on' || v === 'auto' ? v : 'auto'))(cfg.get<string>('thinking')),
     terseSteps: cfg.get<boolean>('terseSteps') ?? true,
-    maxOutputTokens: Math.max(0, Math.floor(cfg.get<number>('maxOutputTokens') ?? 4096)),
+    maxOutputTokens: Math.max(0, Math.floor(cfg.get<number>('maxOutputTokens') ?? 0)),
     contextHighWaterPct: cfg.get<number>('context.highWaterPct') ?? 75,
     contextLowWaterPct: cfg.get<number>('context.lowWaterPct') ?? 45,
     structuredOutputEnabled: cfg.get<boolean>('structuredOutput.enabled') ?? false,
@@ -216,6 +216,17 @@ export function getConfig(): ForgeConfig {
     webSearchMaxFetchChars: cfg.get<number>('webSearch.maxFetchChars') ?? 500_000,
     webSearchSearxngUrl: cfg.get<string>('webSearch.searxngUrl') || '',
   };
+}
+
+/**
+ * Effective max output tokens for one model reply. configured=0 means auto:
+ * min(contextTokens/2, 32768), never below 8192. Explicit user values win.
+ */
+export function resolveEffectiveMaxOutputTokens(configured: number, contextTokens: number): number {
+  if (configured > 0) return configured;
+  const ctx = contextTokens > 0 ? contextTokens : 32768;
+  const half = Math.floor(ctx / 2);
+  return Math.min(Math.max(half, 8192), 32768);
 }
 
 export async function setChatModel(model: string) {
@@ -272,6 +283,7 @@ export const SETTINGS_PANEL_KEYS = [
   'mlx.promptCacheSize',
   'maxContextFileKB',
   'singleMessageSharePct',
+  'maxOutputTokens',
 ] as const;
 export type SettingsPanelKey = (typeof SETTINGS_PANEL_KEYS)[number];
 

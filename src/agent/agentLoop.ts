@@ -17,7 +17,7 @@ import { PendingEditManager } from '../tools/editApply';
 import { ApprovalBroker } from './approvalBroker';
 import { ForgeMode, isAutonomousMode, toolsAllowedInMode } from './modes';
 import { HookRunner } from '../forge/hooks';
-import { getConfig } from '../util/config';
+import { getConfig, resolveEffectiveMaxOutputTokens } from '../util/config';
 import { logger } from '../util/logger';
 import { resolveWorkspacePath, toRelative } from '../util/paths';
 import { CompactionCache, PromptViewState, hardCapOversizedMessages, maybeCompact, pruneStaleReadsView, updateCharsPerToken, updatePromptView, DEFAULT_CHARS_PER_TOKEN } from './contextManager';
@@ -627,7 +627,7 @@ export async function runAgentTurn(
         keepAliveMinutes: keepAliveOpt(cfg.keepAliveMinutes),
         format: structuredOutputEnabled ? STRUCTURED_RESPONSE_SCHEMA : undefined,
         thinking: thinkingForStep(cfg.thinking, failedRunsInARow),
-        maxTokens: cfg.maxOutputTokens > 0 ? cfg.maxOutputTokens : undefined,
+        maxTokens: resolveEffectiveMaxOutputTokens(cfg.maxOutputTokens, numCtx),
         onToken: (token) => emit({ type: 'token', text: token }),
         onMetrics: (metrics) => {
           iterState.metrics = metrics;

@@ -102,6 +102,7 @@ export interface SettingsSnapshot {
   mlxPromptCacheSize: number;
   maxContextFileKB: number;
   singleMessageSharePct: number;
+  maxOutputTokens: number;
 }
 
 /** Item "ability to kill commands while they are running from the chat window" — see tools/backgroundProcessManager.ts. */

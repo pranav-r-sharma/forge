@@ -295,9 +295,9 @@
         },
         "forge.maxOutputTokens": {
           "type": "number",
-          "default": 4096,
+          "default": 0,
           "minimum": 0,
-          "description": "Maximum tokens per model reply in the agent loop (thinking tokens count too). 0 = the runtime's own default, which can be very low (mlx_lm.server defaults to 512) and used to cut replies off mid-thought. If a reply is still cut off, Forge asks the model to continue instead of treating it as finished."
+          "description": "Maximum tokens per model reply in the agent loop (thinking tokens count too). 0 = auto: derived from the context window (half the window, at least 8192, capped at 32768) — never the runtime default (mlx_lm.server defaults to 512). Set an explicit value to override. If a reply is still cut off, Forge asks the model to continue (and to use write_file append for large files) instead of treating it as finished."
         },
         "forge.thinking": {
           "type": "string",

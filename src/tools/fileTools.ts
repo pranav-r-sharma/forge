@@ -318,6 +318,7 @@ export async function writeFileTool(args: Record<string, any>, ctx: ToolExecCont
   const existing = await ctx.readEffective(uri);
   const hasSearchReplace = typeof args.search === 'string' && typeof args.replace === 'string';
   const isDelete = args.delete === true;
+  const isAppend = args.append === true;
 
   if (isDelete) {
     if (existing === undefined) return { ok: false, content: `Cannot delete "${relPath}": file does not exist.` };
@@ -382,8 +383,20 @@ export async function writeFileTool(args: Record<string, any>, ctx: ToolExecCont
     if (r.info) extraNotes.push(r.info);
     srNoChange = { search: args.search, replace: args.replace, matchedLineRange: r.matchedLineRange };
   } else if (typeof args.content === 'string') {
-    newText = args.content;
-    kind = existing === undefined ? 'create' : 'modify';
+    if (isAppend) {
+      if (hasEdits || hasSearchReplace) {
+        return { ok: false, content: 'write_file: "append":true cannot be combined with search/replace or edits — send only {"path","content","append":true}.' };
+      }
+      if (existing === undefined) {
+        return { ok: false, content: `Cannot append to "${relPath}": file does not exist yet. Use write_file with "content" (no append) to create the first chunk.` };
+      }
+      newText = existing + args.content;
+      kind = 'modify';
+      extraNotes.push('Appended to existing file content.');
+    } else {
+      newText = args.content;
+      kind = existing === undefined ? 'create' : 'modify';
+    }
   } else {
     return {
       ok: false,

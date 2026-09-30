@@ -36,7 +36,7 @@ export const TOOL_SPECS: ToolSpec[] = [
   {
     name: 'write_file',
     describe:
-      'Propose a file change. Either {"path","content"} to create/fully rewrite a file, or {"path","search","replace"} to replace one exact, unique snippet in an existing file (preferred for small edits — cheaper and safer than a full rewrite). To change SEVERAL places in one file use ONE call: {"path","edits":[{"search","replace"},…]} (applied in order, all-or-nothing). To replace EVERY occurrence of a string in a file (e.g. renaming a symbol) add {"all": true} to a search/replace. Add {"delete": true} to delete a file. Changes are staged for the user\'s review, not written immediately.',
+      'Propose a file change. Either {"path","content"} to create/fully rewrite a file, or {"path","search","replace"} to replace one exact, unique snippet in an existing file (preferred for small edits — cheaper and safer than a full rewrite). For large new files (over ~300 lines), write the first part with {"path","content"}, then add the rest in further calls with {"path","content","append":true} (each chunk must fit in one reply). To change SEVERAL places in one file use ONE call: {"path","edits":[{"search","replace"},…]} (applied in order, all-or-nothing). To replace EVERY occurrence of a string in a file (e.g. renaming a symbol) add {"all": true} to a search/replace. Add {"delete": true} to delete a file. Changes are staged for the user\'s review, not written immediately.',
     exampleArgs: { path: 'src/utils.ts', search: 'function old() {}', replace: 'function old() {\n  return 1;\n}' },
     run: writeFileTool,
   },

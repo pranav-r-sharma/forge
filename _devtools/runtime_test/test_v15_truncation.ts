@@ -14,7 +14,7 @@ import { PendingEditManager } from '../../src/tools/editApply';
 import { HookRunner } from '../../src/forge/hooks';
 import { TaskLedger } from '../../src/agent/taskLedger';
 import { TraceWriter, tracePathFor } from '../../src/agent/traceLog';
-import { getConfig } from '../../src/util/config';
+import { getConfig, resolveEffectiveMaxOutputTokens } from '../../src/util/config';
 import { AgentEvent } from '../../src/agent/types';
 
 let passed = 0;
@@ -56,9 +56,9 @@ function scripted(replies: [string, string][]) {
 async function main() {
   // config defaults
   vs.__resetConfig();
-  ok(getConfig().maxOutputTokens === 4096 && getConfig().thinking === 'auto', "defaults: 4096 output tokens per reply, thinking = 'auto' (fast until stuck)");
-  vs.__setConfig({ 'forge.maxOutputTokens': 0, 'forge.thinking': 'off' });
-  ok(getConfig().maxOutputTokens === 0 && getConfig().thinking === 'off', 'settings are read (0 = runtime default, thinking off)');
+  ok(getConfig().maxOutputTokens === 0 && getConfig().thinking === 'auto', "defaults: maxOutputTokens=0 (auto), thinking = 'auto' (fast until stuck)");
+  vs.__setConfig({ 'forge.maxOutputTokens': 8192, 'forge.thinking': 'off' });
+  ok(getConfig().maxOutputTokens === 8192 && getConfig().thinking === 'off', 'settings are read (explicit output cap, thinking off)');
   vs.__setConfig({ 'forge.maxOutputTokens': -5, 'forge.thinking': 'garbage' });
   ok(getConfig().maxOutputTokens === 0 && getConfig().thinking === 'auto', 'negative / garbled values degrade safely');
   vs.__resetConfig();
@@ -67,11 +67,12 @@ async function main() {
   {
     const m = scripted([['done', 'stop']]);
     await runAgentTurn([], 'go', deps(workspace(), m), () => {}, new vscode.CancellationTokenSource().token, 'fake', { mode: 'auto' });
-    ok(m.seen[0].maxTokens === 4096 && m.seen[0].thinking === false, "the agent loop sends the configured output limit; with the default 'auto', thinking starts OFF (fast)");
-    vs.__setConfig({ 'forge.maxOutputTokens': 0, 'forge.thinking': 'off' });
+    const autoCap = resolveEffectiveMaxOutputTokens(0, getConfig().numCtx);
+    ok(m.seen[0].maxTokens === autoCap && m.seen[0].thinking === false, "the agent loop sends the auto-derived output limit; with the default 'auto', thinking starts OFF (fast)");
+    vs.__setConfig({ 'forge.maxOutputTokens': 6000, 'forge.thinking': 'off' });
     const m2 = scripted([['done', 'stop']]);
     await runAgentTurn([], 'go', deps(workspace(), m2), () => {}, new vscode.CancellationTokenSource().token, 'fake', { mode: 'auto' });
-    ok(m2.seen[0].maxTokens === undefined && m2.seen[0].thinking === false, 'maxOutputTokens=0 sends no limit; thinking=off is sent as thinking:false');
+    ok(m2.seen[0].maxTokens === 6000 && m2.seen[0].thinking === false, 'explicit maxOutputTokens is sent; thinking=off is sent as thinking:false');
     vs.__resetConfig();
   }
 
@@ -80,7 +81,7 @@ async function main() {
     const partial = '```forge_action\n{"tool":"write_file","args":{"path":"src/discounts.py","content":"def apply(';
     const m = scripted([[partial, 'length'], ['done', 'stop']]);
     await runAgentTurn([], 'go', deps(workspace(), m), () => {}, new vscode.CancellationTokenSource().token, 'fake', { mode: 'auto' });
-    ok(/src\/discounts\.py/.test(m.seen[1].last) && /Finish that exact action on `src\/discounts\.py`/.test(m.seen[1].last), 'the length-truncation nudge names the exact file that was left unfinished');
+    ok(/src\/discounts\.py/.test(m.seen[1].last) && /append/.test(m.seen[1].last), 'the length-truncation nudge names the file and tells the model to use append');
   }
 
   // a truncated reply is answered with "continue", then the run proceeds normally

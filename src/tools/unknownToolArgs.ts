@@ -7,7 +7,7 @@ export const BUILTIN_TOOL_ARG_NAMES: Record<string, readonly string[]> = {
   list_dir: ['path', 'depth'],
   search_code: ['query', 'pattern', 'glob'],
   search_codebase: ['query', 'k'],
-  write_file: ['path', 'file', 'content', 'search', 'replace', 'edits', 'all', 'delete'],
+  write_file: ['path', 'file', 'content', 'search', 'replace', 'edits', 'all', 'delete', 'append'],
   run_command: ['command', 'cwd', 'background', 'timeout_ms'],
   check_background_command: ['id', 'action'],
   get_problems: ['path', 'file'],
