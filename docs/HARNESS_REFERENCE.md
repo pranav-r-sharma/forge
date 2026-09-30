@@ -220,9 +220,11 @@ Model reply (no tool)
 
 ## 4. Known conflicts / open issues
 
+Verified by reviewer 2026-09-30: row 1 re-classified (false positive).
+
 | Sev | Issue | Scenario | Evidence | Suggested fix (not implemented in audit) |
 |-----|-------|----------|----------|----------------------------------------|
-| **bug** | Send path health check always uses Ollama | User sets `provider=mlx`, Ollama stopped → send may fail before MLX is tried | `chatSession.ts` ~486 `this.services.ollama.health()` | Route health through `SwitchableProvider` / active runtime |
+| **cosmetic** | Send-path health error toast always mentions Ollama | User on MLX (or other active provider) sees misleading toast if health fails | `services.ollama` is `SwitchableProvider` (`extension.ts` ~80); `health()` routes to active runtime; toast at `chatSession.ts` ~488 always says “Can't reach Ollama … Run ollama serve” | Word the error message by active provider |
 | **risk** | Shared `truncationNudges` | Model emits 3 foreign-format attempts then hits length truncation → cap failure without incomplete recovery | `agentLoop.ts` 584, 724–728, 750–753 | Split counters or prioritize length over foreign |
 | **risk** | Assistant “done” before verify fail | Model final text pushed (~859) then verify fails → transcript shows success wording while loop continues | `agentLoop.ts` 859–899 | Defer `pushAssistant` until verify passes, or insert corrective stub |
 | **risk** | Session verify ignores `turnWroteFiles` | Outcome chat sets verify cmd; model answers without edits → verify still runs | `verifyBeforeDone.ts` 205–208 (session wins before write check) | Document as intentional or gate session verify on writes |
