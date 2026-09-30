@@ -222,7 +222,7 @@ export function getConfig(): ForgeConfig {
     contextLowWaterPct: cfg.get<number>('context.lowWaterPct') ?? 45,
     structuredOutputEnabled: cfg.get<boolean>('structuredOutput.enabled') ?? false,
     planFirstEnabled: cfg.get<boolean>('planFirst.enabled') ?? false,
-    requirementsEnabled: cfg.get<boolean>('requirements.enabled') ?? true,
+    requirementsEnabled: cfg.get<boolean>('requirements.enabled') ?? false,
     requirementsMaxNudges: Math.max(0, Math.floor(cfg.get<number>('requirements.maxNudges') ?? 2)),
     requirementsShowInPrompt: cfg.get<boolean>('requirements.showInPrompt') ?? true,
     requirementsLlmExtract: cfg.get<boolean>('requirements.llmExtract') ?? false,

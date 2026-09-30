@@ -42,7 +42,7 @@ import {
   findRequirementsGateGaps,
   findRequirementsNudgeGaps,
   formatRequirementsGateNudge,
-  injectRequirementsIntoPromptView,
+  extendRequirementsPromptView,
   renderRequirementsChecklistForPrompt,
   requirementGateMarkers,
   declinedRequirementNotes,
@@ -529,6 +529,7 @@ export async function runAgentTurn(
   /** Builds the trimmed view actually sent to Ollama — never mutates `messages`, the archival/persisted transcript. See contextManager.ts. */
   let lastViewEvent: 'mask' | 'compact' | undefined;
   let lastEstTokens: number | undefined;
+  let requirementsPromptView: ChatMessage[] | undefined;
   async function buildPromptView(): Promise<ChatMessage[]> {
     lastViewEvent = undefined;
     if (cfg.contextAppendOnly) {
@@ -545,11 +546,15 @@ export async function runAgentTurn(
       compactionCache = r.state;
       lastViewEvent = r.event?.kind;
       lastEstTokens = r.estTokens;
+      if (r.event) {
+        requirementsPromptView = undefined;
+      }
       let view = r.view;
       if (requirementsActive && cfg.requirementsShowInPrompt && requirementsState) {
         requirementsState = updateRequirementsFromMessages(requirementsState, messages);
         const checklist = renderRequirementsChecklistForPrompt(requirementsState);
-        view = injectRequirementsIntoPromptView(view, checklist);
+        view = extendRequirementsPromptView(requirementsPromptView, view, checklist);
+        requirementsPromptView = view;
       }
       return view;
     }
@@ -560,7 +565,8 @@ export async function runAgentTurn(
     if (requirementsActive && cfg.requirementsShowInPrompt && requirementsState) {
       requirementsState = updateRequirementsFromMessages(requirementsState, messages);
       const checklist = renderRequirementsChecklistForPrompt(requirementsState);
-      view = injectRequirementsIntoPromptView(view, checklist);
+      view = extendRequirementsPromptView(requirementsPromptView, view, checklist);
+      requirementsPromptView = view;
     }
     return view;
   }

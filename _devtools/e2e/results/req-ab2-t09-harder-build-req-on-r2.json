@@ -1,0 +1,62 @@
+{
+  "task": "t09-harder-build",
+  "provider": "mlx",
+  "model": "773a7da77e569019bb0fd17a554b263738d669a3",
+  "thinking": "auto",
+  "ctx": 32768,
+  "appendOnly": true,
+  "requirementsEnabled": true,
+  "maxIters": 80,
+  "timeoutS": 1200,
+  "startedAt": "2026-09-30T18:16:51.689Z",
+  "hardware": "Apple M5, 32 GB",
+  "memoryBeforeGB": {
+    "used": 10.6,
+    "available": 21.4
+  },
+  "serverReadyS": 2.085,
+  "agentError": "Could not reach the MLX (mlx_lm.server) at http://127.0.0.1:8126. Is it running?",
+  "wallS": 72.638,
+  "checkExit": 1,
+  "checkOutput": "",
+  "protectedTouched": [],
+  "filesChanged": [
+    "inventory/__init__.py",
+    "inventory/models.py"
+  ],
+  "pass": false,
+  "finalText": "",
+  "iterations": 6,
+  "tools": {
+    "write_file": 2
+  },
+  "toolFailures": 0,
+  "redundantReads": 0,
+  "reads": 0,
+  "viewEvents": 0,
+  "modelS": 104.3,
+  "toolS": 0,
+  "tokensEvaluated": 11587,
+  "tokensCached": 14232,
+  "cacheHitPct": 55.1,
+  "evalTokens": 3059,
+  "promptCharsMax": 23091,
+  "hw": {
+    "minAvailableGB": 9.2,
+    "maxSwapGB": 1.98,
+    "gpuPeakPct": 100
+  },
+  "tracePath": "_devtools/e2e/results/req-ab2-t09-harder-build-req-on-r2.trace.jsonl",
+  "requirementsNudges": 0,
+  "requirementsFinal": {
+    "total": 22,
+    "done": 2,
+    "open": 20,
+    "declined": 0
+  },
+  "falseDone": false,
+  "memoryAfterGB": {
+    "used": 14.4,
+    "available": 17.6
+  }
+}

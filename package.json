@@ -429,7 +429,7 @@
         },
         "forge.requirements.enabled": {
           "type": "boolean",
-          "default": true,
+          "default": false,
           "description": "Extract numbered requirements from the user's message, show a live checklist at the tail of each agent step, and nudge before accepting a final answer if items lack evidence."
         },
         "forge.requirements.maxNudges": {

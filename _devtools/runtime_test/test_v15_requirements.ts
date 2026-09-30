@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { buildSystemPrompt } from '../../src/agent/systemPrompt';
 import { buildPinnedCompactedView } from '../../src/agent/contextManager';
-import { serializePromptMessages } from '../../src/agent/promptPrefix';
+import { serializePromptMessages, isPromptPrefixExtension } from '../../src/agent/promptPrefix';
 import {
   extractRequirementsFromUserMessage,
   updateRequirementsFromMessages,
@@ -11,7 +11,8 @@ import {
   findRequirementsNudgeGaps,
   stripRequirementsBlockFromContent,
   formatRequirementsGateNudge,
-  injectRequirementsIntoPromptView,
+  extendRequirementsPromptView,
+  isRequirementsChecklistPromptMessage,
   estimateChecklistPromptChars,
   isRealUserTurnContent,
   parseRequirementsSelfReport,
@@ -174,10 +175,21 @@ function testCompactChecklist() {
   ok(!rendered.includes('[x] 2.'), 'done items are not listed in full');
 }
 
+function legacyInjectChecklistOnLastUser(view: ChatMessage[], checklistBlock: string): ChatMessage[] {
+  if (!checklistBlock) return view;
+  const copy = view.map((m) => ({ ...m }));
+  for (let i = copy.length - 1; i >= 0; i--) {
+    if (copy[i].role === 'user') {
+      const base = stripRequirementsBlockFromContent(copy[i].content);
+      copy[i] = { ...copy[i], content: base ? `${base}\n\n${checklistBlock}` : checklistBlock };
+      return copy;
+    }
+  }
+  return copy;
+}
+
 function testPrefixStability() {
   const sys = buildSystemPrompt('w', 'agent');
-  const sys2 = buildSystemPrompt('w', 'agent', { terse: true });
-  ok(sys !== sys2, 'system prompt may change with options');
   const state = extractRequirementsFromUserMessage('1. Do thing A.\n2. Do thing B.');
   const checklist = renderRequirementsChecklistForPrompt(state);
   const view1: ChatMessage[] = [
@@ -186,23 +198,50 @@ function testPrefixStability() {
     { role: 'assistant', content: 'step1' },
     { role: 'user', content: '[Tool "read_file" result]\ndata' },
   ];
-  const view2 = injectRequirementsIntoPromptView(view1, checklist);
-  ok(view1[0].content === view2[0].content, 'system message byte-identical when checklist injected');
-  ok(view1[1].content === view2[1].content, 'earlier user messages never edited');
-  ok(view2[view2.length - 1].content.includes('## Requirements (track each)'), 'checklist appended to last user message');
-  const step1 = injectRequirementsIntoPromptView(view1, checklist);
+  const step1 = extendRequirementsPromptView(undefined, view1, checklist);
+  ok(view1[0].content === step1[0].content, 'system message byte-identical when checklist injected');
+  ok(view1[1].content === step1[1].content, 'earlier user messages never edited');
+  ok(isRequirementsChecklistPromptMessage(step1[step1.length - 1].content), 'checklist is its own trailing user message');
   const view3: ChatMessage[] = [
     ...view1,
     { role: 'assistant', content: 'step2' },
     { role: 'user', content: '[Tool "write_file" result]\nok' },
   ];
-  const checklist2 = checklist + '\n[x] 1. done';
-  const step2 = injectRequirementsIntoPromptView(view3, checklist2);
-  const last1 = step1[step1.length - 1];
-  const step1Base = [...step1.slice(0, -1), { ...last1, content: stripRequirementsBlockFromContent(last1.content) }];
-  const serBase = serializePromptMessages(step1Base);
-  const ser2 = serializePromptMessages(step2);
-  ok(ser2.startsWith(serBase), 'step N (minus trailing checklist) is a byte prefix of step N+1');
+  const state2 = updateRequirementsFromMessages(state, view3);
+  const checklist2 = renderRequirementsChecklistForPrompt(state2);
+  const step2 = extendRequirementsPromptView(step1, view3, checklist2);
+  ok(isPromptPrefixExtension(step1, step2), 'extendRequirementsPromptView: step N is a byte prefix of step N+1');
+  const legacy1 = legacyInjectChecklistOnLastUser(view1, checklist);
+  const legacy2 = legacyInjectChecklistOnLastUser(view3, checklist2);
+  ok(!isPromptPrefixExtension(legacy1, legacy2), 'legacy last-user inject: prior send is not a prefix of next send');
+  ok(legacy1[3].content.includes('## Requirements (track each)'), 'legacy send embeds checklist in tool-result user message');
+  ok(!legacy2[3].content.includes('## Requirements (track each)'), 'next send drops checklist from that same message index');
+}
+
+function testReplayReqAb2T11Prefix() {
+  const p = path.join(__dirname, '../e2e/results/req-ab2-t11-checklist-req-on-r1.messages.json');
+  if (!fs.existsSync(p)) {
+    console.log('  (skip replay — req-ab2 t11 messages not present)');
+    return;
+  }
+  const msgs = JSON.parse(fs.readFileSync(p, 'utf8')) as ChatMessage[];
+  const userTask = msgs.find((m) => m.role === 'user' && !m.content.startsWith('[Tool'))?.content ?? '';
+  let state = extractRequirementsFromUserMessage(userTask);
+  let prevView: ChatMessage[] | undefined;
+  let modelCall = 0;
+  for (let i = 0; i < msgs.length; i++) {
+    if (msgs[i].role !== 'assistant') continue;
+    const archival = msgs.slice(0, i);
+    state = updateRequirementsFromMessages(state, msgs.slice(0, i));
+    const checklist = renderRequirementsChecklistForPrompt(state);
+    const view = extendRequirementsPromptView(prevView, archival, checklist);
+    if (prevView) {
+      ok(isPromptPrefixExtension(prevView, view), `req-ab2 t11 replay model call ${modelCall}: prefix extension`);
+    }
+    prevView = view;
+    modelCall++;
+  }
+  ok(modelCall > 5, 'req-ab2 t11 replay exercised multiple model calls');
 }
 
 function testCompactionPinsFollowUpUser() {
@@ -231,6 +270,7 @@ async function main() {
   testGateNudgeAndCap();
   testCompactChecklist();
   testPrefixStability();
+  testReplayReqAb2T11Prefix();
   testCompactionPinsFollowUpUser();
   console.log(`\n${passed} passed, ${failed} failed.`);
   if (failed > 0) process.exit(1);

@@ -1,0 +1,60 @@
+{
+  "task": "t11-checklist",
+  "provider": "mlx",
+  "model": "773a7da77e569019bb0fd17a554b263738d669a3",
+  "thinking": "auto",
+  "ctx": 32768,
+  "appendOnly": true,
+  "requirementsEnabled": false,
+  "maxIters": 50,
+  "timeoutS": 900,
+  "startedAt": "2026-09-30T17:56:05.816Z",
+  "hardware": "Apple M5, 32 GB",
+  "memoryBeforeGB": {
+    "used": 8.1,
+    "available": 23.9
+  },
+  "serverReadyS": 2.071,
+  "wallS": 39.184,
+  "checkExit": 0,
+  "checkOutput": ".\n----------------------------------------------------------------------\nRan 1 test in 0.000s\n\nOK",
+  "protectedTouched": [],
+  "filesChanged": [
+    "app/__init__.py",
+    "app/hello.py",
+    "app/utils.py",
+    "tests/test_utils.py"
+  ],
+  "pass": true,
+  "finalText": "All steps completed:\n\n- Created `app/hello.py`, `app/utils.py`, `app/__init__.py`, and `tests/test_utils.py`.\n- Compiled `app/hello.py` and `app/utils.py` with `python3 -m py_compile`; both succeeded.\n- Ran `app/hello.py` and received the exact output `checklist-ok`.\n- Executed `python3 -m unittest discover -s tests -p 'test_*.py'`; the single test passed.",
+  "iterations": 20,
+  "tools": {
+    "list_dir": 1,
+    "write_file": 4,
+    "run_command": 4
+  },
+  "toolFailures": 0,
+  "redundantReads": 0,
+  "reads": 0,
+  "viewEvents": 0,
+  "modelS": 69.9,
+  "toolS": 0.19,
+  "tokensEvaluated": 8876,
+  "tokensCached": 73415,
+  "cacheHitPct": 89.2,
+  "evalTokens": 1544,
+  "promptCharsMax": 18881,
+  "hw": {
+    "minAvailableGB": 7.8,
+    "maxSwapGB": 2.46,
+    "gpuPeakPct": 100
+  },
+  "tracePath": "_devtools/e2e/results/req-ab2-t11-checklist-req-off-r2.trace.jsonl",
+  "requirementsNudges": 0,
+  "requirementsFinal": null,
+  "falseDone": false,
+  "memoryAfterGB": {
+    "used": 24.2,
+    "available": 7.8
+  }
+}

@@ -422,21 +422,51 @@ export function stripRequirementsBlockFromContent(content: string): string {
   return content.slice(0, idx).replace(/\n+$/, '');
 }
 
+/** True for checklist-only user messages appended to the prompt view (not archival tool results). */
+export function isRequirementsChecklistPromptMessage(content: string): boolean {
+  return content.startsWith(CHECKLIST_HEADER) && content.includes(CHECKLIST_FORMAT_HINT);
+}
+
+/** Archival-shaped view: drop checklist-only tail messages from a requirements prompt view. */
+export function archivalViewFromRequirementsPromptView(view: ChatMessage[]): ChatMessage[] {
+  return view.filter((m) => !(m.role === 'user' && isRequirementsChecklistPromptMessage(m.content)));
+}
+
 /**
- * Appends the live checklist to the end of the last user message in the prompt view only
- * (archival messages unchanged — earlier messages are never edited).
+ * Build the next requirements prompt view so each send extends the previous byte-for-byte prefix
+ * (checklist blocks are appended after each step; archival messages are never rewritten).
  */
-export function injectRequirementsIntoPromptView(view: ChatMessage[], checklistBlock: string): ChatMessage[] {
-  if (!checklistBlock) return view;
-  const copy = view.map((m) => ({ ...m }));
-  for (let i = copy.length - 1; i >= 0; i--) {
-    if (copy[i].role === 'user') {
-      const base = stripRequirementsBlockFromContent(copy[i].content);
-      copy[i] = { ...copy[i], content: base ? `${base}\n\n${checklistBlock}` : checklistBlock };
-      return copy;
+export function extendRequirementsPromptView(
+  previousView: ChatMessage[] | undefined,
+  archivalView: ChatMessage[],
+  checklistBlock: string,
+): ChatMessage[] {
+  if (!checklistBlock) return archivalView;
+  const chkMsg: ChatMessage = { role: 'user', content: checklistBlock };
+  if (!previousView) {
+    return [...archivalView, chkMsg];
+  }
+  const prevArch = archivalViewFromRequirementsPromptView(previousView);
+  if (prevArch.length > archivalView.length) {
+    return archivalView;
+  }
+  if (prevArch.length === archivalView.length) {
+    const sameArch = prevArch.every((m, i) => m.role === archivalView[i].role && m.content === archivalView[i].content);
+    if (sameArch) {
+      const last = previousView[previousView.length - 1];
+      if (last && isRequirementsChecklistPromptMessage(last.content)) {
+        return [...previousView.slice(0, -1), chkMsg];
+      }
+      return [...previousView, chkMsg];
     }
   }
-  return copy;
+  const delta = archivalView.slice(prevArch.length);
+  return [...previousView, ...delta, chkMsg];
+}
+
+/** @deprecated Use extendRequirementsPromptView for agent steps; kept for tests that inject once. */
+export function injectRequirementsIntoPromptView(view: ChatMessage[], checklistBlock: string): ChatMessage[] {
+  return extendRequirementsPromptView(undefined, view, checklistBlock);
 }
 
 export function isRealUserTurnContent(content: string): boolean {

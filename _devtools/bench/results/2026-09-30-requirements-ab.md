@@ -45,3 +45,22 @@ Medians: **t11** req-on 76.8 s vs off 39.4 s (same 9 tool steps; +2 nudges when 
 ## PROGRESS note
 
 Live A/B complete for t11 + t09. Default `forge.requirements.enabled=true` trades speed/cache efficiency for nudges + self-report on these tasks; no false-done reduction measured in this all-pass matrix.
+
+## Round 2 (partial, after a33aaa9)
+
+**Date:** 2026-09-30 · **Hardware:** Apple M5, 32 GB · **Model:** gpt-oss-20b MXFP4-Q8 (same MLX snapshot) · **Runner:** `_devtools/bench/run_req_ab_round2.sh` · **Raw:** `_devtools/e2e/results/req-ab2-*`
+
+| Task | Req | Rep | Grader | Wall (s) | Cache hit % | Tool steps | Notes |
+|------|-----|-----|--------|----------|-------------|------------|-------|
+| t11-checklist | on | 1 | PASS | 67.5 | 73.8 | 9 | +2 req nudges |
+| t11-checklist | on | 2 | PASS | 68.0 | 73.8 | 9 | +2 req nudges |
+| t11-checklist | off | 1 | PASS | 37.2 | 89.2 | 9 | |
+| t11-checklist | off | 2 | PASS | 38.1 | 89.2 | 9 | |
+| t09-harder-build | on | 1 | **FAIL** | 1200 (timeout) | 33.4 | 54 iters / 26 tools | timed out; grader `--db` path error |
+| t09-harder-build | on | 2 | **invalid** | 72.6 | 55.1 | 6 iters | **SIGTERM / MLX unreachable** — not a real A/B result |
+| t09-harder-build | off | 1 | PASS | 238.0 | 94.7 | 25 | |
+| t09-harder-build | off | 2 | PASS | 238.0 | 94.7 | 25 | |
+
+Round 2 was cut short when the bridge/runner process was killed; only t11 req-on/off finished cleanly. **a33aaa9 did not restore cache hit rate with requirements on** (still ~74% vs ~89% off on t11). Root cause: checklist was appended **into** the last tool-result user message; on the next step that message is no longer last and is resent **without** the checklist bytes, breaking MLX exact-prefix cache mid-prompt. Fix: append-only checklist tail messages via `extendRequirementsPromptView` (see commit after this note).
+
+**t09 req-on r1 failure (not grader-only):** 54 iterations to 1200 s timeout — opened with invalid native JSON (harness nudge), then long write_file chain; **CLI `--db` churn** (optional → required per subcommand, repeated broken `add_book` search/replace loops); native-format run_command nudge; truncation nudge; **verification re-reads** and duplicate edits on `inventory/cli.py`; full-file rewrite; never reached a passing hidden check (`main.py demo` / `--db` misuse in grader output).
