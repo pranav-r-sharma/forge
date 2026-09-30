@@ -20,7 +20,7 @@ import { HookRunner } from '../forge/hooks';
 import { getConfig, resolveEffectiveMaxOutputTokens } from '../util/config';
 import { logger } from '../util/logger';
 import { resolveWorkspacePath, toRelative } from '../util/paths';
-import { CompactionCache, PromptViewState, hardCapOversizedMessages, maybeCompact, pruneStaleReadsView, updateCharsPerToken, updatePromptView, DEFAULT_CHARS_PER_TOKEN } from './contextManager';
+import { CompactionCache, PromptViewState, estimateTokens, hardCapOversizedMessages, maybeCompact, pruneStaleReadsView, updateCharsPerToken, updatePromptView, DEFAULT_CHARS_PER_TOKEN } from './contextManager';
 import { LoopDetector, formatLoopWarningMessage, signatureForStep } from './loopDetector';
 import { unwrapNestedToolCall } from '../tools/argErrors';
 import { unknownArgNotesForSpec } from '../tools/unknownToolArgs';
@@ -44,6 +44,7 @@ import {
   formatRequirementsGateNudge,
   extendRequirementsPromptView,
   renderRequirementsChecklistForPrompt,
+  requirementsChecklistMaxChars,
   requirementGateMarkers,
   declinedRequirementNotes,
   openJudgmentRequirementNotes,
@@ -51,7 +52,7 @@ import {
   type RequirementsState,
 } from './requirements';
 import { runVerifyCommand } from './verifyCheck';
-import { formatVerifyFinalNote, resolveVerifyCommandForFinal } from './verifyBeforeDone';
+import { formatVerifyFinalNote, resolveVerifyCommandForFinal, shouldRerunVerifyAfterPass } from './verifyBeforeDone';
 import { detectSuspiciousVerifyBypass } from './gamingDetection';
 import { BackgroundProcessManager } from '../tools/backgroundProcessManager';
 import { DynamicToolSpec } from '../mcp/mcpTypes';
@@ -330,7 +331,7 @@ export async function runAgentTurn(
     });
   const allowedTools = new Set(toolsAllowedInMode(options.mode));
   // Native MCP tool connection: merged in alongside the built-in tool map at
-  // every lookup site below, namespaced (mcp_<server>_<tool>) so it can
+  // every lookup site below, namespaced (mcp__server__tool) so it can
   // never collide with a built-in name — see mcp/mcpManager.ts.
   const mcpToolMap = new Map((deps.mcpTools || []).map((t) => [t.name, t] as const));
   // Opt-in constrained-decoding tool-call contract (see structuredOutput.ts)
@@ -535,6 +536,14 @@ export async function runAgentTurn(
     lastViewEvent = undefined;
     if (cfg.contextAppendOnly) {
       // Append-only path (v0.15.0 §2.1): nothing already sent is rewritten except in a deliberate, batched event — see updatePromptView().
+      const checklistReserveChars =
+        requirementsActive && cfg.requirementsShowInPrompt && requirementsState
+          ? requirementsChecklistMaxChars(numCtx, (compactionCache as PromptViewState | undefined)?.cpt)
+          : 0;
+      const reservedTailTokens =
+        checklistReserveChars > 0
+          ? estimateTokens(checklistReserveChars, (compactionCache as PromptViewState | undefined)?.cpt ?? DEFAULT_CHARS_PER_TOKEN)
+          : 0;
       const r = await updatePromptView(messages, compactionCache, {
         model,
         numCtx,
@@ -544,6 +553,7 @@ export async function runAgentTurn(
         lowWaterPct: cfg.contextLowWaterPct,
         singleMessageSharePct: cfg.singleMessageSharePct,
         pinnedUserMaxChars: cfg.contextPinnedUserMaxChars,
+        reservedTailTokens,
       });
       compactionCache = r.state;
       lastViewEvent = r.event?.kind;
@@ -554,7 +564,10 @@ export async function runAgentTurn(
       let view = r.view;
       if (requirementsActive && cfg.requirementsShowInPrompt && requirementsState) {
         requirementsState = updateRequirementsFromMessages(requirementsState, messages);
-        const checklist = renderRequirementsChecklistForPrompt(requirementsState);
+        const checklist = renderRequirementsChecklistForPrompt(
+          requirementsState,
+          requirementsChecklistMaxChars(numCtx, r.state.cpt),
+        );
         view = extendRequirementsPromptView(requirementsPromptView, view, checklist);
         requirementsPromptView = view;
       }
@@ -566,7 +579,10 @@ export async function runAgentTurn(
     let view = hardCapOversizedMessages(compacted.promptMessages);
     if (requirementsActive && cfg.requirementsShowInPrompt && requirementsState) {
       requirementsState = updateRequirementsFromMessages(requirementsState, messages);
-      const checklist = renderRequirementsChecklistForPrompt(requirementsState);
+      const checklist = renderRequirementsChecklistForPrompt(
+        requirementsState,
+        requirementsChecklistMaxChars(numCtx, (compactionCache as PromptViewState | undefined)?.cpt),
+      );
       view = extendRequirementsPromptView(requirementsPromptView, view, checklist);
       requirementsPromptView = view;
     }
@@ -581,6 +597,7 @@ export async function runAgentTurn(
   let unresolvedRunFailure: UnresolvedRunFailure | undefined;
   let commandsExecutedThisTurn: string[] = [];
   let filesWrittenThisTurn: string[] = [];
+  let verifyPassBaseline: { command: string; filesWritten: number; commandsRun: number } | undefined;
   let foreignFormatNudges = 0;
   let incompleteActionNudges = 0;
   let requirementsNudges = 0;
@@ -668,7 +685,12 @@ export async function runAgentTurn(
         keepAliveMinutes: keepAliveOpt(cfg.keepAliveMinutes),
         format: structuredOutputEnabled ? STRUCTURED_RESPONSE_SCHEMA : undefined,
         thinking: thinkingForStep(cfg.thinking, failedRunsInARow),
-        maxTokens: resolveEffectiveMaxOutputTokens(cfg.maxOutputTokens, numCtx, cfg.maxOutputTokensCeiling),
+        maxTokens: resolveEffectiveMaxOutputTokens(
+          cfg.maxOutputTokens,
+          numCtx,
+          cfg.maxOutputTokensCeiling,
+          lastEstTokens ?? estimateTokens(promptView.reduce((n, m) => n + m.content.length, 0), (compactionCache as PromptViewState | undefined)?.cpt ?? DEFAULT_CHARS_PER_TOKEN),
+        ),
         onToken: (token) => emit({ type: 'token', text: token }),
         onMetrics: (metrics) => {
           iterState.metrics = metrics;
@@ -788,12 +810,7 @@ export async function runAgentTurn(
         continue;
       }
       const unexercisedTaskForms = findUnexercisedTaskForms(taskCommandForms, commandsExecutedThisTurn);
-      const claimedCmd = evaluateClaimedCommands(
-        displayText,
-        commandsExecutedThisTurn,
-        filesWrittenThisTurn,
-        [],
-      );
+      const claimedCmd = evaluateClaimedCommands(displayText, commandsExecutedThisTurn, filesWrittenThisTurn);
       const hasClaimedCmdIssues =
         claimedCmd.unrunCommands.length > 0 || claimedCmd.perFileGaps.length > 0;
       const hasTaskFormIssues = unexercisedTaskForms.length > 0;
@@ -872,7 +889,12 @@ export async function runAgentTurn(
         turnWroteFiles: filesWrittenThisTurn.length > 0,
       });
       let finalDisplayText = displayText.trim();
-      if (effectiveVerify) {
+      const filesWrittenCount = filesWrittenThisTurn.length;
+      const commandsRunCount = commandsExecutedThisTurn.length;
+      const skipRepeatVerify =
+        effectiveVerify &&
+        !shouldRerunVerifyAfterPass(effectiveVerify, verifyPassBaseline, filesWrittenCount, commandsRunCount);
+      if (effectiveVerify && !skipRepeatVerify) {
         emit({ type: 'status', text: `Verifying: ${truncateOneLine(effectiveVerify, 80)}…`, activity: 'verify' });
         emit({ type: 'verify_start', command: effectiveVerify, draftText: finalDisplayText });
         const verify = await runVerifyCommand(
@@ -911,6 +933,9 @@ export async function runAgentTurn(
         }
         sawFailedVerify = false;
         writesSinceLastVerify = [];
+        verifyPassBaseline = { command: effectiveVerify, filesWritten: filesWrittenCount, commandsRun: commandsRunCount };
+        finalDisplayText += formatVerifyFinalNote(effectiveVerify, true);
+      } else if (effectiveVerify && skipRepeatVerify) {
         finalDisplayText += formatVerifyFinalNote(effectiveVerify, true);
       }
 

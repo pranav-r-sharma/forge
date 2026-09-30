@@ -408,6 +408,8 @@ export interface PromptViewOptions {
   lowWaterPct?: number;
   singleMessageSharePct?: number;
   pinnedUserMaxChars?: number;
+  /** Tokens reserved for requirements checklist tail (subtracted from water marks before compaction). */
+  reservedTailTokens?: number;
 }
 
 export interface PromptViewResult {
@@ -430,7 +432,10 @@ export async function updatePromptView(archival: ChatMessage[], stateIn: Compact
   const st = normalizeState(stateIn);
   const cpt = st.cpt && st.cpt > 0 ? st.cpt : DEFAULT_CHARS_PER_TOKEN;
   const capChars = singleMessageCapChars(o.numCtx, o.singleMessageSharePct ?? 25);
-  const { highTokens, lowTokens } = waterMarks(o.numCtx, o.highWaterPct, o.lowWaterPct);
+  const wm = waterMarks(o.numCtx, o.highWaterPct, o.lowWaterPct);
+  const reserve = Math.max(0, o.reservedTailTokens ?? 0);
+  const highTokens = Math.max(1024, wm.highTokens - reserve);
+  const lowTokens = Math.max(512, wm.lowTokens - reserve);
   const stateOut = (masked: number[], throughIndex: number, summary: string): PromptViewState => ({ throughIndex, summary, maskedIdx: masked, cpt: st.cpt });
   const pinCap = Math.min(
     o.pinnedUserMaxChars ?? DEFAULT_PINNED_USER_MAX_CHARS,

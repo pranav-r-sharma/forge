@@ -197,6 +197,31 @@ async function testCompactionEvent() {
   ok(!threw && rb.view.length === arch.length && rb.state.throughIndex === 0, 'a failing summarizer never throws; the view is simply left as it was');
 }
 
+async function testReservedTailAndLowWater() {
+  const ollama = fakeSummarizer();
+  const numCtx = 32768;
+  const { lowTokens } = waterMarks(numCtx);
+  const cpt = 4;
+  const reserve = Math.floor(numCtx * 0.05);
+  const arch: ChatMessage[] = [sys, task];
+  for (let i = 0; i < 55; i++) {
+    arch.push(
+      { role: 'user', content: `follow-up ${i}: ` + 'u'.repeat(3500) },
+      { role: 'assistant', content: readCall(`big${i}.txt`) },
+      { role: 'user', content: result(`big${i}.txt`, 2800) },
+    );
+  }
+  const r = await updatePromptView(arch, undefined, {
+    model: 'm',
+    numCtx,
+    ollama,
+    pinnedUserMaxChars: 40_000,
+    reservedTailTokens: reserve,
+  });
+  ok(r.estTokens <= lowTokens, `large pinned history + reserved tail: estTokens ${r.estTokens} <= low-water ${lowTokens}`);
+  ok(!!r.event, 'compaction/mask event fired to make progress');
+}
+
 async function testOldPersistedStateAndEdgeCases() {
   const arch = readConversation(4, 200);
   const legacyState: any = { throughIndex: 4, summary: 'an old summary from before 0.15.0' };
@@ -285,6 +310,7 @@ async function main() {
   await testMaskEventIsBatchedPersistedAndIdempotent();
   await testEscalationNeverThrashes();
   await testCompactionEvent();
+  await testReservedTailAndLowWater();
   await testOldPersistedStateAndEdgeCases();
   await testRealLoop();
   console.log(`\n${passed} passed, ${failed} failed.`);

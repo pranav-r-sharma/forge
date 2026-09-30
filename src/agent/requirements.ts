@@ -364,20 +364,45 @@ function markForPrompt(it: RequirementItem): string {
   return it.kind === 'judgment' ? '[?]' : '[ ]';
 }
 
-export function renderRequirementsChecklistForPrompt(state: RequirementsState): string {
+/** Max chars for the live requirements checklist tail (~5% of the context window). */
+export function requirementsChecklistMaxChars(numCtx: number, charsPerToken?: number): number {
+  const cpt = charsPerToken && charsPerToken > 0 ? charsPerToken : 4;
+  const ctx = numCtx > 0 ? numCtx : 131072;
+  return Math.max(800, Math.floor(ctx * cpt * 0.05));
+}
+
+export function renderRequirementsChecklistForPrompt(state: RequirementsState, maxChars?: number): string {
   if (state.items.length === 0) return '';
   const doneCount = state.items.filter((it) => it.status === 'done' || it.status === 'declined').length;
   const lines: string[] = [];
   if (doneCount > 0) {
     lines.push(`[x] ${doneCount} requirement(s) done — see tool results / final **Requirements:** report for details.`);
   }
-  for (const it of state.items) {
+  const openFirst = [...state.items].sort((a, b) => {
+    const rank = (it: RequirementItem) => (it.status === 'done' || it.status === 'declined' ? 2 : 0);
+    return rank(a) - rank(b);
+  });
+  for (const it of openFirst) {
     if (it.status === 'done' || it.status === 'declined') continue;
     const mark = markForPrompt(it);
     const ev = it.evidence ? ` — ${it.evidence}` : '';
     lines.push(`${mark} ${it.id}. ${it.text}${ev}`);
   }
-  return `${CHECKLIST_HEADER}\n${lines.join('\n')}\n\n${CHECKLIST_FORMAT_HINT}`;
+  let body = `${CHECKLIST_HEADER}\n${lines.join('\n')}\n\n${CHECKLIST_FORMAT_HINT}`;
+  if (maxChars && body.length > maxChars) {
+    const budget = Math.max(200, maxChars - CHECKLIST_FORMAT_HINT.length - CHECKLIST_HEADER.length - 8);
+    const trimmed: string[] = [];
+    let used = 0;
+    for (const line of lines) {
+      if (used + line.length + 1 > budget) break;
+      trimmed.push(line);
+      used += line.length + 1;
+    }
+    if (trimmed.length < lines.length) trimmed.push('… (requirements checklist truncated — open items listed first)');
+    body = `${CHECKLIST_HEADER}\n${trimmed.join('\n')}\n\n${CHECKLIST_FORMAT_HINT}`;
+    if (body.length > maxChars) body = body.slice(0, maxChars - 1) + '…';
+  }
+  return body;
 }
 
 /** Checkable items still missing tool evidence — used for gate nudges only. */
@@ -390,9 +415,14 @@ export function findRequirementsNudgeGaps(state: RequirementsState): Requirement
   });
 }
 
-/** Items still open or unverified without evidence — surfaced in final unverified markers (checkable only). */
+/** Checkable items still blocking a "clean" final — markers only (judgment gaps use openJudgmentRequirementNotes). */
 export function findRequirementsGateGaps(state: RequirementsState): RequirementItem[] {
-  return findRequirementsNudgeGaps(state);
+  return state.items.filter((it) => {
+    if (it.kind !== 'checkable') return false;
+    if (it.status === 'done' || it.status === 'declined') return false;
+    if (it.status === 'unverified' && it.evidence) return false;
+    return it.status === 'open' || (it.status === 'unverified' && !it.evidence);
+  });
 }
 
 export function formatRequirementsGateNudge(missing: RequirementItem[]): string {

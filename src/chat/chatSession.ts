@@ -25,6 +25,7 @@ import { WebSearchService } from '../websearch/searchService';
 import { WebFetchService } from '../websearch/fetchService';
 import { McpManager } from '../mcp/mcpManager';
 import { getConfig, resolveModelForMode } from '../util/config';
+import { formatForgeHealthErrorToast } from '../util/providerHealth';
 import { genId } from '../util/ids';
 import { toRelative } from '../util/paths';
 import { logger } from '../util/logger';
@@ -485,7 +486,7 @@ export class ChatSession {
     }
     const health = await this.services.ollama.health();
     if (!health.ok) {
-      this.post({ type: 'toast', level: 'error', text: `Can't reach Ollama (${health.error}). Run "ollama serve" and try again.` });
+      this.post({ type: 'toast', level: 'error', text: formatForgeHealthErrorToast(cfg, health.error || '') });
       return;
     }
 

@@ -78,13 +78,16 @@ const workspace = () => {
 async function main() {
   vs.__resetConfig();
   ok(getConfig().maxOutputTokens === 0, 'default maxOutputTokens is 0 (auto)');
-  ok(resolveEffectiveMaxOutputTokens(0, 32768) === 16384, 'auto cap = context/2, at least 16384');
-  ok(resolveEffectiveMaxOutputTokens(0, 12000) === 16384, 'auto cap floors at 16384');
-  ok(resolveEffectiveMaxOutputTokens(0, 0) === 65536, 'auto with unknown context assumes 131072 → half floored at 16384');
-  ok(resolveEffectiveMaxOutputTokens(6000, 32768) === 6000, 'explicit user cap is respected');
+  ok(resolveEffectiveMaxOutputTokens(0, 32768) === 16384, 'auto cap = context/2 when prompt empty');
+  ok(resolveEffectiveMaxOutputTokens(0, 12000) === 6000, 'auto cap respects small context (half of 12k, min 4096)');
+  ok(resolveEffectiveMaxOutputTokens(0, 0) === 65536, 'auto with unknown context assumes 131072 → half');
+  ok(resolveEffectiveMaxOutputTokens(6000, 32768) === 6000, 'explicit user cap is respected when room allows');
   ok(resolveEffectiveMaxOutputTokens(0, 131072, 32768) === 32768, 'auto respects maxOutputTokensCeiling when set');
   ok(resolveEffectiveMaxOutputTokens(0, 131072, 0) === 65536, 'auto with no ceiling uses half of 131072 context');
   ok(resolveEffectiveMaxOutputTokens(50_000, 131072, 32768) === 50_000, 'explicit maxOutputTokens ignores ceiling');
+  ok(resolveEffectiveMaxOutputTokens(0, 131072, 0, 120_000) === 8451, 'auto clamps to room when prompt is huge');
+  ok(resolveEffectiveMaxOutputTokens(0, 131072, 0, 130_500) === 0, 'auto is zero when no room left in the window');
+  ok(resolveEffectiveMaxOutputTokens(80_000, 131072, 0, 60_000) < 80_000, 'explicit cap clamped to context minus prompt and safety');
 
   const partial =
     '```forge_action\n{"tool":"write_file","args":{"path":"src/big_module.py","content":"' + 'A'.repeat(200);

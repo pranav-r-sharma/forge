@@ -259,18 +259,34 @@ export function getConfig(): ForgeConfig {
   };
 }
 
-/**
- * Effective max output tokens for one model reply. configured=0 means auto:
- * max(floor(contextTokens/2), 16384), then if ceiling>0 cap at ceiling (assumes 131072 context when contextTokens<=0).
- * Explicit user values win.
- */
-export function resolveEffectiveMaxOutputTokens(configured: number, contextTokens: number, ceiling = 0): number {
-  if (configured > 0) return configured;
+/** Headroom reserved so prompt + output never exceeds the context window. */
+export function outputTokenSafetyMargin(contextTokens: number): number {
   const ctx = contextTokens > 0 ? contextTokens : 131072;
-  const half = Math.floor(ctx / 2);
-  let auto = Math.max(half, 16384);
-  if (ceiling > 0) auto = Math.min(auto, ceiling);
-  return auto;
+  return Math.max(1024, Math.floor(ctx * 0.02));
+}
+
+/**
+ * Effective max output tokens for one model reply.
+ * configured=0 means auto: clamp(context − promptTokens − safety, min 4096, max context/2 with optional ceiling).
+ * Explicit forge.maxOutputTokens still wins but is clamped to context − promptTokens − safety.
+ * Assumes 131072 context when contextTokens<=0.
+ */
+export function resolveEffectiveMaxOutputTokens(
+  configured: number,
+  contextTokens: number,
+  ceiling = 0,
+  promptTokens = 0,
+): number {
+  const ctx = contextTokens > 0 ? contextTokens : 131072;
+  const safety = outputTokenSafetyMargin(ctx);
+  const room = Math.max(0, ctx - Math.max(0, promptTokens) - safety);
+  const halfCap = Math.floor(ctx / 2);
+  let autoUpper = halfCap;
+  if (ceiling > 0) autoUpper = Math.min(autoUpper, ceiling);
+  const auto = Math.max(4096, Math.min(autoUpper, room));
+
+  if (configured > 0) return Math.min(configured, room);
+  return Math.min(auto, room);
 }
 
 export async function setChatModel(model: string) {

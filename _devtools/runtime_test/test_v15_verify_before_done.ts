@@ -8,6 +8,7 @@ import {
   formatVerifyFinalNote,
   isAcceptableUserAcceptanceVerifyCommand,
   resolveVerifyCommandForFinal,
+  shouldRerunVerifyAfterPass,
 } from '../../src/agent/verifyBeforeDone';
 import { pinUserMessagesForCompaction } from '../../src/agent/pinnedUserCompaction';
 import { buildPinnedCompactedView } from '../../src/agent/contextManager';
@@ -96,6 +97,18 @@ function testResolveModes() {
     resolveVerifyCommandForFinal({ ...base, sessionVerifyCommand: 'echo session' }) === 'echo session',
     'per-chat session verify wins',
   );
+  ok(
+    resolveVerifyCommandForFinal({ ...base, turnWroteFiles: false, sessionVerifyCommand: 'bash check.sh' }) === 'bash check.sh',
+    'session verify runs even when the turn made no file edits',
+  );
+}
+
+function testVerifySkipRepeat() {
+  const base = { command: 'npm test', filesWritten: 2, commandsRun: 1 };
+  ok(shouldRerunVerifyAfterPass('npm test', undefined, 2, 1), 'first verify always runs');
+  ok(!shouldRerunVerifyAfterPass('npm test', base, 2, 1), 'skip when no writes/commands since pass');
+  ok(shouldRerunVerifyAfterPass('npm test', base, 3, 1), 're-run after another write');
+  ok(shouldRerunVerifyAfterPass('npm test', base, 2, 2), 're-run after another run_command');
 }
 
 function testCompactionPins() {
@@ -174,6 +187,7 @@ async function main() {
   testCompactionPins();
   testVerifyFinalNote();
   testUserAcceptanceCommandGuard();
+  testVerifySkipRepeat();
   console.log(`\n${passed} passed, ${failed} failed.`);
   if (failed > 0) process.exit(1);
 }

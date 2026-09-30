@@ -326,7 +326,7 @@
           "type": "number",
           "default": 0,
           "minimum": 0,
-          "description": "Maximum tokens per model reply in the agent loop (thinking tokens count too). 0 = auto: half the context window, at least 16384 — never the runtime default (mlx_lm.server defaults to 512). Set an explicit value to override. forge.maxOutputTokensCeiling can cap auto mode. If a reply is still cut off, Forge asks the model to continue (and to use write_file append for large files) instead of treating it as finished."
+          "description": "Maximum tokens per model reply in the agent loop (thinking tokens count too). 0 = auto: derived from the context window minus the current prompt estimate and a safety margin (max of 1024 tokens or 2% of context), clamped between 4096 and half the context (forge.maxOutputTokensCeiling can cap auto). Explicit values are respected but still clamped so prompt + output never exceeds the context window — never the runtime default (mlx_lm.server defaults to 512). If a reply is still cut off, Forge asks the model to continue (and to use write_file append for large files) instead of treating it as finished."
         },
         "forge.maxOutputTokensCeiling": {
           "type": "number",

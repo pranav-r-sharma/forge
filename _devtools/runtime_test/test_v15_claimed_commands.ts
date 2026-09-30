@@ -189,19 +189,21 @@ function ok(cond: boolean, label: string) {
     'All seven files compile and the CLI works as specified. The demo runs, showing overdue books and a return fee. A scripted sequence with a fresh `--db` file demonstrates adding a book/member, borrowing, returning late, checking overdue (none after return), and listing fees. No errors were encountered.';
   const { executedCommands, filesWritten } = collectTurnToolFacts(messages);
   const taskForms = extractTaskCommandForms(taskMd);
-  const check = evaluateClaimedCommands(finalBeforeNudge, executedCommands, filesWritten, taskForms);
+  const check = evaluateClaimedCommands(finalBeforeNudge, executedCommands, filesWritten);
   ok(check.perFileGaps.length === 0, 't09 cycle-2 final text: no per-file py_compile-style false positives from main.py demo runs');
-  ok(check.unexercisedTaskForms.length === 5, 't09 cycle-2: five CLI forms not run (demo, py_compile, add-book exercised)');
+  const unexT09 = findUnexercisedTaskForms(taskForms, executedCommands);
+  ok(unexT09.length === 5, 't09 cycle-2: five CLI forms not run (demo, py_compile, add-book exercised)');
+  const taskNudge = formatTaskCommandNudge(unexT09);
   ok(
-    !check.nudgeMessage.includes('add-book') &&
-      check.nudgeMessage.includes('add-member') &&
-      check.nudgeMessage.includes('borrow') &&
-      check.nudgeMessage.includes('return') &&
-      check.nudgeMessage.includes('overdue') &&
-      check.nudgeMessage.includes('fees') &&
-      !check.nudgeMessage.includes('demo') &&
-      !check.nudgeMessage.includes('py_compile'),
-    't09 cycle-2 nudge names add-book, add-member, borrow, return, overdue, fees (not demo/py_compile)',
+    !taskNudge.includes('add-book') &&
+      taskNudge.includes('add-member') &&
+      taskNudge.includes('borrow') &&
+      taskNudge.includes('return') &&
+      taskNudge.includes('overdue') &&
+      taskNudge.includes('fees') &&
+      !taskNudge.includes('demo') &&
+      !taskNudge.includes('py_compile'),
+    't09 cycle-2 task nudge names add-book, add-member, borrow, return, overdue, fees (not demo/py_compile)',
   );
   ok(
     !commandMatchesTaskForm(
@@ -224,8 +226,7 @@ function ok(cond: boolean, label: string) {
   const taskForms = extractTaskCommandForms(taskMd);
   const unex = findUnexercisedTaskForms(taskForms, executedCommands);
   ok(unex.length === 0, `t08 cycle-3: all task command forms exercised: ${JSON.stringify(unex)}`);
-  const taskOnly = evaluateClaimedCommands('', executedCommands, [], taskForms);
-  ok(taskOnly.unexercisedTaskForms.length === 0 && taskOnly.nudgeMessage === '', 't08 cycle-3: no task-command nudge');
+  ok(unex.length === 0, 't08 cycle-3: no task-command nudge needed');
 }
 
 // ---------- task-form nudge policy + bash -lc ----------

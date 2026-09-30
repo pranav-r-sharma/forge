@@ -18,6 +18,8 @@ import {
   parseRequirementsSelfReport,
   classifyRequirementKind,
   declinedRequirementNotes,
+  requirementsChecklistMaxChars,
+  type RequirementsState,
 } from '../../src/agent/requirements';
 import { ChatMessage } from '../../src/ollama/types';
 
@@ -154,6 +156,24 @@ function testParseSelfReportTolerant() {
   ok(bold.length === 1 && bold[0].id === 5, 'parses markdown-bold Requirements header');
 }
 
+function testChecklistCap() {
+  const state: RequirementsState = {
+    sourceChars: 1,
+    items: Array.from({ length: 18 }, (_, i) => ({
+      id: i + 1,
+      text: `Must run integration check ${i} and print exact output.`,
+      kind: 'checkable',
+      status: 'open',
+    })),
+  };
+  ok(requirementsChecklistMaxChars(32768, 4) === 6553, 'default tail budget is ~5% of ctx');
+  const uncapped = renderRequirementsChecklistForPrompt(state);
+  const max = 450;
+  const rendered = renderRequirementsChecklistForPrompt(state, max);
+  ok(rendered.length <= max + 5, 'checklist capped near budget');
+  ok(rendered.length < uncapped.length, 'cap shortens an oversized checklist');
+}
+
 function testGateNudgeAndCap() {
   const state = extractRequirementsFromUserMessage('Run `python3 -m py_compile main.py`. Never skip lint.');
   const gaps = findRequirementsNudgeGaps(state);
@@ -267,6 +287,7 @@ async function main() {
   testCheckableIgnoresSelfReport();
   testNoNudgeWhenAllAddressed();
   testParseSelfReportTolerant();
+  testChecklistCap();
   testGateNudgeAndCap();
   testCompactChecklist();
   testPrefixStability();

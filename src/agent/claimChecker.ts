@@ -383,11 +383,9 @@ export function findPerFileCommandGaps(
 export interface ClaimedCommandCheck {
   unrunCommands: string[];
   perFileGaps: { template: string; uncovered: string[] }[];
-  unexercisedTaskForms: string[];
   nudgeMessage: string;
   unverifiedMarkers: string[];
-  /** Which trace note to use when a combined nudge is sent (at most one nudge per turn). */
-  nudgeTraceNote: 'claimed-command-nudge' | 'task-command-nudge' | undefined;
+  nudgeTraceNote: 'claimed-command-nudge' | undefined;
 }
 
 /** Shell command forms from the user task (inline code spans with the same heuristic as claimed commands). */
@@ -510,17 +508,16 @@ export function formatTaskCommandNudge(unexercised: string[]): string {
   return `[System check] The task specifies these command forms, but you never ran a command matching them: ${list}. Run them as written (fix the code if they fail), or explain why not.`;
 }
 
+/** Claimed-command / per-file verification gaps only — task command forms are handled separately in agentLoop (formatTaskCommandNudge). */
 export function evaluateClaimedCommands(
   finalText: string,
   executedCommands: string[],
   filesWrittenThisTurn: string[],
-  taskCommandForms: string[] = [],
 ): ClaimedCommandCheck {
   const unrunCommands = findUnrunClaimedCommands(finalText, executedCommands);
   const perFileGaps = finalAnswerMakesUniversalFileClaim(finalText)
     ? findPerFileCommandGaps(executedCommands, filesWrittenThisTurn)
     : [];
-  const unexercisedTaskForms = findUnexercisedTaskForms(taskCommandForms, executedCommands);
 
   const parts: string[] = [];
   for (const cmd of unrunCommands) {
@@ -535,11 +532,6 @@ export function evaluateClaimedCommands(
       `You ran \`${gap.template}\` on ${ranOn} of the ${totalSameExt} \`${ext}\` files you wrote; never on: ${gap.uncovered.join(', ')}.`,
     );
   }
-  if (unexercisedTaskForms.length > 0) {
-    parts.push(
-      `The task specifies these command forms, but you never ran a command matching them: ${unexercisedTaskForms.map((c) => `\`${c}\``).join(', ')}. Run them as written (fix the code if they fail), or explain why not.`,
-    );
-  }
   const nudgeMessage =
     parts.length > 0
       ? `[System check] ${parts.join(' ')} Run the missing command(s) now, or correct your summary.`
@@ -550,17 +542,11 @@ export function evaluateClaimedCommands(
   for (const gap of perFileGaps) {
     for (const f of gap.uncovered) unverifiedMarkers.push(`per-file check missing: ${gap.template} → ${f}`);
   }
-  for (const form of unexercisedTaskForms) {
-    unverifiedMarkers.push(`task command form not run: ${form}`);
-  }
 
-  const hasClaimedIssues = unrunCommands.length > 0 || perFileGaps.length > 0;
-  const hasTaskIssues = unexercisedTaskForms.length > 0;
-  let nudgeTraceNote: ClaimedCommandCheck['nudgeTraceNote'];
-  if (hasTaskIssues) nudgeTraceNote = 'task-command-nudge';
-  else if (hasClaimedIssues) nudgeTraceNote = 'claimed-command-nudge';
+  const nudgeTraceNote: ClaimedCommandCheck['nudgeTraceNote'] =
+    unrunCommands.length > 0 || perFileGaps.length > 0 ? 'claimed-command-nudge' : undefined;
 
-  return { unrunCommands, perFileGaps, unexercisedTaskForms, nudgeMessage, unverifiedMarkers, nudgeTraceNote };
+  return { unrunCommands, perFileGaps, nudgeMessage, unverifiedMarkers, nudgeTraceNote };
 }
 
 /** True if `path` appears anywhere as the subject of a write_file tool call/result in the transcript so far (this turn or any earlier one). Approximate by design — a substring scan over the raw message text, not a structured index — but effective and avoids false positives across turns. */

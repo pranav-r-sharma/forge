@@ -198,7 +198,11 @@ export interface ResolveVerifyCommandInput {
   detectDeps?: VerifyDetectDeps;
 }
 
-/** Effective definition-of-done command for this final-answer attempt. */
+/**
+ * Effective definition-of-done command for this final-answer attempt.
+ * Per-chat Outcome verify (sessionVerifyCommand) always runs on every final candidate — the check *is* the outcome, even when the model
+ * made no file edits this turn. Auto/custom verify still requires turnWroteFiles so read-only turns are not forced through npm test, etc.
+ */
 export function resolveVerifyCommandForFinal(i: ResolveVerifyCommandInput): string | undefined {
   if (!modeSupportsVerifyCommand(i.mode)) return undefined;
 
@@ -222,4 +226,15 @@ export function resolveVerifyCommandForFinal(i: ResolveVerifyCommandInput): stri
 
 export function formatVerifyFinalNote(command: string, ok: boolean): string {
   return `\n\n---\n**Verify:** \`${command}\` — ${ok ? 'passed' : 'failed'}.`;
+}
+
+/** Skip re-running the same verify when this turn already passed it and nothing changed since (no writes, no run_command). */
+export function shouldRerunVerifyAfterPass(
+  command: string,
+  baseline: { command: string; filesWritten: number; commandsRun: number } | undefined,
+  filesWritten: number,
+  commandsRun: number,
+): boolean {
+  if (!baseline || baseline.command !== command) return true;
+  return filesWritten > baseline.filesWritten || commandsRun > baseline.commandsRun;
 }

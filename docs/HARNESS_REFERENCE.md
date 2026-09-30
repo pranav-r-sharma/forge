@@ -19,7 +19,7 @@ Each item: **purpose · trigger · location · settings · mutates**
 | F3 | System prompt | Tools, action contract, terse style | Turn start | `systemPrompt.ts` `buildSystemPrompt` | `terseSteps` true; `structuredOutput.enabled` false | `messages[0]` |
 | F4 | Environment facts | PATH/project test hints in system | Turn start | `environment.ts`; session wiring | — | System prompt |
 | F5 | Turn context prefix | Memory, log, milestones, ledger on **user** tail (KV-stable) | Turn start | `buildTurnContextPrefix`; `agentLoop.ts` ~379–407 | — | First user message |
-| F6 | Plan-first | Extra planning LLM call + inject plan | `planFirst.enabled` + agent/auto/outcome | `planFirst.ts` | default **false** | User message prefix |
+| F6 | Plan-first | Extra planning LLM call + inject plan (cost: one full LLM round before the loop) | `planFirst.enabled` + agent/auto/outcome | `planFirst.ts` | default **false** | User message prefix |
 | F7 | Requirements extract | Heuristic checklist from user text | `requirements.enabled`, depth 0 only | `requirements.ts` | enabled **false**; `maxNudges` 2; `showInPrompt` true; `llmExtract` false | In-memory state |
 | F8 | Structured output | Ollama `format` JSON envelope | `structuredOutput.enabled`, mode ≠ plan | `structuredOutput.ts`, `resolveModelResponse` | **false** | Request format; parsing |
 | F9 | Autonomous approvals | Skip write/command approval | auto/outcome | `isAutonomousMode`; `approvalBroker` | `requireApprovalForWrites/Commands` true (ignored) | Tool ctx |
@@ -50,7 +50,7 @@ Each item: **purpose · trigger · location · settings · mutates**
 | F24 | MLX server manager | Start/adopt/stop `mlx_lm.server` | MLX provider | `mlxServer.ts` | `mlx.*` (model, pythonPath, autoStart, promptCacheGB, extraArgs, contextTokens, …) | Process lifecycle |
 | F25 | Model routing per mode | Session > routing > chatModel | Send | `resolveModelForMode` | `modelRouting`, `chatModel` | Model id |
 | F26 | Thinking | off/on/auto (2 fails → on) | Each iter | `thinkingForStep` | `thinking` **auto** | LLM option |
-| F27 | Max output tokens | Avoid silent 512 default | Each iter | `resolveEffectiveMaxOutputTokens` | `maxOutputTokens` **0**=auto max(ctx/2,16384); `maxOutputTokensCeiling` 0 | `maxTokens` |
+| F27 | Max output tokens | Avoid silent 512 default; prompt-aware cap | Each iter | `resolveEffectiveMaxOutputTokens` (+ prompt est.) | `maxOutputTokens` **0**=auto clamped to ctx−prompt−safety; explicit clamped too; `maxOutputTokensCeiling` 0 | `maxTokens` |
 | F28 | numCtx / compaction window | Context for compaction + Ollama | Each iter | `getConfig().numCtx` | Ollama: `numCtx` 131072; else `mlx.contextTokens` 131072 | LLM + thresholds |
 | F29 | Harmony preprocess | Split analysis/final channels | Every reply | `toolProtocol.ts` | — | Parse source vs display |
 | F30 | Tool call parsing | `forge_action` fence, native accept | After LLM | `parseToolCall`, `tryAcceptNativeToolCall`, `resolveModelResponse` | — | `call`, display text |
@@ -67,7 +67,7 @@ Each item: **purpose · trigger · location · settings · mutates**
 | F36 | Incomplete cap failure | Stop with system note | † exhausted | `formatIncompleteActionCapFailure` | — | **Final** (failure) |
 | F37 | Unverified file claim | Said edited path, no write_file | Final path | `findUnverifiedClaims` | **2** | User msg |
 | F38 | Task command forms | User-specified cmd shapes not run | Final | `formatTaskCommandNudge` | **3** (progress-gated) | User msg |
-| F39 | Claimed command | Said ran `\`cmd\``; per-file gaps | Final | `evaluateClaimedCommands` (task forms **not** passed from loop) | **1** | User msg |
+| F39 | Claimed command | Said ran `\`cmd\``; per-file gaps | Final | `evaluateClaimedCommands` (task forms via F38 only) | **1** | User msg |
 | F40 | Unresolved run failure | Final after failed run_command | `unresolvedRunFailure` | `formatUnresolvedFailureNudge` | **1** | User msg |
 | F41 | Requirements gate nudge | Checkable items missing evidence | Final | `formatRequirementsGateNudge` | `requirements.maxNudges` 2; skips overlap w/ F38 | User msg |
 | F42 | Final unverified markers | UI tags on bubble | After nudges exhausted | `agentLoop.ts` ~846–858 | — | `final.unverifiedClaims` |
@@ -118,7 +118,7 @@ Read via `getConfig()` in `src/util/config.ts` unless noted. **Panel?** = listed
 | `forge.temperature` | 0.2 | Yes | Sampling |
 | `forge.maxAgentIterations` | 200 | Yes | Step cap (non-auto) |
 | `forge.autoModeMaxIterations` | 100000 | Yes | Auto/outcome cap |
-| `forge.maxOutputTokens` | 0 (auto) | Yes | Generation cap |
+| `forge.maxOutputTokens` | 0 (auto) | Yes | Generation cap; explicit values clamped to ctx−prompt−safety |
 | `forge.maxOutputTokensCeiling` | 0 | Yes | Caps auto mode only |
 | `forge.thinking` | auto | **Yes** | Thinking toggle |
 | `forge.terseSteps` | true | **Yes** | System brevity |
@@ -224,22 +224,22 @@ Verified by reviewer 2026-09-30: row 1 re-classified (false positive).
 
 | Sev | Issue | Scenario | Evidence | Suggested fix (not implemented in audit) |
 |-----|-------|----------|----------|----------------------------------------|
-| **cosmetic** | Send-path health error toast always mentions Ollama | User on MLX (or other active provider) sees misleading toast if health fails | `services.ollama` is `SwitchableProvider` (`extension.ts` ~80); `health()` routes to active runtime; toast at `chatSession.ts` ~488 always says “Can't reach Ollama … Run ollama serve” | Word the error message by active provider |
+| **cosmetic** | Send-path health error toast always mentions Ollama | User on MLX (or other active provider) sees misleading toast if health fails | `formatForgeHealthErrorToast` (`providerHealth.ts`); `chatSession.ts` send path | **Fixed 2026-09-30:** provider-specific toast (MLX / Ollama / openai-compat) |
 | **risk** | Shared `truncationNudges` | Model emits 3 foreign-format attempts then hits length truncation → cap failure without incomplete recovery | `agentLoop.ts` 584, 724–728, 750–753 | **Fixed 2026-09-30:** split `foreignFormatNudges` / `incompleteActionNudges` |
 | **risk** | Assistant “done” before verify fail | Model final text pushed (~859) then verify fails → transcript shows success wording while loop continues | `agentLoop.ts` 859–899 | **Fixed 2026-09-30:** defer `pushAssistant` until verify passes; on fail append corrective system note |
-| **risk** | Session verify ignores `turnWroteFiles` | Outcome chat sets verify cmd; model answers without edits → verify still runs | `verifyBeforeDone.ts` 205–208 (session wins before write check) | Document as intentional or gate session verify on writes |
+| **risk** | Session verify ignores `turnWroteFiles` | Outcome chat sets verify cmd; model answers without edits → verify still runs | `resolveVerifyCommandForFinal`; `shouldRerunVerifyAfterPass` in `agentLoop.ts` | **Fixed 2026-09-30:** intentional (session verify every final); skip repeat verify when no writes/commands since last pass |
 | **risk** | Loop detector vs verify retries | Repeated identical verify command + same output counts toward loop; may halt Outcome iteration | `agentLoop.ts` 896 `checkLoop(..., '__verify__', ...)`; `loopDetector.ts` | **Fixed 2026-09-30:** skip loop when `writesSinceLastVerify` had progress |
 | **risk** | Loop detector vs chunked reads | Four rotating read ranges can trip “cycle” rule (by design) | `loopDetector.ts` 22–23, 90–99 | **Fixed 2026-09-30:** exempt only first-pass chunked reads (new line ranges since last write); repeat passes still trip on step 16 |
 | **risk** | Settings panel gap | `thinking`, `terseSteps`, `context.appendOnly`, `trace.enabled`, `provider`, MLX model path not in allowlist | `config.ts` `SETTINGS_PANEL_KEYS` | **Fixed 2026-09-30:** added to allowlist + panel UI (provider/thinking/terse/append-only/trace) |
 | **risk** | `numCtx` panel vs MLX | Panel writes `numCtx` but storage remaps to `mlx.contextTokens` when provider≠ollama | `setForgeSetting` 353–355 | **Fixed 2026-09-30:** label “Context window (MLX)” / “(Ollama)” in settings panel |
 | **risk** | Recommendations vs explicit settings | Apply may overwrite user-tuned ctx/output | `recommendations.ts` + panel | **Fixed 2026-09-30:** Apply all skips user-configured keys; “(you set X)” on reco rows |
-| **risk** | Compaction + checklist + pins | Large pinned users + requirements tail + summary can still approach window; low-water loop escalates keep-N | `contextManager.ts` `updatePromptView` | Monitor `estPromptTokens` in trace; adjust water marks |
-| **risk** | Auto output cap vs huge ctx | Auto = max(ctx/2, 16384) — on 131k ctx allows ~65k gen; still independent of prompt size (runtime may OOM) | `resolveEffectiveMaxOutputTokens` | Document; optional prompt-aware cap |
-| **cosmetic** | `findRequirementsGateGaps` ≡ nudge gaps | Same filter for markers and nudges; judgment items never nudged | `requirements.ts` 384–396 | Rename or split for clarity |
-| **cosmetic** | MCP comment vs name | Comment says `mcp_<server>_<tool>`; runtime `mcp__server__tool` | `agentLoop.ts` ~332; `mcpManager.ts` | Fix comment |
-| **cosmetic** | `evaluateClaimedCommands` API | Could embed task forms if caller passes forms; loop passes `[]` deliberately | `agentLoop.ts` 790–794; `claimChecker.ts` 538–541 | Keep `[]` or remove param to avoid future double-nudge |
-| **cosmetic** | Sub-agent feature subset | No requirements extract, empty history, auto mode; shares memory/log | `agentLoop.ts` 373, 481–508 | Document in spawn_subagent tool description |
-| **cosmetic** | Plan-first double user content | Plan call and main turn both see raw user message | `agentLoop.ts` 395–407 | Accept cost or strip duplication |
+| **risk** | Compaction + checklist + pins | Large pinned users + requirements tail + summary can still approach window; low-water loop escalates keep-N | `updatePromptView` `reservedTailTokens`; `requirementsChecklistMaxChars` | **Fixed 2026-09-30:** reserve tail in water marks; cap checklist ~5% ctx |
+| **risk** | Auto output cap vs huge ctx | Auto = max(ctx/2, 16384) — on 131k ctx allows ~65k gen; still independent of prompt size (runtime may OOM) | `resolveEffectiveMaxOutputTokens` (+ prompt est. in loop) | **Fixed 2026-09-30:** prompt-aware cap + safety margin |
+| **cosmetic** | `findRequirementsGateGaps` ≡ nudge gaps | Same filter for markers and nudges; judgment items never nudged | `findRequirementsNudgeGaps` vs `findRequirementsGateGaps` + `openJudgmentRequirementNotes` | **Fixed 2026-09-30:** split + documented roles |
+| **cosmetic** | MCP comment vs name | Comment says `mcp_<server>_<tool>`; runtime `mcp__server__tool` | `agentLoop.ts` ~332 | **Fixed 2026-09-30:** comment matches `mcp__` |
+| **cosmetic** | `evaluateClaimedCommands` API | Could embed task forms if caller passes forms; loop passes `[]` deliberately | `claimChecker.ts`; F38 in loop | **Fixed 2026-09-30:** task forms removed from API |
+| **cosmetic** | Sub-agent feature subset | No requirements extract, empty history, auto mode; shares memory/log | `spawn_subagent` tool describe in `tools/index.ts` | **Fixed 2026-09-30:** documented in tool description |
+| **cosmetic** | Plan-first double user content | Plan call and main turn both see raw user message | F6 inventory | **Fixed 2026-09-30:** documented cost (kept behavior) |
 
 ---
 
