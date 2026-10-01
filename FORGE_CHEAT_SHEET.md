@@ -186,7 +186,7 @@ Each trades extra model calls (latency/compute) for a specific reliability impro
 
 ## 14. Settings panel & full settings reference
 
-Click ⚙ in the chat header for an in-chat panel covering the settings worth tweaking often: context window (global + per-chat), temperature, approval toggles, keep-alive, status-message visibility, loop detection, the four accuracy levers above, sub-agent model/budget/depth, MCP server status, and the core web-search settings. Everything else is a plain `forge.*` VS Code setting.
+Click ⚙ in the chat header for an in-chat panel (it also shows a machine profile and recommended settings with Apply) covering the settings worth tweaking often: context window (global + per-chat), temperature, approval toggles, keep-alive, status-message visibility, loop detection, the four accuracy levers above, sub-agent model/budget/depth, MCP server status, and the core web-search settings. Everything else is a plain `forge.*` VS Code setting.
 
 | Setting | Default | What it does |
 |---|---|---|
@@ -197,17 +197,20 @@ Click ⚙ in the chat header for an in-chat panel covering the settings worth tw
 | `forge.temperature` | `0.2` | Sampling temperature |
 | `forge.maxAgentIterations` | `200` | Tool-call step cap in Agent/Ask/Plan |
 | `forge.autoModeMaxIterations` | `100000` | Same cap for Auto mode |
-| `forge.numCtx` | `32768` | Context window requested from Ollama |
+| `forge.numCtx` | `131072` | Context window requested from Ollama |
 | `forge.keepAliveMinutes` | `-1` | Minutes Ollama keeps a model loaded (`-1` = never unload) |
 | `forge.requireApprovalForWrites` | `true` | Stage edits for review (Auto mode bypasses) |
 | `forge.requireApprovalForCommands` | `true` | Ask before shell commands (Auto mode bypasses, denylist always applies) |
 | `forge.autoApproveCommands` | *(safe read-only list)* | Regex patterns that skip approval |
 | `forge.enableTabCompletion` | `true` | Ghost-text autocomplete on/off |
 | `forge.completionDebounceMs` | `250` | Delay before requesting a completion |
-| `forge.contextChunkCount` | `8` | Chunks `@codebase` returns |
-| `forge.maxContextFileKB` | `200` | Skip huge files when reading/indexing |
+| `forge.contextChunkCount` | `24` | Chunks `@codebase` returns |
+| `forge.maxContextFileKB` | `8192` | Skip huge files when reading/indexing |
+| `forge.maxOutputTokens` / `forge.maxOutputTokensCeiling` | `0` / `0` | Reply cap: `0` = auto from context; ceiling optionally limits auto |
+| `forge.verifyBeforeDone` | `auto` | Run a check (`check.sh`, `npm test`, `pytest`...) before accepting a final answer after edits; `off` or `custom` (`forge.verifyCommand`) |
+| `forge.requirements.enabled` | `false` | Optional requirements checklist (costs extra nudges and time) |
 | `forge.subAgentModel` | *(same as parent)* | Model for `spawn_subagent` turns |
-| `forge.subAgentMaxIterations` | `40` | Step cap per sub-agent task |
+| `forge.subAgentMaxIterations` | `200` | Step cap per sub-agent task |
 | `forge.maxSubAgentDepth` | `2` | Max sub-agent nesting (hard-ceiling 4) |
 | `forge.showStatusMessages` | `true` | Show the "what's it doing" status line |
 | `forge.loopDetection.enabled` | `true` | Stop likely infinite loops in Auto/Outcome |
@@ -228,7 +231,7 @@ Click ⚙ in the chat header for an in-chat panel covering the settings worth tw
 | `forge.webSearch.cacheTtlMinutes` | `10` | Cache TTL for identical queries/pages |
 | `forge.webSearch.blockedDomains` | *(none)* | Hostnames filtered out |
 | `forge.webSearch.respectRobotsTxt` | `true` | Honor target site's `robots.txt` |
-| `forge.webSearch.maxFetchChars` | `500000` | Cap on fetched-page body size |
+| `forge.webSearch.maxFetchChars` | `2000000` | Cap on fetched-page body size |
 | `forge.webSearch.searxngUrl` | *(none)* | Your SearXNG instance URL |
 
 ---

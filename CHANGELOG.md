@@ -5,6 +5,42 @@ that "did the last release actually fix what it claims to" has a paper trail
 you can check against — see the testing notes in the README for how each
 entry below was verified.
 
+## Unreleased (v0.15.0-work)
+
+User-visible changes since 0.14.0 (package version not yet bumped).
+
+**Fixes and behavior**
+- Large file writes no longer truncate: the output cap is derived from the context window, `write_file` accepts `append: true`, and the model is nudged not to resend a whole file.
+- A zero output cap no longer drops MLX to its 512-token default; Forge compacts once, then stops the turn if the prompt still fills the window.
+- Tool-argument fixes: `read_file` `line_start`/`line_end`, nested tool calls are unwrapped, `run_command` accepts an argv array.
+- Verify-before-done: after a turn that edited files, Forge runs a check before accepting the final answer (auto-detects `check.sh`, `npm test`, `pytest`, and similar).
+- All your follow-up messages are pinned word for word through context compaction.
+- Settings panel shows a machine profile and recommended settings, with Apply.
+- Prompt-prefix stability: volatile context moved out of the system prompt. On MLX (gpt-oss-20b) append-only steps hit about 97% cache and prefill about 15x faster.
+- Loop detector works in any agent mode and only exempts reads of new ranges.
+- Changing MLX settings (including context) restarts the managed server, or waits until the current turn ends.
+- Optional requirements checklist (off by default; it costs extra nudges and time in the A/B).
+- Removed `forge.requirements.llmExtract` (it was never implemented).
+
+**New settings (default)**
+- `forge.maxOutputTokensCeiling` (0 = no ceiling; only used when `forge.maxOutputTokens` is 0)
+- `forge.singleMessageSharePct` (25)
+- `forge.verifyBeforeDone` (`auto`; `off` | `auto` | `custom`), `forge.verifyCommand` (empty), `forge.verifyTimeoutSec` (300)
+- `forge.requirements.enabled` (false), `forge.requirements.maxNudges` (2), `forge.requirements.showInPrompt` (true)
+- `forge.context.pinnedUserMaxChars` (40000)
+- `forge.mlx.prefillStepSize` (0), `forge.mlx.promptCacheSize` (0), `forge.mlx.decodeConcurrency` (0), `forge.mlx.promptConcurrency` (0), `forge.mlx.draftModel` (empty), `forge.mlx.numDraftTokens` (0); 0 means the server's default
+- `forge.ollama.numBatch` (0 = Ollama's default)
+- `forge.mlx.modelLibraryPath` (`~/.cache/huggingface/hub`), `forge.mlx.extraModelFolders` (empty)
+
+**Changed defaults (generous limits for large-memory Macs)**
+- `forge.numCtx` and `forge.mlx.contextTokens`: 32768 -> 131072
+- `forge.maxOutputTokens`: 4096 -> 0 (auto)
+- `forge.maxContextFileKB`: 200 -> 8192
+- `forge.contextChunkCount`: 8 -> 24
+- `forge.subAgentMaxIterations`: 40 -> 200
+- `forge.mlx.promptCacheGB`: 4 -> 32
+- `forge.webSearch.maxFetchChars`: 500000 -> 2000000
+
 ## 0.14.0
 
 A three-part follow-up request, explicitly framed as three separate technical questions but — per the request itself for the third — implemented with the checkpoint/task-ledger/orchestration piece "designed together rather than as three separate features": (1) whether to standardize Forge's MCP integration and how, given the tension between MCP's native tool-calling and Forge's fenced-JSON text-contract loop; (2) root-causing recurring `write_file` indentation corruption; (3) unifying checkpoint/resume, mandatory task logging, and sequential sub-agent orchestration around one mechanism instead of three. All three are in this release.

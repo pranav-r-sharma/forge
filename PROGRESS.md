@@ -70,7 +70,7 @@ Then 0.15.0 items (see "Suggested release slicing" in the plan) once Phase 0 num
 **Superseding owner decision (2026-09-27): MLX is the actual direction — switch to it now, no more benchmark runs for the moment.** Changed `forge.provider`'s packaged default in `package.json` from `"ollama"` to `"mlx"` (also updated the doc comment in `src/util/config.ts`). Also activated it for real, live usage: added `forge.provider: "mlx"`, `forge.mlx.model` (the 4-bit snapshot, per the C2 decision above), and `forge.mlx.pythonPath` (pointing at the existing, already-approved `_devtools/mlx-venv` — no new install) to the owner's real VS Code user settings (`~/Library/Application Support/Code/User/settings.json`, outside this repo). `npm run typecheck && npm test && npm run compile`: clean (37/37, 1,338 checks) — the one test that checks a "default" provider value (`test_v15_factory.ts`) tests `parseProviderId`'s own unset/garbled-input fallback (a separate, intentional safety net, unrelated to the packaged schema default), so it was correctly unaffected. **Known gap:** `~/.forge/mlx-venv` (the fallback path `resolvePython()` uses when `forge.mlx.pythonPath` is empty, for use in *other* workspaces) does not exist yet — reusing this repo's dev venv works today via the explicit path, but is coupled to this checkout; creating a dedicated `~/.forge/mlx-venv` would be a *new* install and needs the owner's go-ahead first (standing rule 3), not done here.
 
 ## Next
-Owner review: requirements A/B (`_devtools/bench/results/2026-09-30-requirements-ab.md`). Optional: t09 cycle 6 with auto `bash check.sh` verify-before-done on a live MLX run.
+Run `PENDING_TESTS.md` LIVE-001 (round 3 requirements A/B after cache fix bcd8a8a) when the hardware is free. The owner has put this on hold until then.
 
 ## Verify-before-done + compaction pins (2026-09-30, bridge proposals 4–5)
 - **FIX 4:** `forge.verifyBeforeDone` (`off`|`auto`|`custom`, default `auto`), `forge.verifyCommand`, `forge.verifyTimeoutSec` (300s); `src/agent/verifyBeforeDone.ts` auto-detect order; runs on finals after `write_file` in Agent/Auto/Outcome (per-chat Outcome verify unchanged); final shows verify command + pass. E2e auto-detect: **t09** and **t11** → `bash check.sh`.
@@ -276,7 +276,17 @@ Three commits (`d912e59`, `720e092`, `fc20381`) close the harness gap found in t
 - **t09 cycle 4:** FAIL — 120 iters / 764 s, loop stop after 2 loop-warnings; `check.sh` IndentationError `inventory/cli.py:149`. **Harness bug:** `write_file` whitespace-tolerant match falsely "No changes — already matches" on indentation-only fixes (13 wasted edits); ambiguous-match lacked line numbers; did-you-mean `cwd` for `cmd`. **Fix:** `7186c10`. Evidence: `t09-harder-build-gptossq8-cycle4.*`.
 - **t09 cycle 5:** INCOMPLETE — SIGTERM at 543.7 s / 61 iters (not a valid attempt). Evidence: checker false positive on `python3 main.py -h` as per-file check (unfixed); early "No changes" again (verify); task-command nudge + model re-running spec forms. Evidence: `t09-harder-build-gptossq8-cycle5.*`. Logged in `_devtools/e2e/ITERATION_LOG.md`.
 
-**Last updated:** 2026-09-27 19:47 (t09 cycle 5 re-run logged; MLX library + harness fixes; next: t09 cycle 6 new sitting)
+## Audit fixes and follow-ups (2026-09-30)
+
+- **9aea0a0:** first harness audit risks 1-5: split nudge caps, verify transcript, loop detector update, Settings panel, "Apply all" for recommendations. New test `test_v15_harness_audit_fixes.ts`. Files: `agentLoop.ts`, `loopDetector.ts`, `config.ts`, `recommendations.ts`, `chatViewProvider.ts`, `media/webview.js`, `docs/HARNESS_REFERENCE.md`.
+- **2bc0387:** loop detector now only exempts reads of new ranges (fix for a regression from 9aea0a0). Files: `loopDetector.ts`, tests, `docs/HARNESS_REFERENCE.md`.
+- **c42aeb7:** harness section 4 open issues: provider-specific send-path toasts, verify skip on repeat, requirements tail budget, prompt-aware `maxOutputTokens`, claim-checker/MCP/sub-agent doc cleanups. New tests for provider health and large write. Files: `agentLoop.ts`, `claimChecker.ts`, `requirements.ts`, `verifyBeforeDone.ts`, `providerHealth.ts`, `config.ts`, `package.json`.
+- **b24795c:** zero `maxTokens` cap fix (MLX fell back to a 512-token default). Uses current prompt estimates, compacts once if the cap would be zero, aborts the turn if still full, guards wire clients. Test `test_v15_max_output_guard.ts`. Files: `agentLoop.ts`, `contextManager.ts`, `openaiCompatClient.ts`, `ollama/client.ts`.
+- **4b6bbf4:** docs only: second harness audit report `_devtools/bench/results/2026-09-30-second-audit.md` + `docs/HARNESS_REFERENCE.md`.
+- **fd05aac:** second audit fixes: MLX context changes restart or defer the server reload, requirements finals list gaps, verify/append/loop UX hardening. New `mlxRestartCoord.ts`, `shellProcessTree.ts`; test `test_v15_second_audit_fixes.ts`; `PENDING_TESTS.md` updated.
+- **3849dd7:** removed unused `forge.requirements.llmExtract`; documented LIVE-004/005 in `PENDING_TESTS.md` and the system-prompt audit.
+
+**Last updated:** 2026-09-30 (HEAD 3849dd7; next: PENDING_TESTS LIVE-001 when hardware is free)
 
 ## Large-file write truncation fix (2026-09-30)
 

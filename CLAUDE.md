@@ -54,6 +54,7 @@ Goal (one line) · Done (bullets, one per finished step) · Next (the single nex
 ## Repo notes
 - Source in `src/`; tests are ad-hoc `ts-node` scripts in `_devtools/runtime_test/` (they import `vscode`, which needs a stub module not present in this checkout — restoring it is plan step P0-1). No `npm test` yet.
 - Typecheck: `npm run typecheck`. Build: `npm run compile`.
+- **Hand-off:** keep HANDOFF.md current — update it at the end of every session/major milestone along with PROGRESS.md.
 - Benchmark/probe scripts live in `_devtools/bench/` (Python, standard library only).
 - **Harness reference:** `docs/HARNESS_REFERENCE.md` documents every feature, algorithm, setting and their interactions. Update it in the same commit whenever you add/change/remove a feature, setting, nudge or check; re-check the "Interactions" and "Known conflicts" sections.
 - **Pending live tests:** `PENDING_TESTS.md` lists tests that need the hardware; add an entry whenever a change needs a live run you cannot do now; mark done with date + result link.

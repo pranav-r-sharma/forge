@@ -271,6 +271,8 @@ Click the ⚙ icon in the header for an in-chat settings panel — the ones wort
 
 **Per-chat context window.** A chat pinned to a light/fast model can usually afford a bigger context window than your global default, since a smaller model leaves more memory/VRAM headroom than a bigger one would — set it per-chat in the Settings panel instead of raising `forge.numCtx` for every chat. Leave it blank to use the global default.
 
+**Machine profile and recommendations.** The panel also shows a read-only machine profile (memory, CPU, GPU, pressure) and recommended values for context, MLX cache and output limits, each with an **Apply** button (and Apply all). It only changes settings when you click.
+
 ### Chat rename
 
 Double-click a chat's tab title, or click the ✎ icon next to a chat in the **All Chats** panel, to rename it. A manually-set title is remembered and never gets silently overwritten by the normal first-message auto-title behavior.
@@ -381,17 +383,22 @@ All under `Settings → Extensions → Forge` (or search `forge.` in Settings):
 | `forge.temperature` | `0.2` | Sampling temperature for chat/agent |
 | `forge.maxAgentIterations` | `200` | Cap on tool-call steps per turn in Agent/Ask/Plan — generous by design now that the loop detector, not this number, is the real thrash-protection (was `25` through 0.2.x) |
 | `forge.autoModeMaxIterations` | `100000` | Same cap, but for Auto mode — effectively unbounded since Auto is meant to run hands-off |
-| `forge.numCtx` | `32768` | Context window requested from Ollama (`options.num_ctx`). Check `ollama show <model>` for your model's real max and raise this toward it if you have the RAM/VRAM — Ollama's own default is smaller and silently truncates long sessions without this |
+| `forge.numCtx` | `131072` | Context window requested from Ollama (`options.num_ctx`). Check `ollama show <model>` for your model's real max and raise this toward it if you have the RAM/VRAM — Ollama's own default is smaller and silently truncates long sessions without this |
 | `forge.keepAliveMinutes` | `-1` | Minutes Ollama keeps a model loaded after a request; `-1` = never unload between messages, `0` = Ollama's own ~5-minute default |
 | `forge.requireApprovalForWrites` | `true` | Stage edits for review instead of writing immediately (Auto mode always bypasses this) |
 | `forge.requireApprovalForCommands` | `true` | Ask before running shell commands (Auto mode always bypasses this except the dangerous-command denylist) |
 | `forge.autoApproveCommands` | *(safe read-only list)* | Regex patterns that skip the approval prompt |
 | `forge.enableTabCompletion` | `true` | Ghost-text autocomplete on/off |
 | `forge.completionDebounceMs` | `250` | Delay before requesting a completion |
-| `forge.contextChunkCount` | `8` | How many chunks `@codebase` returns |
-| `forge.maxContextFileKB` | `200` | Skip huge files when reading/indexing |
+| `forge.contextChunkCount` | `24` | How many chunks `@codebase` returns |
+| `forge.maxContextFileKB` | `8192` | Skip huge files when reading/indexing |
+| `forge.maxOutputTokens` | `0` | Max tokens per reply. `0` = auto (from the context window minus the prompt) |
+| `forge.maxOutputTokensCeiling` | `0` | Optional cap on the auto output limit (`0` = none) |
+| `forge.verifyBeforeDone` | `auto` | After a turn that edited files, run a check before the final answer: `off`, `auto` (finds `check.sh`, `npm test`, `pytest`...) or `custom` (uses `forge.verifyCommand`) |
+| `forge.requirements.enabled` | `false` | Optional requirements checklist (costs extra nudges and time) |
+| `forge.mlx.*` speed settings, `forge.ollama.numBatch` | `0` | `0` = the server's default; see the Settings panel |
 | `forge.subAgentModel` | *(same as parent)* | Model used for `spawn_subagent` turns |
-| `forge.subAgentMaxIterations` | `40` | Tool-call step cap per sub-agent task |
+| `forge.subAgentMaxIterations` | `200` | Tool-call step cap per sub-agent task |
 | `forge.maxSubAgentDepth` | `2` | Max sub-agent nesting depth (hard-ceilinged at 4 regardless) |
 | `forge.showStatusMessages` | `true` | Show the brief "what's it doing right now" line while the agent works |
 | `forge.loopDetection.enabled` | `true` | Detect and stop likely infinite loops in Auto/Outcome mode. `check_background_command` is always exempt regardless of this setting |
@@ -412,7 +419,7 @@ All under `Settings → Extensions → Forge` (or search `forge.` in Settings):
 | `forge.webSearch.cacheTtlMinutes` | `10` | How long identical queries/pages are served from cache instead of hitting the network again |
 | `forge.webSearch.blockedDomains` | *(none)* | Hostnames always filtered out of search results |
 | `forge.webSearch.respectRobotsTxt` | `true` | Whether `web_fetch` checks and honors the target site's `robots.txt` |
-| `forge.webSearch.maxFetchChars` | `500000` | Cap on how much of a fetched page's raw body is read before extraction |
+| `forge.webSearch.maxFetchChars` | `2000000` | Cap on how much of a fetched page's raw body is read before extraction |
 | `forge.webSearch.searxngUrl` | *(none)* | Your SearXNG instance URL, only used when `provider` is `searxng` or as part of the `auto` chain |
 
 API keys for `tavily`/`brave`/`google` are NOT in this table — they're stored in `vscode.SecretStorage`, set via **Forge: Set Web Search API Key** or the Settings panel, not `settings.json`. See "Web search" above. **`forge.mcp.servers` config, including any API token a server's `env` needs, is a plain `settings.json` array, NOT `SecretStorage`** — a server's config is a whole command+args+env shape, not a single secret string SecretStorage has a natural place for. See Known limitations.
