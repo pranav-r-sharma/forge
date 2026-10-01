@@ -36,8 +36,8 @@ Read, in order: `CLAUDE.md`, `PROGRESS.md`, `docs/HARNESS_REFERENCE.md`, `PENDIN
 
 ## Working method
 
-- Claude orchestrates and reviews; Cursor (composer-2.5) does the tasks via `bridge wake cursor "<task>" --model composer-2.5`. Read replies with `bridge read claude`. Always review Cursor's diff (`git show <hash>`).
-- Cursor usage ran out on 2026-09-30 (Opus resets 10/11). Fallback: a Claude sub-agent.
+- Claude orchestrates and reviews; Cursor (composer-2.5) does large tasks via `bridge wake cursor "<task>" --model composer-2.5`. Read replies with `bridge read claude`. Always review Cursor's diff (`git show <hash>`).
+- Cost-aware (owner, 2026-09-30): do small work yourself; delegate only large work where it is cheaper. Cursor usage ran out on 2026-09-30 (Opus resets 10/11); fallback for large work: a Claude sub-agent.
 - Harness fixes must be universal (any model, any task). The model fixes its own mistakes; the harness gives clear, accurate messages.
 - Keep replies short and plain. State the remaining token budget before any long or background run (`CLAUDE.md` rule 7).
 
