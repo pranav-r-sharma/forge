@@ -16,3 +16,13 @@ _devtools/**
 *.vsix
 HANDOFF.md
 PROGRESS.md
+DECISIONS.md
+TASK_LOG.md
+USER_BRIEF.md
+KNOWLEDGE_BASE.md
+CODE_MAP.md
+PENDING_TESTS.md
+logs/**
+docs/briefs/**
+docs/archive/**
+media/README.md

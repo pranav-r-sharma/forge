@@ -59,3 +59,9 @@ Goal (one line) · Done (bullets, one per finished step) · Next (the single nex
 - Benchmark/probe scripts live in `_devtools/bench/` (Python, standard library only).
 - **Harness reference:** `docs/HARNESS_REFERENCE.md` documents every feature, algorithm, setting and their interactions. Update it in the same commit whenever you add/change/remove a feature, setting, nudge or check; re-check the "Interactions" and "Known conflicts" sections.
 - **Pending live tests:** `PENDING_TESTS.md` lists tests that need the hardware; add an entry whenever a change needs a live run you cannot do now; mark done with date + result link.
+
+## Project documents (owner's frameworks, adopted 2026-10-03; see `DECISIONS.md` D-016)
+Keep these current as work happens (framework: project-memory-and-history; read `/Users/pranavsharma/Code Projects/Knowledge Base/CATALOGUE.md` for the full set):
+- `USER_BRIEF.md` owner intent in their words · `DECISIONS.md` every real choice (`D-###`, all options, one recommendation, status; never delete or edit history, supersede) · `TASK_LOG.md` one row per task (`T-###`, never reused) · `PROGRESS.md` is this repo's progress log (the framework's `PROGRESS_LOG.md`) · `HANDOFF.md` overwritten at every pause · `KNOWLEDGE_BASE.md` append-only lessons and rejected approaches, with evidence · `CODE_MAP.md` · `CHANGELOG.md` · `PENDING_TESTS.md` · `logs/AGENT_USAGE.md` every worker run, including your own.
+- Delegated tasks: save the brief as `docs/briefs/T-###-<slug>.md`. Superseded docs go to `docs/archive/`, never deleted. Every folder has a short `README.md`. Never commit data, model weights or secrets.
+- If documents disagree, trust `USER_BRIEF.md`, then `DECISIONS.md`, then `PROGRESS.md` and `git log`; `HANDOFF.md` loses.

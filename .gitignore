@@ -9,3 +9,14 @@ _devtools/e2e/node_modules/
 .forge/traces/
 _devtools/runtime_test/fixtures/memroot*/
 .agent-bridge/
+
+# Never commit data, model weights or secrets (repo-structure framework)
+*.safetensors
+*.gguf
+*.ckpt
+*.pt
+*.pth
+.env
+.env.*
+*.pem
+*.key

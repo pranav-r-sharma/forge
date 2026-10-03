@@ -5,6 +5,7 @@
 ## State
 
 - Repo `Local LLM Tools/forge`, branch `v0.15.0-work`, HEAD `dc3fca0` (plus the docs commit that adds this file). **Not pushed** since `7898da9`. Never commit to or push `main`/`master`, and push only when the owner asks.
+- Revert point before the frameworks work: git tag `pre-frameworks-2026-10-03` (= `86b1995`). Docs-only changes after it.
 - Clean tree except one untracked file, `_devtools/bench/req-ab-round2.log` (owner has not said commit or ignore).
 - Tests: `node _devtools/run-tests.js` → 55 files, 1,953 checks, all pass. Typecheck clean. Nothing is running.
 - Test model: gpt-oss-20b MXFP4-Q8 on MLX only. **Live tests are on HOLD** — do not load any model until the owner says the hardware is free.
@@ -32,7 +33,7 @@ Earlier work (2026-09-28..30: large-file fix, generous limits, machine profile, 
 
 ## Resume order
 
-1. Read `CLAUDE.md`, this file, `PROGRESS.md` ("Next"), `docs/HARNESS_REFERENCE.md`, `PENDING_TESTS.md`, `KNOWLEDGE_BASE.md`.
+1. Read `CLAUDE.md`, `USER_BRIEF.md`, `DECISIONS.md` (open: D-015), this file, `PROGRESS.md` ("Next"), `docs/HARNESS_REFERENCE.md`, `PENDING_TESTS.md`, `KNOWLEDGE_BASE.md`.
 2. `git status` and `git log -3` to confirm the state above.
 3. Ask the owner whether the hardware is free. If yes, start LIVE-001 (memory-safe: one model, check free memory and swap, stop at the first failure).
 4. Give a status update every 45 minutes even when idle; state the remaining token count before any long or background run (`CLAUDE.md` rule 7).
