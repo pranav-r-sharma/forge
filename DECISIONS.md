@@ -76,3 +76,10 @@ Date: 2026-10-03   Status: approved (proxy: owner said "dont break anything")
 Options: A) keep `PROGRESS.md` and the existing layout, add the missing framework files beside it (recommended); B) rename `PROGRESS.md` to `PROGRESS_LOG.md` and move code into `src/<package>/` and `scripts/` as the frameworks describe.
 Decision: A. `PROGRESS.md` plays the role of `PROGRESS_LOG.md`. Code stays under `src/<area>/` (about 100 files and the extension's build config depend on those paths); `_devtools/` plays the role of `scripts/dev/`. B is higher risk for no gain now.
 Revisit: if the owner wants the exact framework names or layout.
+
+### D-017 — Put the project on GitHub `main`
+Date: 2026-10-03   Status: approved
+Finding: GitHub `main` (2 commits, 0 files: "Test: verify push access", "Remove test file", tip 6881eb8) and `v0.15.0-work` share no history, so a merge is impossible without `--allow-unrelated-histories`.
+Options: 1) make `main` equal `v0.15.0-work` with a force-push (recommended; `main` held no files); 2) merge with `--allow-unrelated-histories`; 3) leave `main` alone.
+Decision: 1 (owner, "1"). Done with `--force-with-lease` against 6881eb8; the old tip is kept as tag `old-main-6881eb8`. GitHub's default branch is still `v0.15.0-work`. Work continues on `v0.15.0-work`; `main` is moved forward to it only when the owner asks.
+Revisit: to undo, `git push --force-with-lease origin old-main-6881eb8:main`.

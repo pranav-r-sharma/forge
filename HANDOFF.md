@@ -5,7 +5,7 @@ Written to the owner's `session-handoff` framework (`/Users/pranavsharma/Code Pr
 ## 1. Header
 
 - **Written:** 2026-10-03, by Claude (Sonnet 5.5; the session started on Opus 5.5 and switched models mid-way).
-- **Repo:** `/Users/pranavsharma/Code Projects/Local LLM Tools/forge`. **Branch:** `v0.15.0-work`. **Last code commit:** `dc3fca0`. **Last commit before this handoff:** `f06615e`. **Pushed:** yes, `origin/v0.15.0-work` was in sync at `f06615e` (GitHub `pranav-r-sharma/forge`). The commit that adds this file is not pushed yet.
+- **Repo:** `/Users/pranavsharma/Code Projects/Local LLM Tools/forge`. **Branch:** `v0.15.0-work`. **Last code commit:** `dc3fca0`. **Previous handoff commit:** `a0e7856`. **Pushed:** yes. GitHub `pranav-r-sharma/forge`: `origin/v0.15.0-work` and `origin/main` both point at the commit that adds this update (see `git log -1`). GitHub's default branch is `v0.15.0-work`.
 - **Session goal:** the owner added six items on top of "run the live tests": (1) message queue, (2) fix the always-low context meter and show more memory info, (3) stop the agent stopping abruptly, (4) a way for Cursor to drive Forge without the UI, (5) a Cursor→Forge bridge like the existing Claude→Cursor one, (6) a robust grep. Then: adopt the owner's frameworks in the repo, push, and refresh this handoff.
 
 ## 2. What happened (chronological)
@@ -22,7 +22,8 @@ Written to the owner's `session-handoff` framework (`/Users/pranavsharma/Code Pr
 10. Owner: "use my handoff framework and do the needful" → overwrote HANDOFF.md, created `KNOWLEDGE_BASE.md` and `logs/AGENT_USAGE.md` (T-006, `86b1995`).
 11. Owner: "update the repo according to my frameworks, be very careful, commit first." I tagged `pre-frameworks-2026-10-03` (= `86b1995`), then added docs only: `USER_BRIEF.md`, `DECISIONS.md` (D-001..D-016, 11 back-filled), `TASK_LOG.md`, `CODE_MAP.md`, folder READMEs, `docs/briefs/`, `docs/archive/`, `.gitignore` secrets/weights patterns, `.vscodeignore` excludes, a CLAUDE.md section (T-007, `f06615e`). No code moved.
 12. Owner said the update was available to clone; it was **not pushed**. I checked the remote, asked, and on "yes" pushed `7898da9..f06615e` (normal push).
-13. Owner said the framework was updated. I read the new `session-handoff` framework and rewrote this file to its 12-section format (T-009).
+13. Owner asked to merge into `main`. I found `main` (2 commits, 0 files, tip `6881eb8`) shared **no history** with `v0.15.0-work`; `git merge --ff-only` refused ("unrelated histories"), nothing changed. I corrected my earlier wrong claims ("159 ahead", "default branch is main"). Options given; owner chose **1**: overwrite `main` with `v0.15.0-work`. Done with `--force-with-lease` against `6881eb8`; old tip kept as tag `old-main-6881eb8` (D-017, T-010).
+14. Owner said the framework was updated. I read the new `session-handoff` framework and rewrote this file to its 12-section format (T-009).
 
 ## 3. Owner's intent and preferences
 
@@ -31,12 +32,12 @@ Written to the owner's `session-handoff` framework (`/Users/pranavsharma/Code Pr
 - Corrections they made: (a) "so you are not going to follow the cost aware approach" — they expect a new rule to apply right away, not "next session"; (b) "are you cursor at all? doesn't seem like" — they want visible evidence of delegation; say plainly who did what; (c) asked "global or repo level" — they care where a rule lives; (d) said "the framework has been updated" — frameworks change, re-read them before using.
 - Style: brief, plain words; status updates (every 45 minutes even when idle); remaining token count stated before long/background runs. They answer questions with short "yes". They prefer to be asked on real design choices and chose the simpler file mailbox over my recommendation.
 - Live tests are on **HOLD** while they use the Mac. Never load a model until they say it is free.
-- They did not answer: should the bridge default on (D-015); commit or ignore the stray `_devtools/bench/req-ab-round2.log`; whether to push the revert tag.
+- They have not answered: should the bridge default on (D-015). They decided: ignore the stray log, push the revert tag, overwrite `main` with `v0.15.0-work` (option 1, D-017).
 
 ## 4. Decisions
 
 - **Decided** (see `DECISIONS.md`): D-012 queue + steer (owner; B and C rejected); D-013 file mailbox (owner; HTTP server+CLI and fully headless rejected); D-014 grep = upgrade `search_code` (owner; a separate grep tool rejected); D-016 keep `PROGRESS.md` and `src/<area>/` instead of the framework's exact names (approved by proxy: owner said "don't break anything"). D-001..D-011 back-filled from older rules.
-- **Pending on the owner:** D-015 bridge on by default? (ships off, the safe state); D-010 requirements checklist default (revisit after LIVE-001); whether to rename to the framework's exact file names (D-016 revisit); commit or ignore the stray log; push the revert tag.
+- **Pending on the owner:** D-015 bridge on by default? (ships off, the safe state); D-010 requirements checklist default (revisit after LIVE-001); whether to rename to the framework's exact file names (D-016 revisit). Resolved: stray log gitignored, tag pushed, `main` updated (D-017).
 
 ## 5. Current state
 
@@ -68,14 +69,14 @@ Untested/assumed: everything involving the real model, MLX server, the webview U
 ## 7. Open items (priority order)
 
 1. Ask the owner if the Mac is free; if yes run LIVE-001 (requirements A/B round 3), then recommend whether `forge.requirements.enabled` stays off. Then LIVE-002..LIVE-008 in `PENDING_TESTS.md`.
-2. Owner questions: D-015 (bridge default), the stray log, push the tag, exact framework names.
+2. Owner questions: D-015 (bridge default), exact framework names (D-016). Resolved: stray log gitignored, tag pushed, `main` updated (D-017).
 3. T-008: "show more memory information" in the panel (owner item 2, first half). Not started.
 4. Known limits: steered messages are not a requirements source; "Send now" does not cancel an in-flight model call.
 5. Re-run the owner's docs task on the M5 Max.
 
 ## 8. Hidden state
 
-- Git tag `pre-frameworks-2026-10-03` exists **locally only** (not pushed). Older tag `v0.15.0-dev.1` exists.
+- Git tags on GitHub: `pre-frameworks-2026-10-03` (revert point, `86b1995`), `old-main-6881eb8` (the old empty `main`), `v0.15.0-dev.1`.
 - Processes seen at write time: Ollama app (pid 1073, idle as far as I know), and `caffeinate -d -i -s -t 15000` (pid 8537, started 6:09 PM). **I did not start that caffeinate**; it is not mine, so do not kill it. No `mlx_lm` server and no Cursor agent running. Swap used: 0.
 - `~/.claude/rules/agent-bridge.md` was edited this session (global cost-aware line). It loads at session start.
 - Bridge mailbox: `.agent-bridge/` (gitignored) holds `inbox/cursor`, `inbox/claude`, `archive`, `wake.log`. Two old 2026-09-30 docs-task messages and today's replies were read and archived.
@@ -83,6 +84,8 @@ Untested/assumed: everything involving the real model, MLX server, the webview U
 - No credentials or secrets were used or written.
 
 ## 9. Gotchas
+
+- **Clone:** `git clone https://github.com/pranav-r-sharma/forge.git` (default branch is `v0.15.0-work`) or `git clone --branch main https://github.com/pranav-r-sharma/forge.git`; both give the same code. Keep working on `v0.15.0-work`; move `main` forward only when the owner asks (`git push origin v0.15.0-work:main`, fast-forward).
 
 - `bridge wake cursor "<task>" --model <id>`: the model flag goes **after** the task. Run it in the background and wait; never use `-fast` or `auto`.
 - Cursor says "Connection stalled" sometimes: retry once. If "out of usage", use a Claude sub-agent (`sonnet-low`).

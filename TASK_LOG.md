@@ -12,4 +12,5 @@ One row per task. IDs are never reused. Tasks `P0-1`..`P0-15` and the later phas
 | T-006 | 2026-10-03 | Hand-off, knowledge base, agent usage log | self | done | 86b1995 | — |
 | T-007 | 2026-10-03 | Bring the repo in line with the owner's frameworks (docs only, no code moves) | self | done | f06615e | — |
 | T-009 | 2026-10-03 | Rewrite HANDOFF.md to the updated session-handoff framework (12 sections) | self | done | see `git log` | — |
+| T-010 | 2026-10-03 | Make GitHub `main` equal `v0.15.0-work` (D-017) | self | done | see `git log` | — |
 | T-008 | — | Show more memory information in the panel (owner item 2, first half) | — | not started | — | — |
