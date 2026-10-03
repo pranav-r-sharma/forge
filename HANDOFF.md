@@ -5,7 +5,7 @@ Written to the owner's `session-handoff` framework (`/Users/pranavsharma/Code Pr
 ## 1. Header
 
 - **Written:** 2026-10-03, by Claude (Sonnet 5.5; the session started on Opus 5.5 and switched models mid-way).
-- **Repo:** `/Users/pranavsharma/Code Projects/Local LLM Tools/forge`. **Branch:** `v0.15.0-work`. **Last code commit:** `dc3fca0`. **Previous handoff commit:** `a0e7856`. **Pushed:** yes. GitHub `pranav-r-sharma/forge`: `origin/v0.15.0-work` and `origin/main` both point at the commit that adds this update (see `git log -1`). GitHub's default branch is `v0.15.0-work`.
+- **Repo:** `/Users/pranavsharma/Code Projects/Local LLM Tools/forge`. **Branch:** `v0.15.0-work`. **Last code commit:** `dc3fca0`. **Previous handoff commit:** `a0e7856`. **Pushed:** yes. GitHub `pranav-r-sharma/forge`: `origin/v0.15.0-work` and `origin/main` both point at the commit that adds this update (see `git log -1`). GitHub's default branch is `main` (switched from `v0.15.0-work` on 2026-10-03 at the owner's request).
 - **Session goal:** the owner added six items on top of "run the live tests": (1) message queue, (2) fix the always-low context meter and show more memory info, (3) stop the agent stopping abruptly, (4) a way for Cursor to drive Forge without the UI, (5) a Cursor→Forge bridge like the existing Claude→Cursor one, (6) a robust grep. Then: adopt the owner's frameworks in the repo, push, and refresh this handoff.
 
 ## 2. What happened (chronological)
@@ -23,7 +23,7 @@ Written to the owner's `session-handoff` framework (`/Users/pranavsharma/Code Pr
 11. Owner: "update the repo according to my frameworks, be very careful, commit first." I tagged `pre-frameworks-2026-10-03` (= `86b1995`), then added docs only: `USER_BRIEF.md`, `DECISIONS.md` (D-001..D-016, 11 back-filled), `TASK_LOG.md`, `CODE_MAP.md`, folder READMEs, `docs/briefs/`, `docs/archive/`, `.gitignore` secrets/weights patterns, `.vscodeignore` excludes, a CLAUDE.md section (T-007, `f06615e`). No code moved.
 12. Owner said the update was available to clone; it was **not pushed**. I checked the remote, asked, and on "yes" pushed `7898da9..f06615e` (normal push).
 13. Owner said the framework was updated. I read the new `session-handoff` framework and rewrote this file to its 12-section format (T-009).
-14. Owner asked to merge into `main`. I found `main` (2 commits, 0 files, tip `6881eb8`) shared **no history** with `v0.15.0-work`; `git merge --ff-only` refused ("unrelated histories"), nothing changed. I corrected my earlier wrong claims ("159 ahead", "default branch is main"). Options given; owner chose **1**: overwrite `main` with `v0.15.0-work`. Done with `--force-with-lease` against `6881eb8`; old tip kept as tag `old-main-6881eb8` (D-017, T-010).
+14. Owner asked to merge into `main`. I found `main` (2 commits, 0 files, tip `6881eb8`) shared **no history** with `v0.15.0-work`; `git merge --ff-only` refused ("unrelated histories"), nothing changed. I corrected my earlier wrong claims ("159 ahead", "default branch is main"). Options given; owner chose **1**: overwrite `main` with `v0.15.0-work`. Done with `--force-with-lease` against `6881eb8`; old tip kept as tag `old-main-6881eb8` (D-017, T-010). Owner then said yes to making `main` GitHub's default branch; done with `gh repo edit --default-branch main`.
 
 ## 3. Owner's intent and preferences
 
@@ -85,7 +85,7 @@ Untested/assumed: everything involving the real model, MLX server, the webview U
 
 ## 9. Gotchas
 
-- **Clone:** `git clone https://github.com/pranav-r-sharma/forge.git` (default branch is `v0.15.0-work`) or `git clone --branch main https://github.com/pranav-r-sharma/forge.git`; both give the same code. Keep working on `v0.15.0-work`; move `main` forward only when the owner asks (`git push origin v0.15.0-work:main`, fast-forward).
+- **Clone:** `git clone https://github.com/pranav-r-sharma/forge.git` (default branch is now `main`); `git checkout v0.15.0-work` for the working branch; both hold the same code. Keep working on `v0.15.0-work`; move `main` forward only when the owner asks (`git push origin v0.15.0-work:main`, fast-forward).
 
 - `bridge wake cursor "<task>" --model <id>`: the model flag goes **after** the task. Run it in the background and wait; never use `-fast` or `auto`.
 - Cursor says "Connection stalled" sometimes: retry once. If "out of usage", use a Claude sub-agent (`sonnet-low`).

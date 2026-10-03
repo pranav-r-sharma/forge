@@ -81,5 +81,5 @@ Revisit: if the owner wants the exact framework names or layout.
 Date: 2026-10-03   Status: approved
 Finding: GitHub `main` (2 commits, 0 files: "Test: verify push access", "Remove test file", tip 6881eb8) and `v0.15.0-work` share no history, so a merge is impossible without `--allow-unrelated-histories`.
 Options: 1) make `main` equal `v0.15.0-work` with a force-push (recommended; `main` held no files); 2) merge with `--allow-unrelated-histories`; 3) leave `main` alone.
-Decision: 1 (owner, "1"). Done with `--force-with-lease` against 6881eb8; the old tip is kept as tag `old-main-6881eb8`. GitHub's default branch is still `v0.15.0-work`. Work continues on `v0.15.0-work`; `main` is moved forward to it only when the owner asks.
+Decision: 1 (owner, "1"). Done with `--force-with-lease` against 6881eb8; the old tip is kept as tag `old-main-6881eb8`. GitHub's default branch was `v0.15.0-work`; the owner then approved switching it to `main` (done 2026-10-03, `gh repo edit --default-branch main`). Work continues on `v0.15.0-work`; `main` is moved forward to it only when the owner asks.
 Revisit: to undo, `git push --force-with-lease origin old-main-6881eb8:main`.
