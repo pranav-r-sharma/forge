@@ -51,7 +51,7 @@ Each item: **purpose · trigger · location · settings · mutates**
 | F25 | Model routing per mode | Session > routing > chatModel | Send | `resolveModelForMode` | `modelRouting`, `chatModel` | Model id |
 | F26 | Thinking | off/on/auto (2 fails → on) | Each iter | `thinkingForStep` | `thinking` **auto** | LLM option |
 | F27 | Max output tokens | Avoid silent 512 default; prompt-aware cap | Each iter | `resolveEffectiveMaxOutputTokens` + `promptViewTokenEstimate` (max of fresh chars/ cpt and prior step est.); if cap ≤ 0 → `forceCompactionForOutput` on `updatePromptView` once, then **final** “context is full” if still ≤ 0 (never call model without a positive cap; `MIN_AGENT_OUTPUT_TOKEN_FLOOR` 2048 is the design target for auto headroom) | `maxOutputTokens` **0**=auto clamped to ctx−prompt−safety; explicit clamped too; `maxOutputTokensCeiling` 0 | `maxTokens` (&gt;0 only on wire; clients warn on 0) |
-| F28 | numCtx / compaction window | Context for compaction + Ollama | Each iter | `getConfig().numCtx` | Ollama: `numCtx` 131072; else `mlx.contextTokens` 131072 | LLM + thresholds |
+| F28 | numCtx / compaction window | Context for compaction + Ollama | Each iter | `getConfig().numCtx` | Ollama: `numCtx` 131072; else `mlx.contextTokens` 131072 | LLM + thresholds; context meter ceiling (used = full prompt incl. cache + reply, `contextUsedTokens`) |
 | F29 | Harmony preprocess | Split analysis/final channels | Every reply | `toolProtocol.ts` | — | Parse source vs display |
 | F30 | Tool call parsing | `forge_action` fence, native accept | After LLM | `parseToolCall`, `tryAcceptNativeToolCall`, `resolveModelResponse` | — | `call`, display text |
 | F31 | Plan mode | No tools; plain answer | `mode==='plan'` | `agentLoop.ts` ~710 | — | Final text only |
@@ -256,6 +256,12 @@ Verified by reviewer 2026-09-30: row 1 re-classified (false positive).
 | **cosmetic** | Loop detection scope copy | Setting description matches all modes | `package.json` `loopDetection.enabled` | **Fixed 2026-09-30** (doc) |
 | **cosmetic** | Missing `done` on some exits | Context-full + verify cancel | `agentLoop.ts` | **Fixed 2026-09-30** |
 | **cosmetic** | Sub-agent model copy | Wording not Ollama-only | `package.json` `subAgentModel` | **Fixed 2026-09-30** |
+
+### Owner-reported issues (2026-10-03)
+
+| Sev | Issue | Scenario | Evidence | Status |
+|-----|-------|----------|----------|--------|
+| **bug** | Context meter always low | Meter summed `promptTokens` (EVALUATED only, cached prefix excluded) + reply; warm cache → ~2% of real prompt (trace: 96 evaluated vs 5131 cached) | `contextUsage.ts` `contextUsedTokens`; `chatViewProvider.ts` `buildHwStatus`; metrics event carries `estPromptTokens` | **Fixed 2026-10-03:** full prompt = `promptTotalTokens` → evaluated+cached → max(estimate, evaluated) (Ollama) + reply |
 
 ---
 

@@ -27,6 +27,7 @@ import { logger } from '../util/logger';
 import { ChatSession, ChatSessionServices } from './chatSession';
 import { ExtensionToWebviewMessage, HwStatus, InitState, SearchResultItem, SettingsSnapshot, UiTranscriptEntry, WebviewToExtensionMessage } from '../webview/protocol';
 import { OllamaCallMetrics, OllamaPsModel } from '../ollama/types';
+import { contextUsedTokens } from '../util/contextUsage';
 
 /**
  * Thin webview host + multi-session ("multitask") manager. All the actual
@@ -856,7 +857,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
    * external dependency), best-effort GPU utilization via nvidia-smi (see
    * hwMetrics.ts — silently empty on non-NVIDIA machines, the common case
    * for local Ollama), and the active session's context-window usage
-   * (last call's prompt+eval token count vs. its configured ceiling).
+   * (last call's FULL prompt incl. cached prefix + reply tokens vs. its configured ceiling — see contextUsage.ts).
    */
   private async buildHwStatus(): Promise<HwStatus> {
     const loaded = await this.loadedModelsCached();
@@ -865,7 +866,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     const active = this.activeSession();
     const lastMetrics = this.activeSessionId ? this.lastMetricsBySession.get(this.activeSessionId) : undefined;
     const maxTokens = active?.numCtxOverride || cfg.numCtx;
-    const usedTokens = lastMetrics ? (lastMetrics.promptTokens || 0) + (lastMetrics.evalTokens || 0) : undefined;
+    const usedTokens = contextUsedTokens(lastMetrics);
     const mem = snap.memory;
     // `ram` stays populated for older readers: from the accurate sample when we have one, else the legacy os-module approximation.
     const ram = mem ? { usedGB: mem.usedGB, totalGB: mem.totalGB } : getRamStatus();

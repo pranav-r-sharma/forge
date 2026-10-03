@@ -726,7 +726,7 @@ export async function runAgentTurn(
         onToken: (token) => emit({ type: 'token', text: token }),
         onMetrics: (metrics) => {
           iterState.metrics = metrics;
-          emit({ type: 'metrics', metrics });
+          emit({ type: 'metrics', metrics: { ...metrics, estPromptTokens: iterState.estPromptTokens } });
         },
       });
     } catch (err: any) {
