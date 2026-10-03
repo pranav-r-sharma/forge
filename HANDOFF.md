@@ -22,8 +22,8 @@ Written to the owner's `session-handoff` framework (`/Users/pranavsharma/Code Pr
 10. Owner: "use my handoff framework and do the needful" → overwrote HANDOFF.md, created `KNOWLEDGE_BASE.md` and `logs/AGENT_USAGE.md` (T-006, `86b1995`).
 11. Owner: "update the repo according to my frameworks, be very careful, commit first." I tagged `pre-frameworks-2026-10-03` (= `86b1995`), then added docs only: `USER_BRIEF.md`, `DECISIONS.md` (D-001..D-016, 11 back-filled), `TASK_LOG.md`, `CODE_MAP.md`, folder READMEs, `docs/briefs/`, `docs/archive/`, `.gitignore` secrets/weights patterns, `.vscodeignore` excludes, a CLAUDE.md section (T-007, `f06615e`). No code moved.
 12. Owner said the update was available to clone; it was **not pushed**. I checked the remote, asked, and on "yes" pushed `7898da9..f06615e` (normal push).
-13. Owner asked to merge into `main`. I found `main` (2 commits, 0 files, tip `6881eb8`) shared **no history** with `v0.15.0-work`; `git merge --ff-only` refused ("unrelated histories"), nothing changed. I corrected my earlier wrong claims ("159 ahead", "default branch is main"). Options given; owner chose **1**: overwrite `main` with `v0.15.0-work`. Done with `--force-with-lease` against `6881eb8`; old tip kept as tag `old-main-6881eb8` (D-017, T-010).
-14. Owner said the framework was updated. I read the new `session-handoff` framework and rewrote this file to its 12-section format (T-009).
+13. Owner said the framework was updated. I read the new `session-handoff` framework and rewrote this file to its 12-section format (T-009).
+14. Owner asked to merge into `main`. I found `main` (2 commits, 0 files, tip `6881eb8`) shared **no history** with `v0.15.0-work`; `git merge --ff-only` refused ("unrelated histories"), nothing changed. I corrected my earlier wrong claims ("159 ahead", "default branch is main"). Options given; owner chose **1**: overwrite `main` with `v0.15.0-work`. Done with `--force-with-lease` against `6881eb8`; old tip kept as tag `old-main-6881eb8` (D-017, T-010).
 
 ## 3. Owner's intent and preferences
 
