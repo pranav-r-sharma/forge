@@ -11,3 +11,5 @@ Lessons, pitfalls and rejected approaches. Never delete entries. Each cites its 
 - **Auto mode classifier blocks edits to the global rules file** (`~/.claude/rules/agent-bridge.md`) as self-modification until the owner approves explicitly.
 - Rejected: a second, separate `grep` tool next to `search_code` (more tools for the model to choose between). Chosen: upgrade `search_code` in place.
 - Rejected: a local HTTP server + CLI for the Cursor link, and a fully headless Forge. Owner chose the file mailbox (simpler; VS Code must stay open).
+- The owner's frameworks change between sessions (`session-handoff` was added on 2026-10-03 after the first handoff was written). Re-read `CATALOGUE.md` and the matching framework before writing a handoff or logs; do not reuse an old format from memory.
+- A `caffeinate` process may already be running that the agent did not start (pid 8537 on 2026-10-03). Never kill it (long-runs framework: the owner protects it).
