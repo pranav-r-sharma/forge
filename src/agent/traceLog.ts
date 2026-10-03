@@ -176,3 +176,72 @@ export class TraceWriter {
     }
   }
 }
+
+// ---- turn lifecycle events (separate file so the per-iteration trace and its report tooling are unchanged) ----
+
+/** `.forge/traces/<sessionId>.turns.jsonl`: why every turn ended, and which model calls started but never returned. */
+export function turnEventsPathFor(workspaceRootFsPath: string, sessionId: string): string {
+  return path.join(workspaceRootFsPath, '.forge', 'traces', `${sessionId.replace(/[^\w.-]/g, '_')}.turns.jsonl`);
+}
+
+export type TurnEndReason =
+  | 'final' // a normal answer
+  | 'iteration-cap' // "Stopped after N steps"
+  | 'context-full'
+  | 'incomplete-cap' // gave up after repeated truncated/abandoned/foreign tool calls
+  | 'loop-detected' // the loop detector stopped the turn ("Forge stopped: possible loop detected")
+  | 'aborted' // user pressed Stop (or the call was cancelled)
+  | 'error' // provider/connection error shown to the user
+  | 'exception' // runAgentTurn threw
+  | 'no-terminal-event'; // the loop returned without emitting final/aborted/error — a silent stop
+
+export interface TurnEndFacts {
+  /** The last terminal event emitted by the turn, if any. */
+  terminal?: { type: 'final'; text: string } | { type: 'aborted' } | { type: 'error'; message: string };
+  threw?: boolean;
+}
+
+/** Pure: names why a turn ended from the events it emitted. Exported for tests. */
+export function classifyTurnEnd(f: TurnEndFacts): TurnEndReason {
+  if (f.threw) return 'exception';
+  const t = f.terminal;
+  if (!t) return 'no-terminal-event';
+  if (t.type === 'aborted') return 'aborted';
+  if (t.type === 'error') return 'error';
+  if (/^Stopped after \d+ steps/.test(t.text)) return 'iteration-cap';
+  if (/^Context is full/.test(t.text)) return 'context-full';
+  if (/^Forge stopped: possible loop detected/.test(t.text)) return 'loop-detected';
+  if (/\[System\] stopped: could not (produce a valid action|resend)/.test(t.text)) return 'incomplete-cap';
+  return 'final';
+}
+
+/** Free-form lifecycle events as JSON lines. Same rules as TraceWriter: queued, off the hot path, never throws, rotates at 5 MB. */
+export class TurnEventWriter {
+  private chain: Promise<void> = Promise.resolve();
+
+  constructor(private readonly file: string, private readonly sessionId: string, private readonly maxBytes = 5 * 1024 * 1024) {}
+
+  write(event: Record<string, unknown>): void {
+    const line = JSON.stringify({ v: 1, ts: new Date().toISOString(), sessionId: this.sessionId, ...event }) + '\n';
+    this.chain = this.chain.then(() => this.append(line)).catch(() => undefined);
+  }
+
+  flush(): Promise<void> {
+    return this.chain;
+  }
+
+  private async append(line: string): Promise<void> {
+    try {
+      await fs.promises.mkdir(path.dirname(this.file), { recursive: true });
+      try {
+        const st = await fs.promises.stat(this.file);
+        if (st.size + line.length > this.maxBytes) await fs.promises.rename(this.file, this.file + '.1');
+      } catch {
+        /* no file yet */
+      }
+      await fs.promises.appendFile(this.file, line, 'utf8');
+    } catch {
+      /* best-effort by design */
+    }
+  }
+}

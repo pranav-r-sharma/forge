@@ -14,6 +14,7 @@ User-visible changes since 0.14.0 (package version not yet bumped).
 - The agent no longer stops mid-task on an empty reply or a reply that only says what it will do next ("Now I'll write the tests:"); it is prompted to continue (up to 2 times).
 - Messages sent while a chat is busy are queued (Edit / Remove / Send now) instead of refused. In Agent/Auto/Outcome the running agent sees them at its next step; the rest run after the turn. Stop keeps the queue.
 - `search_code` is now a grep: `regex`, `caseSensitive`, `wholeWord`, `context`, `include`/`exclude`, `path`, `mode` (lines/files/count/extract), `multiline`, `maxResults`; uses VS Code's bundled ripgrep with a built-in fallback.
+- Diagnostics: with `forge.trace.enabled`, each chat now also writes `.forge/traces/<session>.turns.jsonl` saying why every turn ended and which model calls never returned, so an unexplained stop can be traced.
 - New file-mailbox bridge so a Cursor agent can hand tasks to Forge (`forge.bridge.enabled`, default off; `forge.bridge.defaultMode`). See `docs/CURSOR_BRIDGE.md`.
 - Large file writes no longer truncate: the output cap is derived from the context window, `write_file` accepts `append: true`, and the model is nudged not to resend a whole file.
 - A zero output cap no longer drops MLX to its 512-token default; Forge compacts once, then stops the turn if the prompt still fills the window.

@@ -6,7 +6,7 @@ Living map of agent-turn behavior: features, settings, execution order, and know
 
 ---
 
-## 1. Feature inventory (61)
+## 1. Feature inventory (62)
 
 Each item: **purpose · trigger · location · settings · mutates**
 
@@ -65,6 +65,7 @@ Each item: **purpose · trigger · location · settings · mutates**
 | F34 | Length truncation nudge | `finishReason==='length'` | No call | `formatIncompleteActionNudge` | **3** incomplete† | User msg; `pendingActionTarget` |
 | F35 | Abandoned action nudge | Mid-JSON tool fragment | `looksLikeAbandonedToolCall` | same as F34 | **3** incomplete† | User msg; append hint |
 | F35b | Stalled reply nudge | Empty/reasoning-only reply, or last sentence promises an action with no tool call ("Now I'll write the tests:"); questions to the user and "let me know" closers excluded; skipped in Plan | No call, not incomplete | `classifyStalledReply`, `formatStalledReplyNudge` | **2** stalled (own counter); after cap: normal final path (empty → explanatory text) | User msg |
+| F35c | Turn lifecycle events | Evidence for silent/abrupt stops: one JSON line per `turn-start`, model `call-start`, `call-end`/`call-error`, and `turn-end` with a **reason** (final, iteration-cap, context-full, loop-detected, incomplete-cap, aborted, error, exception, **no-terminal-event** = loop returned with no final/aborted/error). A `call-start` with no matching end = a hung/very slow model call. Observation only | Every turn when `forge.trace.enabled` | `traceLog.ts` `TurnEventWriter`, `classifyTurnEnd`; `agentLoop.ts` `runAgentTurn` wrapper + `call-*` writes; file `.forge/traces/<session>.turns.jsonl` (separate from the per-iteration trace, so `trace_report.py` is unchanged) | `traceEnabled` | Log file only |
 | F36 | Incomplete cap failure | Stop with system note | † exhausted | `formatIncompleteActionCapFailure` | — | **Final** (failure) |
 | F37 | Unverified file claim | Said edited path, no write_file | Final path | `findUnverifiedClaims` | **2** | User msg |
 | F38 | Task command forms | User-specified cmd shapes not run | Final | `formatTaskCommandNudge` | **3** (progress-gated) | User msg |
@@ -274,6 +275,7 @@ Verified by reviewer 2026-09-30: row 1 re-classified (false positive).
 |-----|-------|----------|----------|--------|
 | **bug** | Context meter always low | Meter summed `promptTokens` (EVALUATED only, cached prefix excluded) + reply; warm cache → ~2% of real prompt (trace: 96 evaluated vs 5131 cached) | `contextUsage.ts` `contextUsedTokens`; `chatViewProvider.ts` `buildHwStatus`; metrics event carries `estPromptTokens` | **Fixed 2026-10-03:** full prompt = `promptTotalTokens` → evaluated+cached → max(estimate, evaluated) (Ollama) + reply |
 | **bug** | Abrupt stops mid-task | No-tool reply was always taken as final: an empty reply or "Now I'll do X:" without the action ended the turn | F35b; `test_v15_stalled_reply.ts` | **Fixed 2026-10-03** (unit + fake-model loop tests; live confirmation pending LIVE-006) |
+| **gap** | Cause of abrupt stops not proven | Owner's real 27 Sep traces (`Test/Forge/.forge`, old build, other model) show a 4,096-token cut-off (cap fixed 28 Sep) and two silent stalls with no model-call record; no timeout exists on a model call | F35c | **Logging added 2026-10-03** so the next stop names its cause; no watchdog added (no current evidence it is needed). Confirm with LIVE-006 |
 | **cosmetic** | Send while busy refused | Toast "stop it first" | F47c | **Replaced 2026-10-03** by queue + steer. Known limits: requirements checklist is NOT re-extracted from steering text; Send now does not cancel an in-flight model call (takes effect at the next step) |
 
 ---

@@ -1,5 +1,5 @@
 import { ReadCoverage } from './readCoverage';
-import { TraceWriter, TraceInput, argsHash, describeArgsForTrace, hwForTrace, promptCacheMetricsForTrace } from './traceLog';
+import { TraceWriter, TurnEventWriter, classifyTurnEnd, TurnEndFacts, TraceInput, argsHash, describeArgsForTrace, hwForTrace, promptCacheMetricsForTrace } from './traceLog';
 import type { HwSnapshot } from '../util/hwSampler';
 import * as vscode from 'vscode';
 import { keepAliveOpt } from '../ollama/client';
@@ -77,6 +77,8 @@ export interface AgentDeps {
   taskLedger: ToolExecContext['taskLedger'];
   /** Optional per-iteration trace sink (v0.15.0 §1.1). Tracing is best-effort and can never affect a turn. */
   trace?: TraceWriter;
+  /** Optional turn-lifecycle sink: model-call start/end and why each turn ended (see traceLog.ts TurnEventWriter). Best-effort. */
+  turnEvents?: TurnEventWriter;
   /** Latest hardware reading, for the trace only (see traceLog.ts hwForTrace). */
   hw?: () => HwSnapshot | undefined;
   workspaceRoot: vscode.Uri;
@@ -309,6 +311,64 @@ function toolCallMatchesPendingPath(call: ToolCall, pendingPath: string, workspa
  * answer in plain text, Agent has everything.
  */
 export async function runAgentTurn(
+  history: ChatMessage[],
+  userMessage: string,
+  deps: AgentDeps,
+  emit: (event: AgentEvent) => void,
+  cancellation: vscode.CancellationToken,
+  model: string,
+  options: AgentTurnOptions
+): Promise<AgentTurnResult> {
+  // Records WHY every turn ended (and which model calls started but never returned) so a silent stop leaves evidence.
+  // Observation only: it never changes what the loop emits or returns.
+  const log = deps.turnEvents;
+  if (!log) return runAgentTurnCore(history, userMessage, deps, emit, cancellation, model, options);
+  const depth = options.subAgentDepth ?? 0;
+  const startedAt = Date.now();
+  const facts: TurnEndFacts = {};
+  const watched = (e: AgentEvent) => {
+    if (e.type === 'final') facts.terminal = { type: 'final', text: e.text };
+    else if (e.type === 'aborted') facts.terminal = { type: 'aborted' };
+    else if (e.type === 'error') facts.terminal = { type: 'error', message: e.message };
+    emit(e);
+  };
+  try {
+    log.write({ event: 'turn-start', depth, model, mode: options.mode, historyMsgs: history.length });
+  } catch {
+    /* best-effort */
+  }
+  try {
+    return await runAgentTurnCore(history, userMessage, deps, watched, cancellation, model, options);
+  } catch (err: any) {
+    facts.threw = true;
+    try {
+      log.write({ event: 'turn-end', depth, reason: classifyTurnEnd(facts), ms: Date.now() - startedAt, error: String(err?.message || err).slice(0, 300) });
+    } catch {
+      /* best-effort */
+    }
+    throw err;
+  } finally {
+    if (!facts.threw) {
+      try {
+        const reason = classifyTurnEnd(facts);
+        const terminal = facts.terminal;
+        log.write({
+          event: 'turn-end',
+          depth,
+          reason,
+          ms: Date.now() - startedAt,
+          cancelled: cancellation.isCancellationRequested,
+          ...(terminal?.type === 'final' ? { finalChars: terminal.text.length } : {}),
+          ...(terminal?.type === 'error' ? { error: terminal.message.slice(0, 300) } : {}),
+        });
+      } catch {
+        /* best-effort */
+      }
+    }
+  }
+}
+
+async function runAgentTurnCore(
   history: ChatMessage[],
   userMessage: string,
   deps: AgentDeps,
@@ -765,6 +825,8 @@ export async function runAgentTurn(
     // call starts, not just after a tool call is chosen.
     emit({ type: 'status', text: subAgentDepth > 0 ? `Sub-agent thinking with ${model}…` : `Thinking with ${model}…`, activity: 'think' });
     let fullText = '';
+    // A call that starts and never ends (hung or very slow model) leaves a call-start with no call-end/call-error.
+    deps.turnEvents?.write({ event: 'call-start', turnId, iter: iteration, depth: subAgentDepth, model, promptChars: iterState.promptChars, estPromptTokens: iterState.estPromptTokens });
     try {
       fullText = await deps.ollama.chat({
         model,
@@ -784,6 +846,7 @@ export async function runAgentTurn(
         },
       });
     } catch (err: any) {
+      deps.turnEvents?.write({ event: 'call-error', turnId, iter: iteration, depth: subAgentDepth, ms: Date.now() - modelStartedAt, aborted: err?.name === 'AbortError' || cancellation.isCancellationRequested, error: String(err?.message || err).slice(0, 300) });
       // A user-initiated Stop shows up here as an AbortError — that's not a
       // connectivity failure, so don't show the misleading "Could not reach
       // Ollama" error toast for it (see client.ts, item #8).
@@ -797,6 +860,7 @@ export async function runAgentTurn(
     }
 
     iterState.modelMs = Date.now() - modelStartedAt;
+    deps.turnEvents?.write({ event: 'call-end', turnId, iter: iteration, depth: subAgentDepth, ms: iterState.modelMs, finishReason: iterState.metrics?.finishReason, evalTokens: iterState.metrics?.evalTokens, replyChars: fullText.length });
     if (cfg.contextAppendOnly) {
       // Learn this model's chars/token from the runtime's real prompt-token count so the water marks use measured sizes, not a guess.
       const m = iterState.metrics;

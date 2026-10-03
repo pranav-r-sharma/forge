@@ -62,7 +62,7 @@ Untested/assumed: everything involving the real model, MLX server, the webview U
 - Cursor's grep code had 6 real bugs its own tests missed (the biggest: rg returns paths relative to cwd; its tests only exercised the JS engine for that case). Lesson: every behavior test must run on both engines, and delegated diffs need a careful read.
 - I once thought a Cursor job had died (checked with the wrong `pgrep`); it was running. Check `ps aux | grep local/bin/agent`.
 - My own first test for the stalled-reply fix used an unrealistic input (raw Harmony tokens) and failed; I corrected the test input, not the assertion.
-- I could not reproduce the abrupt-stop from old traces. Do not call item 3 "confirmed fixed" before LIVE-006.
+- I could not reproduce the abrupt-stop from old traces. The owner's real traces (27 Sep, old build/model) show no current evidence; there is no timeout on a model call. I added turn lifecycle logging (D-018, T-011: `.forge/traces/<session>.turns.jsonl`) instead of guessing a watchdog. Do not call item 3 "confirmed fixed" before LIVE-006; read the `.turns.jsonl` after any stop.
 - The saved grep brief (`docs/briefs/T-003-search-code-grep.md`) is condensed, not verbatim; it says so.
 - Rejected, do not retry without new evidence: a second `grep` tool beside `search_code`; a local HTTP server for the Cursor link (owner chose the mailbox, revisit only if the mailbox is too slow or needs live streaming); a fully headless Forge (too big: every tool is tied to the VS Code API).
 

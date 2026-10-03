@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { TraceWriter, tracePathFor } from '../agent/traceLog';
+import { TraceWriter, TurnEventWriter, tracePathFor, turnEventsPathFor } from '../agent/traceLog';
 import { detectEnvironment, renderEnvironment } from '../agent/environment';
 import { LlmProvider } from '../llm/provider';
 import { ChatMessage } from '../ollama/types';
@@ -91,7 +91,12 @@ export class ChatSession {
     return (this.environmentText ??= renderEnvironment(detectEnvironment(this.services.workspaceRoot.fsPath, this.services.workspaceName)));
   }
   private traceWriter: TraceWriter | undefined;
+  private turnEventWriter: TurnEventWriter | undefined;
   /** Lazily created per-session trace sink (.forge/traces/<id>.jsonl) — see agent/traceLog.ts. */
+  private getTurnEventWriter(): TurnEventWriter {
+    return (this.turnEventWriter ??= new TurnEventWriter(turnEventsPathFor(this.services.workspaceRoot.fsPath, this.id), this.id));
+  }
+
   private getTraceWriter(): TraceWriter {
     return (this.traceWriter ??= new TraceWriter(tracePathFor(this.services.workspaceRoot.fsPath, this.id), this.id));
   }
@@ -603,6 +608,7 @@ export class ChatSession {
           webFetch: cfg.webSearchEnabled ? (url, offset, length) => this.services.webFetchService.fetch(url, offset, length) : undefined,
           mcpTools: this.services.mcpManager.listToolSpecs(),
           trace: cfg.traceEnabled ? this.getTraceWriter() : undefined,
+          turnEvents: cfg.traceEnabled ? this.getTurnEventWriter() : undefined,
           hw: this.services.hwSnapshot,
           taskLedger: {
             addTasks: (tasks, parentTaskId) => {

@@ -131,6 +131,7 @@ Equivalent per task via `run_task.ts`: `--requirements true|false`, tasks **t11-
 
 - **Why:** fixes for owner reports (meter always low; agent stops abruptly). Unit/fake-model tests pass; needs a real model.
 - **How:** gpt-oss-20b MXFP4-Q8 on MLX. Run t07-build-from-scratch and one long chat in the UI.
+- **Also:** after the run read `.forge/traces/<session>.turns.jsonl`: every `call-start` has a `call-end`/`call-error`, every turn has a `turn-end`, and no turn ends with `no-terminal-event`. Any stop the owner notices should show its `reason` there.
 - **Pass:** meter % rises across tool calls and roughly matches trace `promptTotalTokens`/context; trace `announced-action-nudge`/`empty-reply-nudge` notes appear only on genuine stalls (read each one); no run ends on an "I'll now…" reply.
 
 ## LIVE-007 — Queue + steer in the real UI (2026-10-03)
