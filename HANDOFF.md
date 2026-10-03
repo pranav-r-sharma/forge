@@ -30,7 +30,7 @@ Read, in order: `CLAUDE.md`, `PROGRESS.md`, `docs/HARNESS_REFERENCE.md`, `PENDIN
 
 ## Open items
 
-0. Owner additions 2026-10-03 (see `PROGRESS.md` "Owner additions"): meter fix done; abrupt-stop fix, message queue, headless CLI/port, Cursor→Forge bridge, grep tool in progress.
+0. Owner additions 2026-10-03 (see `PROGRESS.md` "Owner additions"): done: meter fix, abrupt-stop fix, grep upgrade, queue+steer. In progress: Cursor→Forge file-mailbox bridge (items 4+5). New live tests: LIVE-006, LIVE-007.
 1. `PENDING_TESTS.md` LIVE-001 to LIVE-005 are all pending. Round 3 (LIVE-001) is on hold by the owner until the hardware is free.
 2. Decide the default of `forge.requirements.enabled` after LIVE-001.
 3. Re-run the owner's docs task on the M5 Max.

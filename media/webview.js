@@ -21,6 +21,7 @@
     activeMode: 'agent',
     history: [],
     attachedFiles: [],
+    queue: [], // follow-ups waiting while this chat is busy, oldest first
     checkpoints: [], // {id, label, createdAt} for the active session
     verifyCommand: '', // optional "definition of done" command for the active session (Agent/Auto/Outcome modes)
     orchestrationEnabled: false, // item 4c: per-chat orchestration-mode toggle
@@ -112,6 +113,7 @@
         <div id="pending-list"></div>
       </div>
       <div id="transcript" class="forge-transcript"></div>
+      <div id="queue-list" class="forge-queue" style="display:none;"></div>
       <div class="forge-composer">
         <div id="mode-strip" class="forge-mode-strip"></div>
         <div id="verify-row" class="forge-verify-row" style="display:none;">
@@ -151,6 +153,7 @@
     pendingCount: document.getElementById('pending-count'),
     pendingList: document.getElementById('pending-list'),
     transcript: document.getElementById('transcript'),
+    queueList: document.getElementById('queue-list'),
     modeStrip: document.getElementById('mode-strip'),
     chips: document.getElementById('chips'),
     mentionDropdown: document.getElementById('mention-dropdown'),
@@ -1126,18 +1129,16 @@
     }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      onSendOrStop();
+      // While a turn is running, Enter queues the draft. The button stays Stop.
+      if (state.busyBySession[state.activeSessionId]) queueOrSend();
+      else onSendOrStop();
     } else if (e.key === 'Escape') {
       hideMentionDropdown();
     }
   });
   el.input.addEventListener('input', onInputChanged);
 
-  function onSendOrStop() {
-    if (state.busyBySession[state.activeSessionId]) {
-      vscodeApi.postMessage({ type: 'stop' });
-      return;
-    }
+  function queueOrSend() {
     const text = el.input.value.trim();
     if (!text && state.attachedFiles.length === 0) return;
     vscodeApi.postMessage({ type: 'send', text, files: state.attachedFiles.slice() });
@@ -1145,6 +1146,14 @@
     state.attachedFiles = [];
     renderChips();
     hideMentionDropdown();
+  }
+
+  function onSendOrStop() {
+    if (state.busyBySession[state.activeSessionId]) {
+      vscodeApi.postMessage({ type: 'stop' });
+      return;
+    }
+    queueOrSend();
   }
 
   let mentionQueryStart = -1;
@@ -1332,6 +1341,12 @@
       const files = (entry.files || []).map((f) => `<span class="msg-file-chip">${escapeHtml(f)}</span>`).join('');
       bubble.innerHTML = `${files ? `<div class="msg-files">${files}</div>` : ''}<div class="msg-body">${renderMarkdown(entry.text)}</div>`;
       wrap.appendChild(bubble);
+      if (entry.midTurn) {
+        const mark = document.createElement('div');
+        mark.className = 'msg-midturn';
+        mark.textContent = 'sent mid-turn';
+        wrap.appendChild(mark);
+      }
       // Item #3: every user turn is a checkpoint boundary — offer to jump
       // back to it (and undo everything since) as long as it still exists
       // (it's dropped once you've already restored past it).
@@ -1599,6 +1614,57 @@
     const busy = !!state.busyBySession[state.activeSessionId];
     el.sendBtn.textContent = busy ? 'Stop' : 'Send';
     el.sendBtn.classList.toggle('stop', busy);
+    el.input.placeholder = busy
+      ? 'Type a follow-up and press Enter to queue it (Shift+Enter for a newline). Stop ends the turn and keeps the queue.'
+      : 'Ask Forge, @ to attach a file, / for a skill… (Enter to send, Shift+Enter for newline)';
+  }
+
+  function renderQueue() {
+    const items = state.queue || [];
+    el.queueList.innerHTML = '';
+    if (items.length === 0) {
+      el.queueList.style.display = 'none';
+      return;
+    }
+    el.queueList.style.display = 'block';
+    const title = document.createElement('div');
+    title.className = 'forge-queue-title';
+    title.textContent = items.length === 1 ? '1 message queued' : `${items.length} messages queued`;
+    el.queueList.appendChild(title);
+    for (const item of items) {
+      const row = document.createElement('div');
+      row.className = 'forge-queue-item';
+      const body = document.createElement('div');
+      body.className = 'forge-queue-text';
+      const files = (item.files || []).map((f) => `<span class="msg-file-chip">${escapeHtml(f)}</span>`).join(' ');
+      const shown = item.text ? escapeHtml(item.text) : '(attachment)';
+      body.innerHTML = `${files ? `<div class="msg-files">${files}</div>` : ''}${shown}`;
+      const actions = document.createElement('div');
+      actions.className = 'forge-queue-actions';
+      const editBtn = document.createElement('button');
+      editBtn.className = 'link-btn';
+      editBtn.textContent = 'Edit';
+      editBtn.addEventListener('click', async () => {
+        const next = await textPromptDialog('Edit queued message', item.text || '');
+        if (next === null) return;
+        vscodeApi.postMessage({ type: 'queueEdit', id: item.id, text: next });
+      });
+      const removeBtn = document.createElement('button');
+      removeBtn.className = 'link-btn';
+      removeBtn.textContent = 'Remove';
+      removeBtn.addEventListener('click', () => vscodeApi.postMessage({ type: 'queueRemove', id: item.id }));
+      const nowBtn = document.createElement('button');
+      nowBtn.className = 'link-btn';
+      nowBtn.textContent = 'Send now';
+      nowBtn.title = 'Steer this into the current turn at the next step, or send it immediately if the chat is idle';
+      nowBtn.addEventListener('click', () => vscodeApi.postMessage({ type: 'queueSendNow', id: item.id }));
+      actions.appendChild(editBtn);
+      actions.appendChild(removeBtn);
+      actions.appendChild(nowBtn);
+      row.appendChild(body);
+      row.appendChild(actions);
+      el.queueList.appendChild(row);
+    }
   }
 
   function loadSession(session) {
@@ -1612,6 +1678,7 @@
     state.sessionModel = session.model || '';
     state.orchestrationEnabled = !!session.orchestrationEnabled;
     state.taskLedger = session.taskLedger || [];
+    state.queue = session.queue || [];
     state.statusText = '';
     state.statusActivity = undefined;
     renderStatusLine();
@@ -1621,6 +1688,7 @@
     renderOrchRow();
     renderTabStrip();
     renderBusy();
+    renderQueue();
     renderModelBtn();
     renderAllHistory();
   }
@@ -1796,6 +1864,12 @@
         if (msg.sessionId !== state.activeSessionId) break;
         state.taskLedger = msg.tasks || [];
         renderTaskLedgerProgress();
+        break;
+      }
+      case 'queueUpdate': {
+        if (msg.sessionId !== state.activeSessionId) break;
+        state.queue = msg.queue || [];
+        renderQueue();
         break;
       }
       case 'busy': {

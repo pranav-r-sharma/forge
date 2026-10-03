@@ -9,6 +9,7 @@ Tests listed here require loading **gpt-oss-20b MXFP4-Q8 (MLX)** per `CLAUDE.md`
 | LIVE-003 | Pinned user follow-ups survive compaction in a long run | pending | 2026-09-30 |
 | LIVE-004 | MLX server restarts when `forge.mlx.contextTokens` / panel context changes (managed server) | pending | 2026-09-30 |
 | LIVE-005 | MLX settings change mid-agent-turn defers restart until turn ends (status + no in-flight `chat()` break) | pending | 2026-09-30 |
+| LIVE-007 | Queue + steer in the real panel: send while busy, steer lands at next step, Edit/Remove/Send now, Stop keeps queue, reload restores queue | pending | 2026-10-03 |
 | LIVE-006 | Context meter tracks real prompt size; stalled-reply nudge fires and is not a false positive | pending | 2026-10-03 |
 
 ---
@@ -130,3 +131,9 @@ Equivalent per task via `run_task.ts`: `--requirements true|false`, tasks **t11-
 - **Why:** fixes for owner reports (meter always low; agent stops abruptly). Unit/fake-model tests pass; needs a real model.
 - **How:** gpt-oss-20b MXFP4-Q8 on MLX. Run t07-build-from-scratch and one long chat in the UI.
 - **Pass:** meter % rises across tool calls and roughly matches trace `promptTotalTokens`/context; trace `announced-action-nudge`/`empty-reply-nudge` notes appear only on genuine stalls (read each one); no run ends on an "I'll now…" reply.
+
+## LIVE-007 — Queue + steer in the real UI (2026-10-03)
+
+- **Why:** the webview and VS Code panel cannot be driven by the unit tests (48 checks cover the logic and fake-model loop only).
+- **How:** open Forge in VS Code, start a multi-step Agent task (gpt-oss-20b MXFP4-Q8 on MLX), type a follow-up and press Enter while it runs.
+- **Pass:** message appears in the queue list; model acknowledges it at its next step (transcript shows "sent mid-turn"); Edit/Remove/Send now work; Stop keeps the queue and does not auto-send; reloading the window restores the queue; Ask/Plan mode leaves it queued until the turn ends.

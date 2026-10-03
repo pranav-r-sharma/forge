@@ -622,6 +622,45 @@ body {
   color: var(--vscode-errorForeground);
 }
 
+/* ---------- queued follow-ups (above the composer) ---------- */
+.forge-queue {
+  flex: 0 0 auto;
+  border-top: 1px solid var(--vscode-sideBar-border, var(--vscode-panel-border));
+  padding: 6px 10px 4px;
+  max-height: 160px;
+  overflow-y: auto;
+}
+.forge-queue-title {
+  font-size: 11px;
+  opacity: 0.7;
+  margin-bottom: 2px;
+}
+.forge-queue-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 4px 0;
+  border-top: 1px solid var(--vscode-widget-border, transparent);
+}
+.forge-queue-text {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.forge-queue-actions {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 2px;
+}
+.msg-midturn {
+  font-size: 10px;
+  opacity: 0.65;
+  text-align: right;
+  margin-top: 2px;
+}
+
 /* ---------- toasts ---------- */
 .toast-host {
   position: absolute;

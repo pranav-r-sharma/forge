@@ -8,7 +8,7 @@ import { FileSearchEntry } from '../util/fileSearch';
 /** Messages/state shared between the extension host (chatViewProvider.ts) and the webview UI (media/webview.js). */
 
 export type UiTranscriptEntry =
-  | { kind: 'user'; id: string; text: string; files?: string[]; checkpointId?: string }
+  | { kind: 'user'; id: string; text: string; files?: string[]; checkpointId?: string; /** Set when this message was injected into a turn already in progress. */ midTurn?: boolean }
   | { kind: 'assistant'; id: string; text: string; streaming?: boolean; unverifiedClaims?: string[] }
   /** `attachments` — MCP standardization (0.14.0): non-text content blocks (images, embedded resources) an MCP tool's result carried, shown on the card instead of inlined into `summary` — see agent/types.ts's ToolResultAttachment. Absent for built-in tools and for MCP tools that only returned text. */
   | { kind: 'tool'; id: string; callId: string; tool: string; args: Record<string, any>; status: 'running' | 'done'; ok?: boolean; summary?: string; attachments?: ToolResultAttachment[] }
@@ -48,6 +48,14 @@ export interface CheckpointInfo {
   milestone?: string;
 }
 
+/** One user message waiting because the chat was busy. FIFO; persisted on the session. */
+export interface QueuedUserMessage {
+  id: string;
+  text: string;
+  files?: string[];
+  queuedAt: string;
+}
+
 export interface SessionState {
   id: string;
   title: string;
@@ -64,6 +72,8 @@ export interface SessionState {
   taskLedger: TaskLedgerEntry[];
   /** Orchestration-mode toggle (item 4c) — see ChatSession.orchestrationEnabled. */
   orchestrationEnabled: boolean;
+  /** Messages the user sent while this chat was busy, in send order. */
+  queue: QueuedUserMessage[];
 }
 
 /** Snapshot of the settings the in-webview Settings panel can read/write (item "a new setting pane") — see util/config.ts's SETTINGS_PANEL_KEYS. */
@@ -244,7 +254,9 @@ export type ExtensionToWebviewMessage =
   /** Item "ability to kill commands while they are running from the chat window" — a snapshot of every background command (see tools/backgroundProcessManager.ts), refreshed on request via the 'listBackgroundCommands' message. */
   | { type: 'backgroundCommandsList'; commands: BackgroundCommandInfo[] }
   /** Item 4a/4b: live push whenever the task ledger changes (plan_tasks/update_task/an auto-instrumented spawn_subagent call) — lets a progress panel update immediately instead of only on the next full session switch. */
-  | { type: 'taskLedgerUpdate'; sessionId: string; tasks: TaskLedgerEntry[] };
+  | { type: 'taskLedgerUpdate'; sessionId: string; tasks: TaskLedgerEntry[] }
+  /** Live snapshot of this session's queued follow-ups (queue + steer). */
+  | { type: 'queueUpdate'; sessionId: string; queue: QueuedUserMessage[] };
 
 export type WebviewToExtensionMessage =
   | { type: 'ready' }
@@ -288,4 +300,10 @@ export type WebviewToExtensionMessage =
   | { type: 'listBackgroundCommands' }
   | { type: 'killBackgroundCommand'; id: string }
   /** Item 4c: per-chat orchestration-mode toggle — see ChatSession.setOrchestrationEnabled(). */
-  | { type: 'setOrchestrationMode'; enabled: boolean };
+  | { type: 'setOrchestrationMode'; enabled: boolean }
+  /** Edit the text of a queued follow-up. Files on that item are left as they are. */
+  | { type: 'queueEdit'; id: string; text: string }
+  /** Drop a queued follow-up. */
+  | { type: 'queueRemove'; id: string }
+  /** Steer this queued message at the next step boundary, or send it now if the chat is idle. */
+  | { type: 'queueSendNow'; id: string };

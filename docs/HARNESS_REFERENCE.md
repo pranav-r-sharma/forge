@@ -6,7 +6,7 @@ Living map of agent-turn behavior: features, settings, execution order, and know
 
 ---
 
-## 1. Feature inventory (60)
+## 1. Feature inventory (61)
 
 Each item: **purpose · trigger · location · settings · mutates**
 
@@ -85,6 +85,7 @@ Each item: **purpose · trigger · location · settings · mutates**
 | F46 | Best-of-N rewrite | Resample large full-file writes | write_file ≥40 lines existing | `bestOfN.ts` | enabled **false**; samples 3 | May replace call + assistant msg |
 | F47 | Nested tool unwrap | `tool` nested in `args` | Every call | `argErrors.ts` | — | Normalized args |
 | F47b | search_code grep | Exact/regex search: `regex`, `caseSensitive` (plain literal default off; `/re/` case-sensitive unless `i`), `wholeWord`, `context` ≤10, `include`/`exclude` globs (+ default excludes), `path` (folder or one file, inside workspace), `mode` lines/files/count/extract (extract = enclosing code block or markdown section, `maxLines` 200), `multiline`, `maxResults` 500 | search_code call | `searchTools.ts`: VS Code bundled ripgrep (`--json`, killed on cancel) → JS scan fallback on missing rg / rg error / rg-unsupported regex (look-around); same output both engines (parity tests) | — | Tool result only |
+| F47c | Queue + steer | Messages sent while a chat is busy are queued (FIFO, persisted as `StoredSession.queuedMessages`) instead of refused; acting modes (agent/auto/outcome, depth 0) inject them into the SAME turn at the next step boundary as `[User message sent while you were working]\n…` (append-only, cache-safe, pinned by compaction); ask/plan/sub-agents leave them queued; after a turn ends the queue drains one by one unless the user pressed Stop; UI: Edit / Remove / Send now | Send while busy | `chatSession.ts` (`enqueueUserMessage`, `takeSteeringMessages`, `drainQueuedTurns`, `runTurn`), `agentLoop.ts` `ingestSteeringMessages` (once per iteration before `buildPromptView`, skipped after final), `webview.js` queue list | — | `messages`, session queue |
 | F48 | Unknown tool args | Hint typos in result | Successful tool | `unknownToolArgs.ts` | — | Tool result text |
 | F49 | Redundant read note | Same lines re-read | read_file ok | `readCoverage.ts` | — | Tool result + trace |
 | F50 | Self-critique | Extra model review of edit | write_file ok, lines ≥ min | `selfCritique.ts` | enabled **false**; minLines 40 | Tool result appendix |
@@ -267,6 +268,7 @@ Verified by reviewer 2026-09-30: row 1 re-classified (false positive).
 |-----|-------|----------|----------|--------|
 | **bug** | Context meter always low | Meter summed `promptTokens` (EVALUATED only, cached prefix excluded) + reply; warm cache → ~2% of real prompt (trace: 96 evaluated vs 5131 cached) | `contextUsage.ts` `contextUsedTokens`; `chatViewProvider.ts` `buildHwStatus`; metrics event carries `estPromptTokens` | **Fixed 2026-10-03:** full prompt = `promptTotalTokens` → evaluated+cached → max(estimate, evaluated) (Ollama) + reply |
 | **bug** | Abrupt stops mid-task | No-tool reply was always taken as final: an empty reply or "Now I'll do X:" without the action ended the turn | F35b; `test_v15_stalled_reply.ts` | **Fixed 2026-10-03** (unit + fake-model loop tests; live confirmation pending LIVE-006) |
+| **cosmetic** | Send while busy refused | Toast "stop it first" | F47c | **Replaced 2026-10-03** by queue + steer. Known limits: requirements checklist is NOT re-extracted from steering text; Send now does not cancel an in-flight model call (takes effect at the next step) |
 
 ---
 

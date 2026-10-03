@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import { ChatMessage } from '../ollama/types';
-import { UiTranscriptEntry } from '../webview/protocol';
+import { QueuedUserMessage, UiTranscriptEntry } from '../webview/protocol';
 import { CheckpointRecord } from '../agent/checkpoints';
 import { CompactionCache } from '../agent/contextManager';
 import { TaskLedgerEntry, renderTaskManifestMarkdown } from '../agent/taskLedger';
@@ -32,6 +32,11 @@ export interface StoredSession {
   taskLedger?: TaskLedgerEntry[];
   /** Orchestration mode toggle (item 4c) — see ChatSession.orchestrationEnabled. Per-chat, off by default; changes the system prompt's instructions on HOW to use the (always-available) task-ledger/spawn_subagent tools, not their availability. */
   orchestrationEnabled?: boolean;
+  /**
+   * Follow-ups the user sent while this chat was busy, oldest first.
+   * Absent when nothing is waiting. Restored with the session so a reload keeps the queue.
+   */
+  queuedMessages?: QueuedUserMessage[];
 }
 
 /** One line of the append-only `.forge/chat/<id>.log.jsonl` crash-recovery log — see item "Logging of important decisions/actions". */

@@ -367,6 +367,15 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       case 'stop':
         this.activeSession()?.stop();
         return;
+      case 'queueEdit':
+        this.activeSession()?.editQueuedMessage(msg.id, msg.text);
+        return;
+      case 'queueRemove':
+        this.activeSession()?.removeQueuedMessage(msg.id);
+        return;
+      case 'queueSendNow':
+        await this.activeSession()?.sendQueuedNow(msg.id);
+        return;
       case 'newChat':
         await this.newChat();
         return;
@@ -966,7 +975,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       sessions: [...known.values()],
       activeSession: active
         ? active.toSummaryState()
-        : { id: 'none', title: 'New chat', mode: 'agent', model: '', busy: false, history: [], checkpoints: [], taskLedger: [], orchestrationEnabled: false },
+        : { id: 'none', title: 'New chat', mode: 'agent', model: '', busy: false, history: [], checkpoints: [], taskLedger: [], orchestrationEnabled: false, queue: [] },
       hwStatus: await this.buildHwStatus(),
     };
     if (target) target.postMessage({ type: 'init', state });

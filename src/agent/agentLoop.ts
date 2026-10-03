@@ -98,6 +98,18 @@ export function thinkingForStep(mode: 'default' | 'off' | 'on' | 'auto', failedR
   return failedRunsInARow >= THINKING_ESCALATION_FAILURES;
 }
 
+/**
+ * Prefix for a user message injected into a running turn at a step boundary.
+ * The text after the newline is the user's message (slash commands already expanded, attachments already inlined).
+ * Real user content, so compaction pins it like any other user turn (see isRealUserTurnContent).
+ */
+export const STEERING_USER_PREFIX = '[User message sent while you were working]\n';
+
+/** Agent, Auto, and Outcome act with tools. Ask and Plan do not take steering messages. */
+export function modeAcceptsSteering(mode: ForgeMode): boolean {
+  return mode === 'agent' || mode === 'auto' || mode === 'outcome';
+}
+
 export interface AgentTurnOptions {
   mode: ForgeMode;
   /** Rendered environment facts (agent/environment.ts) for the system prompt: installed tools, likely test command. */
@@ -155,6 +167,15 @@ export interface AgentTurnOptions {
    * since it leaves more memory/VRAM headroom than a larger model would.
    */
   numCtx?: number;
+  /**
+   * Queue + steer. Called once per loop iteration, after the previous step's
+   * tool result has been appended and before the next prompt view is built.
+   * Returns the messages to inject into THIS turn (the caller removes them
+   * from the session queue). Ignored for sub-agents (depth > 0), for Ask/Plan,
+   * and after this turn has already emitted its final answer — those messages
+   * stay queued for a later turn. May be sync or async (slash-command expansion).
+   */
+  takeSteeringMessages?: () => { text: string }[] | Promise<{ text: string }[]>;
 }
 
 export interface AgentTurnResult {
@@ -649,11 +670,43 @@ export async function runAgentTurn(
     }
   };
 
+  let emittedFinal = false;
+  const emitFinal = (event: Extract<AgentEvent, { type: 'final' }>) => {
+    emittedFinal = true;
+    emit(event);
+  };
+
+  /**
+   * Step boundary: tool results from the previous iteration are already on
+   * `messages`. Append any steering messages, then build the next prompt.
+   * Append-only — earlier messages are never rewritten (prompt-cache stability).
+   */
+  async function ingestSteeringMessages(): Promise<void> {
+    if (emittedFinal) return;
+    if (subAgentDepth > 0) return;
+    if (!modeAcceptsSteering(options.mode)) return;
+    if (!options.takeSteeringMessages) return;
+    let batch: { text: string }[] = [];
+    try {
+      batch = (await Promise.resolve(options.takeSteeringMessages())) || [];
+    } catch (err) {
+      logger.warn('takeSteeringMessages failed', String(err));
+      return;
+    }
+    for (const item of batch) {
+      const text = item && typeof item.text === 'string' ? item.text : '';
+      if (!text) continue;
+      pushMsg({ role: 'user', content: STEERING_USER_PREFIX + text });
+    }
+  }
+
   for (let iteration = 0; iteration < maxIterations; iteration++) {
     if (cancellation.isCancellationRequested) {
       emit({ type: 'aborted' });
       return { messages, compactionCache };
     }
+
+    await ingestSteeringMessages();
 
     let promptView = await buildPromptView();
     const cptForCap = (compactionCache as PromptViewState | undefined)?.cpt ?? DEFAULT_CHARS_PER_TOKEN;
@@ -686,7 +739,7 @@ export async function runAgentTurn(
         viewEvent: lastViewEvent,
         compacted: promptView.some((m) => m.content.startsWith('[Earlier conversation summary')),
       };
-      emit({ type: 'final', text: fullMsg });
+      emitFinal({ type: 'final', text: fullMsg });
       emit({ type: 'done' });
       traceIter({ note: 'context-full', final: true });
       return { messages, compactionCache };
@@ -790,7 +843,7 @@ export async function runAgentTurn(
       const finalText = `${displayText.trim()}\n\n[System] ${failureNote}`.trim();
       traceIter({ note: 'incomplete-action-cap', final: true });
       pendingActionTarget = undefined;
-      emit({ type: 'final', text: finalText });
+      emitFinal({ type: 'final', text: finalText });
       emit({ type: 'done' });
       return { messages, compactionCache };
     }
@@ -823,7 +876,7 @@ export async function runAgentTurn(
       const finalText = `${displayText.trim()}\n\n[System] ${failureNote}`.trim();
       traceIter({ note: 'incomplete-action-cap', final: true });
       pendingActionTarget = undefined;
-      emit({ type: 'final', text: finalText });
+      emitFinal({ type: 'final', text: finalText });
       emit({ type: 'done' });
       return { messages, compactionCache };
     }
@@ -994,7 +1047,7 @@ export async function runAgentTurn(
 
       traceIter({ final: true });
       pendingActionTarget = undefined;
-      emit({
+      emitFinal({
         type: 'final',
         text: finalDisplayText,
         unverifiedClaims: unverifiedAll.length > 0 ? unverifiedAll : undefined,
@@ -1277,7 +1330,7 @@ export async function runAgentTurn(
 
   const iterationSetting = autoMode ? 'forge.autoModeMaxIterations' : 'forge.maxAgentIterations';
   const capMsg = `Stopped after ${maxIterations} steps without a final answer (cap: ${iterationSetting}). Raise that setting in the Forge Settings panel or settings.json, then ask me to continue.`;
-  emit({ type: 'final', text: capMsg });
+  emitFinal({ type: 'final', text: capMsg });
   emit({ type: 'done' });
   return { messages, compactionCache };
 }

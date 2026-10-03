@@ -30,7 +30,7 @@ import { formatForgeHealthErrorToast } from '../util/providerHealth';
 import { genId } from '../util/ids';
 import { toRelative } from '../util/paths';
 import { logger } from '../util/logger';
-import { ExtensionToWebviewMessage, SessionState, UiTranscriptEntry } from '../webview/protocol';
+import { ExtensionToWebviewMessage, QueuedUserMessage, SessionState, UiTranscriptEntry } from '../webview/protocol';
 
 /** How many completed turns pass between automatic memory-review sweeps (see ChatSession.maybeReviewForMemory) — frequent enough to catch things before a session ends, rare enough that it's not a network call on every single turn. */
 const MEMORY_REVIEW_INTERVAL = 6;
@@ -125,6 +125,15 @@ export class ChatSession {
    * per-task checkpointing (see TaskLedgerEntry.checkpointId's doc comment).
    */
   private currentCheckpointId: string | undefined;
+  /**
+   * Follow-ups sent while this chat is busy. Oldest first. Persisted as
+   * StoredSession.queuedMessages. Taken into the running turn at the next
+   * step boundary in Agent/Auto/Outcome; otherwise drained one at a time
+   * after the turn ends. A user Stop leaves the queue in place.
+   */
+  private messageQueue: QueuedUserMessage[] = [];
+  /** Set by stop(). Blocks the automatic drain; cleared when the user explicitly sends again. */
+  private userStopped = false;
 
   constructor(
     private services: ChatSessionServices,
@@ -169,6 +178,7 @@ export class ChatSession {
     s.numCtxOverride = stored.numCtxOverride;
     s.taskLedger = TaskLedger.fromJSON(stored.taskLedger);
     s.orchestrationEnabled = stored.orchestrationEnabled || false;
+    s.messageQueue = restoreQueuedMessages(stored.queuedMessages);
     return s;
   }
 
@@ -190,6 +200,7 @@ export class ChatSession {
       numCtxOverride: this.numCtxOverride,
       taskLedger: this.taskLedger.list().length ? this.taskLedger.toJSON() : undefined,
       orchestrationEnabled: this.orchestrationEnabled || undefined,
+      queuedMessages: this.messageQueue.length ? this.messageQueue.map(cloneQueuedMessage) : undefined,
     };
   }
 
@@ -206,6 +217,7 @@ export class ChatSession {
       numCtxOverride: this.numCtxOverride,
       taskLedger: this.taskLedger.list(),
       orchestrationEnabled: this.orchestrationEnabled,
+      queue: this.messageQueue.map(cloneQueuedMessage),
     };
   }
 
@@ -441,6 +453,7 @@ export class ChatSession {
   }
 
   stop() {
+    this.userStopped = true;
     this.cts?.cancel();
     this.approvalBroker.cancelAll();
   }
@@ -476,31 +489,43 @@ export class ChatSession {
 
   async send(text: string, files: string[], opts?: { planContext?: string }) {
     if (this.busy) {
-      this.post({ type: 'toast', level: 'warn', text: 'This chat is still working — stop it first, or switch to another tab.' });
+      this.enqueueUserMessage(text, files);
       return;
     }
+    this.userStopped = false;
+    const ran = await this.runTurn(text, files, opts);
+    if (ran) await this.drainQueuedTurns();
+  }
+
+  /**
+   * One agent turn. Busy is set before any await so a follow-up that arrives
+   * during startup is queued. Returns false when the turn never reached the
+   * model (no model, or the provider is down) so draining does not immediately
+   * retry the rest of the queue.
+   */
+  private async runTurn(text: string, files: string[], opts?: { planContext?: string }): Promise<boolean> {
+    this.busy = true;
+    this.post({ type: 'busy', sessionId: this.id, busy: true });
+    let started = false;
+    let checkpointId = '';
+    let turnStartUiIndex = 0;
+    try {
     const cfg = getConfig();
     const model = resolveModelForMode(this.mode, this.model, cfg);
     if (!model) {
       this.post({ type: 'toast', level: 'error', text: 'No chat model selected. Click the model name to pick one.' });
-      return;
+      return false;
     }
     const health = await this.services.ollama.health();
     if (!health.ok) {
       this.post({ type: 'toast', level: 'error', text: formatForgeHealthErrorToast(cfg, health.error || '') });
-      return;
+      return false;
     }
 
-    // Slash-command skill expansion (Cursor custom-commands equivalent).
-    let effectiveText = text;
-    let skillUsed: string | undefined;
-    if (text.trim().startsWith('/')) {
-      const expansion = await this.services.skills.expand(text);
-      if (expansion) {
-        effectiveText = expansion.expanded;
-        skillUsed = expansion.skillUsed;
-      }
-    }
+    const prepared = await this.prepareOutgoing(text, files);
+    const effectiveText = prepared.effectiveText;
+    const skillUsed = prepared.skillUsed;
+    let augmented = prepared.augmented;
 
     if (this.uiHistory.length === 0 && !this.titleManuallySet) this.title = deriveTitle(text);
 
@@ -510,8 +535,8 @@ export class ChatSession {
     // via restoreCheckpoint(). autoModeSelected reflects the mode this
     // *specific* turn will run in, so a checkpoint label is accurate even if
     // the user flips modes right after sending.
-    const checkpointId = genId('ckpt');
-    const turnStartUiIndex = this.uiHistory.length;
+    checkpointId = genId('ckpt');
+    turnStartUiIndex = this.uiHistory.length;
     this.checkpoints.begin({
       id: checkpointId,
       label: deriveTitle(text),
@@ -529,31 +554,6 @@ export class ChatSession {
       const sysEntry: UiTranscriptEntry = { kind: 'system', id: genId('sys'), text: `Expanded /${skillUsed}` };
       this.pushEntry(sysEntry);
       this.post({ type: 'entry', sessionId: this.id, entry: sysEntry });
-    }
-
-    let augmented = effectiveText;
-    for (const rel of files) {
-      try {
-        const uri = vscode.Uri.joinPath(this.services.workspaceRoot, rel);
-        const stat = await Promise.resolve(vscode.workspace.fs.stat(uri)).catch(() => undefined);
-        if (stat && stat.type === vscode.FileType.Directory) {
-          // Item #5: folders can be @-tagged too. We don't dump a whole
-          // folder's contents into context (could be huge/binary-laden) —
-          // give the model a shallow listing and let it list_dir/read_file
-          // its way in from there, same as if it discovered the folder itself.
-          const children: [string, vscode.FileType][] = await Promise.resolve(vscode.workspace.fs.readDirectory(uri)).catch(() => [] as [string, vscode.FileType][]);
-          const names = children.slice(0, 200).map(([name, type]: [string, vscode.FileType]) => `${name}${type === vscode.FileType.Directory ? '/' : ''}`).join('\n');
-          augmented += `\n\n[Attached folder: ${rel}]\n${names || '(empty)'}${children.length > 200 ? '\n... (truncated; use list_dir for more)' : ''}`;
-          continue;
-        }
-        const content = await this.services.pendingEdits.readEffective(uri);
-        if (content !== undefined) {
-          const capped = content.length > 100_000 ? content.slice(0, 100_000) + '\n... (truncated)' : content;
-          augmented += `\n\n[Attached file: ${rel}]\n\`\`\`\n${capped}\n\`\`\``;
-        }
-      } catch {
-        /* ignore unreadable attachment */
-      }
     }
 
     const activeFileRel = vscode.window.activeTextEditor
@@ -578,8 +578,7 @@ export class ChatSession {
     // chat isn't starting from zero. See ChatStore.readProjectLogForPrompt().
     const projectLogText = await this.services.chatStore.readProjectLogForPrompt();
 
-    this.busy = true;
-    this.post({ type: 'busy', sessionId: this.id, busy: true });
+    started = true;
     notifyAgentTurnStarted();
     this.cts = new vscode.CancellationTokenSource();
     this.startFlushTimer();
@@ -647,6 +646,7 @@ export class ChatSession {
           compactionCache: this.compactionCache,
           verifyCommand: modeSupportsVerifyCommand(this.mode) && this.verifyCommand ? this.verifyCommand : undefined,
           numCtx: this.numCtxOverride,
+          takeSteeringMessages: () => this.takeSteeringMessages(),
         }
       );
       this.modelHistory = result.messages;
@@ -657,35 +657,181 @@ export class ChatSession {
       this.pushEntry(errEntry);
       this.post({ type: 'entry', sessionId: this.id, entry: errEntry });
       this.log('error', err?.message || String(err));
-    } finally {
-      this.stopFlushTimer();
-      this.busy = false;
-      notifyAgentTurnEnded();
-      this.cts = undefined;
-      this.post({ type: 'busy', sessionId: this.id, busy: false });
-      // Milestone logging (item "documenting all milestones, logging
-      // checkpoints so context can be derived from that") — a mechanical,
-      // zero-cost digest of what THIS turn actually did, attached to its
-      // checkpoint. Runs even if the turn errored/was aborted above (the
-      // digest just reflects whatever entries actually landed), but not if
-      // the checkpoint itself was already dropped by a restore that
-      // happened mid-turn (setMilestone no-ops on a missing id).
-      const milestone = deriveMilestoneSummary(this.uiHistory.slice(turnStartUiIndex));
-      this.checkpoints.setMilestone(checkpointId, milestone);
-      this.persist();
-      // Item "documentation skill": feed the exact same mechanically-generated
-      // digest into the workspace-wide project log — "unify into one system,"
-      // not a fourth logging mechanism alongside the per-turn milestone, the
-      // per-session crash-recovery log, and this. Best-effort/fire-and-forget,
-      // same as the chat-memory indexing call just below.
-      if (milestone) this.services.chatStore.appendProjectLog(this.title, milestone).catch((err) => logger.warn('project log append failed', String(err)));
-      // Keep search_chat_history current — incremental (see ChatMemoryIndex),
-      // so this is cheap on every turn except when this session actually
-      // grew. Best-effort: a memory-index failure must never break the turn
-      // that just completed.
-      this.services.chatMemoryIndex.indexSession(this.toStored()).catch((err) => logger.warn('chat memory indexing failed', String(err)));
-      this.maybeReviewForMemory();
     }
+    return true;
+    } finally {
+      if (started) {
+        this.stopFlushTimer();
+        notifyAgentTurnEnded();
+        this.cts = undefined;
+        // Milestone logging (item "documenting all milestones, logging
+        // checkpoints so context can be derived from that") — a mechanical,
+        // zero-cost digest of what THIS turn actually did, attached to its
+        // checkpoint. Runs even if the turn errored/was aborted above (the
+        // digest just reflects whatever entries actually landed), but not if
+        // the checkpoint itself was already dropped by a restore that
+        // happened mid-turn (setMilestone no-ops on a missing id).
+        const milestone = deriveMilestoneSummary(this.uiHistory.slice(turnStartUiIndex));
+        this.checkpoints.setMilestone(checkpointId, milestone);
+        this.persist();
+        // Item "documentation skill": feed the exact same mechanically-generated
+        // digest into the workspace-wide project log — "unify into one system,"
+        // not a fourth logging mechanism alongside the per-turn milestone, the
+        // per-session crash-recovery log, and this. Best-effort/fire-and-forget,
+        // same as the chat-memory indexing call just below.
+        if (milestone) this.services.chatStore.appendProjectLog(this.title, milestone).catch((err) => logger.warn('project log append failed', String(err)));
+        // Keep search_chat_history current — incremental (see ChatMemoryIndex),
+        // so this is cheap on every turn except when this session actually
+        // grew. Best-effort: a memory-index failure must never break the turn
+        // that just completed.
+        this.services.chatMemoryIndex.indexSession(this.toStored()).catch((err) => logger.warn('chat memory indexing failed', String(err)));
+        this.maybeReviewForMemory();
+      }
+      this.busy = false;
+      this.post({ type: 'busy', sessionId: this.id, busy: false });
+    }
+  }
+
+  /** After a turn that actually ran, send queued follow-ups one at a time unless the user pressed Stop. */
+  private async drainQueuedTurns() {
+    while (!this.userStopped && this.messageQueue.length > 0) {
+      const next = this.messageQueue.shift()!;
+      this.publishQueue();
+      const ran = await this.runTurn(next.text, next.files || []);
+      if (!ran) {
+        this.messageQueue.unshift(next);
+        this.publishQueue();
+        return;
+      }
+    }
+  }
+
+  /**
+   * Slash-command expansion and @-file attachment, shared by a normal turn
+   * and by steering so a queued message expands when it is sent, not when it is queued.
+   */
+  private async prepareOutgoing(text: string, files: string[]): Promise<{ effectiveText: string; augmented: string; skillUsed?: string }> {
+    let effectiveText = text;
+    let skillUsed: string | undefined;
+    if (text.trim().startsWith('/')) {
+      const expansion = await this.services.skills.expand(text);
+      if (expansion) {
+        effectiveText = expansion.expanded;
+        skillUsed = expansion.skillUsed;
+      }
+    }
+    let augmented = effectiveText;
+    for (const rel of files) {
+      try {
+        const uri = vscode.Uri.joinPath(this.services.workspaceRoot, rel);
+        const stat = await Promise.resolve(vscode.workspace.fs.stat(uri)).catch(() => undefined);
+        if (stat && stat.type === vscode.FileType.Directory) {
+          // Item #5: folders can be @-tagged too. We don't dump a whole
+          // folder's contents into context (could be huge/binary-laden) —
+          // give the model a shallow listing and let it list_dir/read_file
+          // its way in from there, same as if it discovered the folder itself.
+          const children: [string, vscode.FileType][] = await Promise.resolve(vscode.workspace.fs.readDirectory(uri)).catch(() => [] as [string, vscode.FileType][]);
+          const names = children.slice(0, 200).map(([name, type]: [string, vscode.FileType]) => `${name}${type === vscode.FileType.Directory ? '/' : ''}`).join('\n');
+          augmented += `\n\n[Attached folder: ${rel}]\n${names || '(empty)'}${children.length > 200 ? '\n... (truncated; use list_dir for more)' : ''}`;
+          continue;
+        }
+        const content = await this.services.pendingEdits.readEffective(uri);
+        if (content !== undefined) {
+          const capped = content.length > 100_000 ? content.slice(0, 100_000) + '\n... (truncated)' : content;
+          augmented += `\n\n[Attached file: ${rel}]\n\`\`\`\n${capped}\n\`\`\``;
+        }
+      } catch {
+        /* ignore unreadable attachment */
+      }
+    }
+    return { effectiveText, augmented, skillUsed };
+  }
+
+  private enqueueUserMessage(text: string, files: string[]) {
+    const trimmed = (text || '').trim();
+    const attached = (files || []).filter((f) => typeof f === 'string' && f.length > 0);
+    if (!trimmed && attached.length === 0) return;
+    this.messageQueue.push({
+      id: genId('q'),
+      text: trimmed,
+      files: attached.length ? attached : undefined,
+      queuedAt: nowIso(),
+    });
+    this.publishQueue();
+  }
+
+  /** Replace the text of a queued message. Unknown ids are ignored. */
+  editQueuedMessage(id: string, text: string) {
+    const item = this.messageQueue.find((q) => q.id === id);
+    if (!item) return;
+    item.text = text;
+    this.publishQueue();
+  }
+
+  /** Drop a queued message. Unknown ids are ignored. */
+  removeQueuedMessage(id: string) {
+    const before = this.messageQueue.length;
+    this.messageQueue = this.messageQueue.filter((q) => q.id !== id);
+    if (this.messageQueue.length !== before) this.publishQueue();
+  }
+
+  /**
+   * Send now: if a turn is running, move this message to the front so the
+   * next step boundary steers it first. If the chat is idle, send it immediately
+   * (and then drain whatever is still queued).
+   */
+  async sendQueuedNow(id: string) {
+    const idx = this.messageQueue.findIndex((q) => q.id === id);
+    if (idx < 0) return;
+    const [item] = this.messageQueue.splice(idx, 1);
+    if (this.busy) {
+      this.messageQueue.unshift(item);
+      this.publishQueue();
+      return;
+    }
+    this.publishQueue();
+    this.userStopped = false;
+    const ran = await this.runTurn(item.text, item.files || []);
+    if (ran) await this.drainQueuedTurns();
+  }
+
+  /**
+   * Called by the agent loop at each step boundary. Acting modes only — the
+   * loop does not call this for Ask/Plan or sub-agents. Taken messages leave
+   * the queue and show up in the transcript with a mid-turn marker.
+   * Requirements are not re-extracted from these messages (the checklist
+   * stays sourced from the turn's original user message).
+   */
+  private async takeSteeringMessages(): Promise<{ text: string }[]> {
+    if (this.messageQueue.length === 0) return [];
+    const batch = this.messageQueue.splice(0, this.messageQueue.length);
+    this.publishQueue();
+    const out: { text: string }[] = [];
+    for (const item of batch) {
+      const prepared = await this.prepareOutgoing(item.text, item.files || []);
+      const userEntry: UiTranscriptEntry = {
+        kind: 'user',
+        id: genId('u'),
+        text: item.text,
+        files: item.files,
+        midTurn: true,
+      };
+      this.pushEntry(userEntry);
+      this.post({ type: 'entry', sessionId: this.id, entry: userEntry });
+      this.log('user', item.text.length > 300 ? item.text.slice(0, 300) + '…' : item.text);
+      if (prepared.skillUsed) {
+        const sysEntry: UiTranscriptEntry = { kind: 'system', id: genId('sys'), text: `Expanded /${prepared.skillUsed}` };
+        this.pushEntry(sysEntry);
+        this.post({ type: 'entry', sessionId: this.id, entry: sysEntry });
+      }
+      if (prepared.augmented) out.push({ text: prepared.augmented });
+    }
+    return out;
+  }
+
+  private publishQueue() {
+    this.persist();
+    this.post({ type: 'queueUpdate', sessionId: this.id, queue: this.messageQueue.map(cloneQueuedMessage) });
   }
 
   /**
@@ -1000,4 +1146,24 @@ function nowIso(): string {
   // Date.now()/new Date() are fine at runtime in the extension host (unlike
   // inside Workflow scripts); this helper just centralizes the format.
   return new Date().toISOString();
+}
+
+function cloneQueuedMessage(q: QueuedUserMessage): QueuedUserMessage {
+  return { id: q.id, text: q.text, files: q.files?.slice(), queuedAt: q.queuedAt };
+}
+
+function restoreQueuedMessages(raw: QueuedUserMessage[] | undefined): QueuedUserMessage[] {
+  if (!Array.isArray(raw)) return [];
+  const out: QueuedUserMessage[] = [];
+  for (const q of raw) {
+    if (!q || typeof q.id !== 'string' || typeof q.text !== 'string') continue;
+    const files = Array.isArray(q.files) ? q.files.filter((f) => typeof f === 'string' && f.length > 0) : [];
+    out.push({
+      id: q.id,
+      text: q.text,
+      files: files.length ? files : undefined,
+      queuedAt: typeof q.queuedAt === 'string' ? q.queuedAt : nowIso(),
+    });
+  }
+  return out;
 }
