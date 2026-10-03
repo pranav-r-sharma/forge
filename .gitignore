@@ -20,3 +20,6 @@ _devtools/runtime_test/fixtures/memroot*/
 .env.*
 *.pem
 *.key
+
+# Local benchmark run log (not kept in git)
+_devtools/bench/req-ab-round2.log
