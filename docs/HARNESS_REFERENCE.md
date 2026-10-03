@@ -6,7 +6,7 @@ Living map of agent-turn behavior: features, settings, execution order, and know
 
 ---
 
-## 1. Feature inventory (59)
+## 1. Feature inventory (60)
 
 Each item: **purpose · trigger · location · settings · mutates**
 
@@ -84,6 +84,7 @@ Each item: **purpose · trigger · location · settings · mutates**
 |----|---------|---------|---------|----------|----------|---------|
 | F46 | Best-of-N rewrite | Resample large full-file writes | write_file ≥40 lines existing | `bestOfN.ts` | enabled **false**; samples 3 | May replace call + assistant msg |
 | F47 | Nested tool unwrap | `tool` nested in `args` | Every call | `argErrors.ts` | — | Normalized args |
+| F47b | search_code grep | Exact/regex search: `regex`, `caseSensitive` (plain literal default off; `/re/` case-sensitive unless `i`), `wholeWord`, `context` ≤10, `include`/`exclude` globs (+ default excludes), `path` (folder or one file, inside workspace), `mode` lines/files/count/extract (extract = enclosing code block or markdown section, `maxLines` 200), `multiline`, `maxResults` 500 | search_code call | `searchTools.ts`: VS Code bundled ripgrep (`--json`, killed on cancel) → JS scan fallback on missing rg / rg error / rg-unsupported regex (look-around); same output both engines (parity tests) | — | Tool result only |
 | F48 | Unknown tool args | Hint typos in result | Successful tool | `unknownToolArgs.ts` | — | Tool result text |
 | F49 | Redundant read note | Same lines re-read | read_file ok | `readCoverage.ts` | — | Tool result + trace |
 | F50 | Self-critique | Extra model review of edit | write_file ok, lines ≥ min | `selfCritique.ts` | enabled **false**; minLines 40 | Tool result appendix |

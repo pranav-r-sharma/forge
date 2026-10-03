@@ -118,7 +118,8 @@ module.exports = {
   Position, Range, Selection, ThemeColor, WorkspaceEdit, TabInputText,
   ProgressLocation: { Notification: 15, Window: 10, SourceControl: 1 }, StatusBarAlignment: { Left: 1, Right: 2 },
   ViewColumn: { Active: -1, Beside: -2, One: 1, Two: 2 }, ConfigurationTarget: { Global: 1, Workspace: 2, WorkspaceFolder: 3 },
-  env: { clipboard: { writeText: async () => {}, readText: async () => '' }, openExternal: async () => true, appName: 'stub', machineId: 'stub' },
+  env: { clipboard: { writeText: async () => {}, readText: async () => '' }, openExternal: async () => true, appName: 'stub', machineId: 'stub', appRoot: '' },
+  __setAppRoot(p) { module.exports.env.appRoot = p || ''; },
   extensions: { getExtension: () => undefined }, languages: { getDiagnostics: () => [], registerInlineCompletionItemProvider: () => new Disposable(noop) },
   version: '1.85.0-stub',
 };

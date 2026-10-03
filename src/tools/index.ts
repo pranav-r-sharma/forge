@@ -23,8 +23,9 @@ export const TOOL_SPECS: ToolSpec[] = [
   },
   {
     name: 'search_code',
-    describe: 'Literal or /regex/ search across workspace text files. Fast, exact.',
-    exampleArgs: { query: 'function loadConfig' },
+    describe:
+      'Grep the workspace (ripgrep when available). query or pattern; /regex/flags; optional regex, caseSensitive, wholeWord, context, include/exclude globs, path, mode (lines|files|count|extract), multiline, maxResults.',
+    exampleArgs: { query: 'loadConfig', include: '**/*.{ts,py}', mode: 'lines' },
     run: searchCodeTool,
   },
   {
