@@ -15,7 +15,7 @@ import { PROVIDERS, WebSearchService } from '../websearch/searchService';
 import { WebFetchService } from '../websearch/fetchService';
 import { WebSearchKeyStore, SECRET_BACKED_PROVIDERS } from '../websearch/keyStore';
 import { McpManager } from '../mcp/mcpManager';
-import { MODES } from '../agent/modes';
+import { ForgeMode, MODES } from '../agent/modes';
 import { getConfig, setChatModel, setForgeSetting, setMlxChatModel, userConfiguredRecommendationKeys } from '../util/config';
 import { genId } from '../util/ids';
 import { resolveWorkspacePath, toRelative } from '../util/paths';
@@ -244,6 +244,71 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       this.post({ type: 'sessionSwitched', session: session.toSummaryState() });
       await this.pushSessionsList();
     });
+  }
+
+  /**
+   * Run one file-mailbox task as a real Forge chat (same memory, project log,
+   * history, and approval gates as a message typed in the panel). Session
+   * setup goes through enqueueSessionOp, the same queue as newChat; the
+   * send itself stays outside that queue so Stop and tab switches are not
+   * blocked for the whole turn. A task that needs tool approval waits here
+   * until the panel answers. A busy session is queued and this returns
+   * without waiting for that later turn.
+   */
+  async runBridgeTask(t: { text: string; subject: string; from: string; sessionId?: string; mode?: ForgeMode }): Promise<{ ok: boolean; sessionId: string; finalText: string; error?: string }> {
+    this.post({ type: 'toast', level: 'info', text: `Bridge task from ${t.from}: ${t.subject}` });
+    try {
+      if (t.sessionId && !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(t.sessionId)) {
+        return { ok: false, sessionId: '', finalText: '', error: 'Invalid session id.' };
+      }
+      const ready = await this.enqueueSessionOp(async (): Promise<{ session?: ChatSession; fail?: { ok: boolean; sessionId: string; finalText: string; error?: string } }> => {
+        if (t.sessionId) {
+          const existing = await this.getOrLoadSession(t.sessionId);
+          if (!existing) return { fail: { ok: false, sessionId: t.sessionId, finalText: '', error: `Unknown session: ${t.sessionId}` } };
+          if (t.mode) existing.setMode(t.mode);
+          await this.showSession(existing);
+          return { session: existing };
+        }
+        const session = new ChatSession(this.services, (id, msg) => this.notify(id, msg));
+        session.rename(`[bridge] ${t.subject}`.replace(/\s+/g, ' ').trim());
+        this.sessions.set(session.id, session);
+        await session.runHookOnce('session-start');
+        session.setMode(t.mode ?? getConfig().bridgeDefaultMode);
+        await this.showSession(session);
+        return { session };
+      });
+      if (ready.fail) return ready.fail;
+      const session = ready.session;
+      if (!session) return { ok: false, sessionId: t.sessionId || '', finalText: '', error: 'Could not open a chat for this task.' };
+      if (session.busy) {
+        await session.send(t.text, []);
+        return { ok: true, sessionId: session.id, finalText: 'Queued: the chat was busy; it will be handled in that session.' };
+      }
+      const start = session.uiHistory.length;
+      await session.send(t.text, []);
+      const since = session.uiHistory.slice(start);
+      let finalText = '';
+      for (const entry of since) {
+        if (entry.kind === 'assistant') finalText = entry.text;
+      }
+      if (finalText.trim()) return { ok: true, sessionId: session.id, finalText };
+      const errEntry = [...since].reverse().find((entry) => entry.kind === 'error');
+      if (errEntry && errEntry.kind === 'error') return { ok: false, sessionId: session.id, finalText: errEntry.text, error: errEntry.text };
+      const started = since.some((entry) => entry.kind === 'user');
+      const why = started ? 'Forge finished without an answer.' : 'Forge did not start the turn (no model selected, or the provider is offline).';
+      return { ok: false, sessionId: session.id, finalText: '', error: why };
+    } catch (err: any) {
+      return { ok: false, sessionId: t.sessionId || '', finalText: '', error: err?.message || String(err) };
+    }
+  }
+
+  /** Make this chat the active tab and reveal the Forge view, the same way newChat does. */
+  private async showSession(session: ChatSession) {
+    this.activeSessionId = session.id;
+    this.post({ type: 'sessionSwitched', session: session.toSummaryState() });
+    await this.pushSessionsList();
+    this.focus();
+    if (this.panel) this.panel.reveal(this.panel.viewColumn ?? vscode.ViewColumn.Beside);
   }
 
   async refreshIndexStatus() {

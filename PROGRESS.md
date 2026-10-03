@@ -71,13 +71,14 @@ Then 0.15.0 items (see "Suggested release slicing" in the plan) once Phase 0 num
 
 ## Owner additions (2026-10-03) — live tests stay on HOLD
 Order: (A) fix context meter, (B) fix abrupt stops, then plan+build (1) message queue while the agent works, (4) CLI/port so Cursor can drive Forge headless with sessions/memory intact, (5) Cursor→Forge bridge (Cursor = director, Forge local agent = worker), (6) robust grep tool.
+- **Items 4+5 DONE 2026-10-03 (file mailbox bridge):** `src/bridge/agentBridge.ts`, `ChatViewProvider.runBridgeTask`, `forge-bridge` helper, `docs/CURSOR_BRIDGE.md`, `.cursor/rules/forge-bridge.mdc`; settings `forge.bridge.enabled` (default off) / `defaultMode`. Cursor (grok-4.7-high) built it, I reviewed. Suite 55 files / 1,953 checks. Live check = LIVE-008.
 - **Item 1 DONE 2026-10-03 (queue + steer):** built by Cursor (grok-4.7-high, 2nd attempt after a connection stall), reviewed by me. `test_v15_queue_steer.ts` 48 checks; suite 54 files / 1,890 checks. UI check = LIVE-007.
 - **Item 6 DONE 2026-10-03 (grep):** `search_code` upgraded (Cursor composer-2.5; reviewed). Review fixed: rg paths broken for `path` arg (relative to cwd), `/re/` lost case-sensitivity, multi-include ignored by JS scan, rg-only regex errors now fall back to JS, duplicate context lines, extract missing closing brace. `test_v15_grep.ts` 36 checks incl. rg/JS parity.
 - **B DONE 2026-10-03:** abrupt stops — no-tool replies that were empty or only announced an action ended the turn. `classifyStalledReply` + nudge (cap 2) in `agentLoop.ts`; `test_v15_stalled_reply.ts` (27 checks). Suite 52/52, 1,806 checks. Live check = LIVE-006.
 - **A DONE 2026-10-03:** context meter used EVALUATED prompt tokens only (cache excluded) → read ~2% when cache warm. New `src/util/contextUsage.ts`; test `test_v15_context_usage.ts` (8 checks).
 
 ## Next
-Items 4+5 (owner chose FILE MAILBOX): Forge watches `.agent-bridge/inbox/forge/` in the open workspace, runs each task in a real ChatSession (same memory/history/sessions as the UI), writes the reply to `.agent-bridge/inbox/cursor/`; plus a `forge-bridge` script (send/wait/read) for Cursor. VS Code must stay open. Live tests on HOLD.
+All six owner additions (2026-10-03) are built and unit-tested. Remaining: live tests when the owner frees the hardware — LIVE-001 (round 3 requirements A/B; then recommend whether `forge.requirements.enabled` stays off), then LIVE-002..008.
 
 ## Verify-before-done + compaction pins (2026-09-30, bridge proposals 4–5)
 - **FIX 4:** `forge.verifyBeforeDone` (`off`|`auto`|`custom`, default `auto`), `forge.verifyCommand`, `forge.verifyTimeoutSec` (300s); `src/agent/verifyBeforeDone.ts` auto-detect order; runs on finals after `write_file` in Agent/Auto/Outcome (per-chat Outcome verify unchanged); final shows verify command + pass. E2e auto-detect: **t09** and **t11** → `bash check.sh`.

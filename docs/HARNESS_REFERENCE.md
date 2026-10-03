@@ -1,6 +1,6 @@
 # Forge harness reference
 
-Last updated: 2026-09-30 (introducing commit: see `git log -1 -- docs/HARNESS_REFERENCE.md`)
+Last updated: 2026-10-03 (introducing commit: see `git log -1 -- docs/HARNESS_REFERENCE.md`)
 
 Living map of agent-turn behavior: features, settings, execution order, and known interaction risks. **Do not treat this as a substitute for reading `src/agent/agentLoop.ts` when changing behavior.**
 
@@ -98,7 +98,7 @@ Each item: **purpose · trigger · location · settings · mutates**
 | F57 | Command cwd resolve | Fix workspace name as cwd | run_command | `commandTool.ts` / session | — | spawn cwd |
 | F58 | Web search/fetch | Optional tools | `webSearch.enabled` | `webTools.ts`, services | default **false** | Tool availability |
 
-**Also wired but outside the main loop:** inline edit / Tab completion (`inlineEditController`, `inlineCompletionProvider`), workspace `@codebase` index, memory review, checkpoints, skills/rules injection (`chatSession.ts`), settings recommendations UI (`recommendations.ts`), chat store persistence.
+**Also wired but outside the main loop:** inline edit / Tab completion (`inlineEditController`, `inlineCompletionProvider`), workspace `@codebase` index, memory review, checkpoints, skills/rules injection (`chatSession.ts`), settings recommendations UI (`recommendations.ts`), chat store persistence, file mailbox (`src/bridge/agentBridge.ts` → `ChatViewProvider.runBridgeTask`, only when `forge.bridge.enabled`). A bridge task is a normal chat send: same approvals, memory, project log, and gates. It does not skip the turn pipeline below.
 
 ---
 
@@ -142,6 +142,8 @@ Read via `getConfig()` in `src/util/config.ts` unless noted. **Panel?** = listed
 | `forge.requireApprovalForWrites/Commands` | true | Yes | Agent mode approvals |
 | `forge.subAgent*` | — | Yes | Delegation |
 | `forge.mcp.servers` | [] | No | MCP tool surface |
+| `forge.bridge.enabled` | false | No | Watch `.agent-bridge/inbox/forge` and run each file as a chat. Off so a writer in the repo cannot drive the agent unless you turn it on. |
+| `forge.bridge.defaultMode` | agent | No | Mode for a new bridge chat with no `@mode` line. `@session` without `@mode` keeps that chat's current mode. |
 
 Per-chat overrides (not in table): session model, Outcome **verify command** (`ChatSession.verifyCommand`), orchestration toggle, compaction cache blob.
 
@@ -214,6 +216,10 @@ Model reply (no tool)
           ▼
       emit final + done
 ```
+
+### File mailbox bridge
+
+Not a step inside the loop. When `forge.bridge.enabled` is on, `AgentBridge` claims one `inbox/forge` file at a time (oldest filename first) and `runBridgeTask` calls `ChatSession.send`. `@mode` or `forge.bridge.defaultMode` only picks the chat mode. A tool that needs approval waits in the panel. If that chat is already busy, the text is queued (F47c) and the mail reply says so instead of waiting for the later turn.
 
 ### Cache stability intent
 

@@ -9,6 +9,7 @@ Tests listed here require loading **gpt-oss-20b MXFP4-Q8 (MLX)** per `CLAUDE.md`
 | LIVE-003 | Pinned user follow-ups survive compaction in a long run | pending | 2026-09-30 |
 | LIVE-004 | MLX server restarts when `forge.mlx.contextTokens` / panel context changes (managed server) | pending | 2026-09-30 |
 | LIVE-005 | MLX settings change mid-agent-turn defers restart until turn ends (status + no in-flight `chat()` break) | pending | 2026-09-30 |
+| LIVE-008 | File mailbox bridge end to end: Cursor `forge-bridge ask` -> Forge chat -> reply | pending | 2026-10-03 |
 | LIVE-007 | Queue + steer in the real panel: send while busy, steer lands at next step, Edit/Remove/Send now, Stop keeps queue, reload restores queue | pending | 2026-10-03 |
 | LIVE-006 | Context meter tracks real prompt size; stalled-reply nudge fires and is not a false positive | pending | 2026-10-03 |
 
@@ -137,3 +138,9 @@ Equivalent per task via `run_task.ts`: `--requirements true|false`, tasks **t11-
 - **Why:** the webview and VS Code panel cannot be driven by the unit tests (48 checks cover the logic and fake-model loop only).
 - **How:** open Forge in VS Code, start a multi-step Agent task (gpt-oss-20b MXFP4-Q8 on MLX), type a follow-up and press Enter while it runs.
 - **Pass:** message appears in the queue list; model acknowledges it at its next step (transcript shows "sent mid-turn"); Edit/Remove/Send now work; Stop keeps the queue and does not auto-send; reloading the window restores the queue; Ask/Plan mode leaves it queued until the turn ends.
+
+## LIVE-008 — File mailbox bridge, end to end (2026-10-03)
+
+- **Why:** the watcher and mail format are unit-tested; the real VS Code panel, tool approvals and a real model are not.
+- **How:** set `forge.bridge.enabled` true in VS Code on this repo (status bar shows "Forge bridge listening"). From a terminal: `_devtools/bridge/forge-bridge ask "hello" "Reply with the word ok" --mode ask`, then a small Agent task that writes a file, then `@session <id>` follow-up, then `bridge send cursor forge ...` plus `bridge read cursor`. gpt-oss-20b MXFP4-Q8 on MLX only.
+- **Pass:** each task shows as a "[bridge] ..." chat in the panel, a reply file lands in `.agent-bridge/inbox/cursor/` with status done and the right session id; a task needing approval waits in the panel; reloading VS Code mid-task reruns the file from processing/; turning the setting off stops the watcher.

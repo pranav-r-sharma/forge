@@ -1,0 +1,113 @@
+#!/usr/bin/env bash
+# Cursor -> Forge mailbox helper. Same mail format as ~/.local/bin/bridge.
+#   forge-bridge ask "<subject>" "<task>" [--session ID] [--mode M] [--timeout SECS]
+#   forge-bridge status
+# Walks up from the current directory for .agent-bridge or .git to find the repo.
+set -euo pipefail
+
+find_repo() {
+  d="$PWD"
+  while [ "$d" != / ] && [ "$d" != "$HOME" ]; do
+    if [ -d "$d/.agent-bridge" ] || [ -d "$d/.git" ]; then
+      printf '%s\n' "$d"
+      return 0
+    fi
+    d="$(dirname "$d")"
+  done
+  return 1
+}
+
+subject_of() {
+  awk 'BEGIN{f=0} /^---[[:space:]]*$/{f++; next} f==1 && /^subject:/{sub(/^subject: /,""); print; exit}' "$1"
+}
+
+status_of() {
+  awk 'BEGIN{f=0} /^---[[:space:]]*$/{f++; next} f==1 && /^status:/{sub(/^status: /,""); print; exit}' "$1"
+}
+
+cmd="${1:-}"
+shift || true
+REPO="$(find_repo)" || { echo "no repo root (.agent-bridge or .git) found from $PWD" >&2; exit 1; }
+M="$REPO/.agent-bridge"
+
+case "$cmd" in
+  status)
+    echo "inbox/forge:"
+    if [ -d "$M/inbox/forge" ]; then ls -1 "$M/inbox/forge" 2>/dev/null || true; fi
+    echo "processing:"
+    if [ -d "$M/processing" ]; then ls -1 "$M/processing" 2>/dev/null || true; fi
+    ;;
+  ask)
+    subj="${1:-}"
+    body="${2:-}"
+    if [ -z "$subj" ] || [ $# -lt 2 ]; then
+      echo "usage: forge-bridge ask \"<subject>\" \"<task>\" [--session ID] [--mode M] [--timeout SECS]" >&2
+      exit 1
+    fi
+    shift 2
+    session=""
+    mode=""
+    timeout=3600
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --session) session="${2:-}"; shift 2 ;;
+        --mode) mode="${2:-}"; shift 2 ;;
+        --timeout) timeout="${2:-}"; shift 2 ;;
+        *) echo "unknown option: $1" >&2; exit 1 ;;
+      esac
+    done
+    case "$timeout" in
+      ''|*[!0-9]*) echo "timeout must be a whole number of seconds" >&2; exit 1 ;;
+    esac
+    case "$mode" in
+      ''|agent|auto|ask|plan|outcome) ;;
+      *) echo "mode must be agent, auto, ask, plan, or outcome" >&2; exit 1 ;;
+    esac
+    if [ -n "$session" ]; then
+      case "$session" in
+        *[!A-Za-z0-9._-]*) echo "session id has invalid characters" >&2; exit 1 ;;
+      esac
+    fi
+    directives=""
+    if [ -n "$session" ]; then directives+="@session ${session}"$'\n'; fi
+    if [ -n "$mode" ]; then directives+="@mode ${mode}"$'\n'; fi
+    full="${directives}${body}"
+    mkdir -p "$M/inbox/forge" "$M/inbox/cursor" "$M/archive" "$M/processing"
+    slug=$(printf '%s' "$subj" | tr -cs 'a-zA-Z0-9' '-' | cut -c1-40)
+    stamp=$(date +%Y%m%dT%H%M%S)
+    printf -- "---\nfrom: %s\nto: %s\nsubject: %s\nsent: %s\n---\n\n%s\n" "cursor" "forge" "$subj" "$(date -Iseconds)" "$full" \
+      > "$M/inbox/forge/${stamp}-cursor-${slug}.md"
+    echo "sent -> forge: $subj" >&2
+    reply_subj="Re: $subj"
+    deadline=$(( $(date +%s) + timeout ))
+    while [ "$(date +%s)" -lt "$deadline" ]; do
+      shopt -s nullglob
+      matches=("$M/inbox/cursor"/*.md)
+      if [ ${#matches[@]} -gt 0 ]; then
+        IFS=$'\n' sorted=($(printf '%s\n' "${matches[@]}" | sort))
+        unset IFS
+        for f in "${sorted[@]}"; do
+          [ -f "$f" ] || continue
+          subj_line="$(subject_of "$f" || true)"
+          if [ "$subj_line" = "$reply_subj" ]; then
+            cat "$f"
+            echo
+            st="$(status_of "$f" || true)"
+            mkdir -p "$M/archive"
+            mv "$f" "$M/archive/"
+            if [ "$st" = "done" ]; then exit 0; fi
+            exit 1
+          fi
+        done
+      fi
+      sleep 1
+    done
+    echo "timeout waiting for reply to: $subj" >&2
+    exit 2
+    ;;
+  *)
+    echo "usage: forge-bridge ask \"<subject>\" \"<task>\" [--session ID] [--mode M] [--timeout SECS]" >&2
+    echo "       forge-bridge status" >&2
+    exit 1
+    ;;
+esac

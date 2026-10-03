@@ -157,6 +157,14 @@ export interface ForgeConfig {
   webSearchMaxFetchChars: number;
   /** Base URL of a self-hosted SearXNG instance (not a secret — see keyStore.ts for why API keys are handled differently). */
   webSearchSearxngUrl: string;
+
+  /**
+   * Watch `<workspace>/.agent-bridge/inbox/forge` and run each file as a chat.
+   * Off by default: a process that can write the workspace could otherwise start the agent.
+   */
+  bridgeEnabled: boolean;
+  /** Mode for a bridge task that has no `@mode` line and is not continuing a session. */
+  bridgeDefaultMode: ForgeMode;
 }
 
 export function getConfig(): ForgeConfig {
@@ -256,6 +264,11 @@ export function getConfig(): ForgeConfig {
     webSearchRespectRobotsTxt: cfg.get<boolean>('webSearch.respectRobotsTxt') ?? true,
     webSearchMaxFetchChars: cfg.get<number>('webSearch.maxFetchChars') ?? 2_000_000,
     webSearchSearxngUrl: cfg.get<string>('webSearch.searxngUrl') || '',
+    bridgeEnabled: cfg.get<boolean>('bridge.enabled') ?? false,
+    bridgeDefaultMode: (() => {
+      const v = cfg.get<string>('bridge.defaultMode');
+      return v === 'auto' || v === 'ask' || v === 'plan' || v === 'outcome' ? v : 'agent';
+    })(),
   };
 }
 

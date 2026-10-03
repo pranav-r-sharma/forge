@@ -1,0 +1,10 @@
+---
+description: Delegate a long coding job in this repo to the local Forge agent through the file mailbox
+alwaysApply: false
+---
+
+Use the Forge file bridge when a task should run as a real Forge chat (multi-file edits, a long local-agent loop) and VS Code is open with `forge.bridge.enabled` turned on. Do small edits yourself.
+
+Send work with `_devtools/bridge/forge-bridge ask "<subject>" "<task>"` (optional `--session`, `--mode`, `--timeout`). Or `bridge send cursor forge "<subject>" "<task>"` and read the reply with `bridge read cursor`.
+
+How it works, the `@session` / `@mode` lines, and the limits are in `docs/CURSOR_BRIDGE.md`.

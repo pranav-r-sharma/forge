@@ -515,6 +515,17 @@
               "headers": { "type": "object", "description": "HTTP transport: extra HTTP headers sent with every request to \"url\" (e.g. an Authorization bearer token)." }
             }
           }
+        },
+        "forge.bridge.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Watch <workspace>/.agent-bridge/inbox/forge and run each task as a Forge chat (see docs/CURSOR_BRIDGE.md). Off by default: anyone who can write files in the workspace could otherwise start the agent. VS Code must be open. Tool approvals are the same as in the chat panel — a task that needs approval waits there."
+        },
+        "forge.bridge.defaultMode": {
+          "type": "string",
+          "enum": ["agent", "auto", "ask", "plan", "outcome"],
+          "default": "agent",
+          "description": "Mode for a bridge task that does not include an @mode line and is not continuing an existing chat. A task can override this with a leading line `@mode agent|auto|ask|plan|outcome`."
         }
       }
     }

@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import * as os from 'os';
+import * as path from 'path';
 import { SwitchableProvider } from './llm/factory';
 import { MlxServerManager, makeEnsureMlx } from './llm/mlxServer';
 import { registerMlxEnsureRunner, requestMlxRestartAfterSettingsChange } from './llm/mlxRestartCoord';
@@ -21,6 +22,7 @@ import { ChatViewProvider } from './chat/chatViewProvider';
 import { InlineEditController } from './inlineEdit/inlineEditController';
 import { ForgeInlineCompletionProvider } from './completion/inlineCompletionProvider';
 import { ForgeStatusBar } from './statusBar';
+import { AgentBridge } from './bridge/agentBridge';
 import { WebSearchKeyStore } from './websearch/keyStore';
 import { WebSearchService } from './websearch/searchService';
 import { WebFetchService } from './websearch/fetchService';
@@ -54,6 +56,9 @@ let activeBackgroundProcesses: BackgroundProcessManager | undefined;
 let activeMlxServer: MlxServerManager | undefined;
 /** Same reasoning as activeBackgroundProcesses — an MCP server is a real spawned child process too, and must not be left running orphaned after the extension host shuts down or reloads. */
 let activeMcpManager: McpManager | undefined;
+/** File-mailbox watcher. Only constructed when forge.bridge.enabled is on. */
+let activeAgentBridge: AgentBridge | undefined;
+let bridgeStatusItem: vscode.StatusBarItem | undefined;
 
 export async function activate(context: vscode.ExtensionContext) {
   logger.init(context);
@@ -226,6 +231,66 @@ export async function activate(context: vscode.ExtensionContext) {
 
   const statusBar = new ForgeStatusBar(ollama, context);
 
+  // Cursor (or anything else that can write the workspace) drops a task file
+  // in .agent-bridge/inbox/forge. Off unless forge.bridge.enabled is set —
+  // otherwise a file write would be enough to drive the agent.
+  const syncBridge = () => {
+    const cfg = getConfig();
+    if (!folder || !cfg.bridgeEnabled) {
+      if (!folder && cfg.bridgeEnabled) logger.warn('Forge bridge not started: no workspace folder open.');
+      if (activeAgentBridge) {
+        activeAgentBridge.dispose();
+        activeAgentBridge = undefined;
+        logger.info('Forge bridge stopped.');
+      }
+      bridgeStatusItem?.dispose();
+      bridgeStatusItem = undefined;
+      return;
+    }
+    if (activeAgentBridge) {
+      activeAgentBridge.setDefaultMode(cfg.bridgeDefaultMode);
+      return;
+    }
+    const bridge = new AgentBridge({
+      mailboxRoot: path.join(workspaceRoot.fsPath, '.agent-bridge'),
+      defaultMode: cfg.bridgeDefaultMode,
+      log: (line) => logger.info(`[bridge] ${line}`),
+      runner: (task) =>
+        chatViewProvider.runBridgeTask({
+          text: task.text,
+          subject: task.subject,
+          from: task.from,
+          sessionId: task.sessionId,
+          mode: task.mode,
+        }),
+    });
+    try {
+      bridge.start();
+    } catch (err) {
+      logger.warn('Forge bridge failed to start', String(err));
+      bridge.dispose();
+      return;
+    }
+    activeAgentBridge = bridge;
+    bridgeStatusItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 90);
+    bridgeStatusItem.text = '$(mail) Forge bridge listening';
+    bridgeStatusItem.tooltip = 'Watching .agent-bridge/inbox/forge. Tool approvals still happen in the chat panel.';
+    bridgeStatusItem.show();
+    void vscode.window.showInformationMessage('Forge bridge listening');
+    logger.info('Forge bridge listening.');
+  };
+  syncBridge();
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (!e.affectsConfiguration('forge.bridge.enabled') && !e.affectsConfiguration('forge.bridge.defaultMode')) return;
+      try {
+        syncBridge();
+      } catch (err) {
+        logger.warn('Forge bridge settings change failed', String(err));
+      }
+    })
+  );
+
   context.subscriptions.push(
     vscode.commands.registerCommand('forge.newChat', () => chatViewProvider.newChat()),
     vscode.commands.registerCommand('forge.focusChat', () => chatViewProvider.focus()),
@@ -304,4 +369,8 @@ export function deactivate() {
   activeBackgroundProcesses?.disposeAll();
   activeMcpManager?.disposeAll();
   activeMlxServer?.dispose();
+  activeAgentBridge?.dispose();
+  activeAgentBridge = undefined;
+  bridgeStatusItem?.dispose();
+  bridgeStatusItem = undefined;
 }
