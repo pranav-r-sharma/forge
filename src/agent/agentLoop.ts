@@ -7,7 +7,7 @@ import { LlmProvider } from '../llm/provider';
 import { ChatMessage, OllamaCallMetrics } from '../ollama/types';
 import { AgentActivity, AgentEvent, ToolCall, ToolExecContext, ToolResult } from './types';
 import { buildSystemPrompt, buildTurnContextPrefix } from './systemPrompt';
-import { parseToolCall, looksLikeAbandonedToolCall, formatIncompleteActionNudge, formatIncompleteActionCapFailure, extractAbandonedActionTarget, preprocessHarmonyReply, containsHarmonyControls, detectForeignToolCall, formatForeignToolCallNudge, formatForeignToolCallCapFailure, assistantContentForHistory, tryAcceptNativeToolCall, formatToolCallForHistory, type ForeignToolCallFormat } from './toolProtocol';
+import { parseToolCall, looksLikeAbandonedToolCall, formatIncompleteActionNudge, formatIncompleteActionCapFailure, classifyStalledReply, formatStalledReplyNudge, extractAbandonedActionTarget, preprocessHarmonyReply, containsHarmonyControls, detectForeignToolCall, formatForeignToolCallNudge, formatForeignToolCallCapFailure, assistantContentForHistory, tryAcceptNativeToolCall, formatToolCallForHistory, type ForeignToolCallFormat } from './toolProtocol';
 import { parseStructuredResponse, STRUCTURED_RESPONSE_SCHEMA } from './structuredOutput';
 import { generatePlanFirst, renderPlanFirstForPrompt } from './planFirst';
 import { shouldCritique, critiqueEdit } from './selfCritique';
@@ -601,6 +601,7 @@ export async function runAgentTurn(
   let verifyPassBaseline: { command: string; filesWritten: number; commandsRun: number } | undefined;
   let foreignFormatNudges = 0;
   let incompleteActionNudges = 0;
+  let stalledReplyNudges = 0;
   let requirementsNudges = 0;
   let pendingActionTarget: PendingActionTarget | undefined;
   /** Consecutive failed run_command results (tests/build still failing) — drives forge.thinking='auto': the agent is stuck, so let the model think. */
@@ -828,6 +829,19 @@ export async function runAgentTurn(
     }
 
     if (!call) {
+      // A reply with no visible text, or one whose last sentence promises an action it never took ("Now I'll write the tests:"),
+      // is not a final answer — accepting it is how a run stops abruptly mid-task (owner report, 2026-10-03).
+      const stalled = options.mode !== 'plan' ? classifyStalledReply(displayText) : undefined;
+      if (stalled && stalledReplyNudges < 2) {
+        stalledReplyNudges++;
+        pushAssistant(fullText);
+        pushMsg({ role: 'user', content: formatStalledReplyNudge(stalled) });
+        traceIter({ note: stalled === 'empty' ? 'empty-reply-nudge' : 'announced-action-nudge' });
+        continue;
+      }
+      if (stalled === 'empty' && !displayText.trim()) {
+        displayText = '[System] The model returned no answer after repeated prompts to continue. Ask it to continue, or start a new chat.';
+      }
       // Item #10: catch the model claiming it made a change ("created
       // `foo.ts`") that no write_file call actually backs up, and give it a
       // couple of chances to either actually do it or correct the claim,

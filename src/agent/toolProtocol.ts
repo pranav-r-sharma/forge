@@ -221,6 +221,35 @@ export function formatIncompleteActionCapFailure(raw: string, attempts: number):
   return `stopped: could not produce a valid action for ${tool} on ${path} after ${attempts} attempts`;
 }
 
+export type StalledReplyKind = 'empty' | 'announced';
+
+// "I'll run the tests now." / "Let me check the file:" — an action promised in the reply's LAST sentence. Courtesy closers
+// ("let me know…", "I'll be happy to…", "I will not…") are final-answer wording, not a promise to act.
+const ANNOUNCED_ACTION_RE =
+  /\b(?:I'll|I will|I'm going to|I am going to|let me|let's|now I(?:'ll| will)?|next,? I(?:'ll| will))\s+(?!know\b|be\b|not\b|leave\b|stop\b|end\b|wait\b)(?:now\s+|then\s+|also\s+|first\s+|quickly\s+)?[a-z]+/i;
+
+/**
+ * Why a no-tool reply in an acting mode is NOT a real final answer (caller has already ruled out a parsed or half-written call):
+ * 'empty' — no visible text at all (reasoning-only, or nothing), so the turn would end silently;
+ * 'announced' — the last sentence promises an action ("Now I'll write the tests:") that was never taken, so the turn would stop
+ * mid-task. Undefined when the reply reads like a genuine answer. Exported for unit tests.
+ */
+export function classifyStalledReply(displayText: string): StalledReplyKind | undefined {
+  const text = stripHarmonyControlTokens(displayText).replace(/```[\s\S]*?```/g, ' ').trim();
+  if (!text) return 'empty';
+  if (/\?\s*$/.test(text)) return undefined; // asking the user something is a legitimate stop
+  const sentences = text.split(/(?<=[.!])\s+|\n+/).map((x) => x.trim()).filter(Boolean);
+  const last = sentences[sentences.length - 1] ?? '';
+  return ANNOUNCED_ACTION_RE.test(last) ? 'announced' : undefined;
+}
+
+/** Nudge for a stalled reply (see classifyStalledReply). Exported for tests. */
+export function formatStalledReplyNudge(kind: StalledReplyKind): string {
+  return kind === 'empty'
+    ? '[System check] Your last reply had no visible answer and no action. Continue the task: reply now with your next action (one forge_action block) or, if the task is complete, a short final answer.'
+    : '[System check] You said what you would do next but did not do it — no forge_action was included, so nothing happened. Take that action now, in one forge_action block. If the task is actually complete, give your final answer instead.';
+}
+
 const HARMONY_MARKER = /<\|(?:channel|message|start|end|constrain)\|>/;
 
 /** True when the text uses Harmony-style control tokens (`<|channel|>`, etc.). */

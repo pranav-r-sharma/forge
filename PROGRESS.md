@@ -71,10 +71,11 @@ Then 0.15.0 items (see "Suggested release slicing" in the plan) once Phase 0 num
 
 ## Owner additions (2026-10-03) — live tests stay on HOLD
 Order: (A) fix context meter, (B) fix abrupt stops, then plan+build (1) message queue while the agent works, (4) CLI/port so Cursor can drive Forge headless with sessions/memory intact, (5) Cursor→Forge bridge (Cursor = director, Forge local agent = worker), (6) robust grep tool.
+- **B DONE 2026-10-03:** abrupt stops — no-tool replies that were empty or only announced an action ended the turn. `classifyStalledReply` + nudge (cap 2) in `agentLoop.ts`; `test_v15_stalled_reply.ts` (27 checks). Suite 52/52, 1,806 checks. Live check = LIVE-006.
 - **A DONE 2026-10-03:** context meter used EVALUATED prompt tokens only (cache excluded) → read ~2% when cache warm. New `src/util/contextUsage.ts`; test `test_v15_context_usage.ts` (8 checks).
 
 ## Next
-(B) Abrupt stops: in `src/agent/agentLoop.ts` no-call path, nudge when the reply is empty/reasoning-only or announces an action ("I'll now…") without a tool call; capped like other nudges; tests. Then items 1,4,5,6. LIVE-001 still on hold until the owner frees the hardware.
+Item 1 (message queue while the agent works): design + build. Then 6 (grep), 4 (headless CLI/port), 5 (Cursor→Forge bridge). Live tests on HOLD.
 
 ## Verify-before-done + compaction pins (2026-09-30, bridge proposals 4–5)
 - **FIX 4:** `forge.verifyBeforeDone` (`off`|`auto`|`custom`, default `auto`), `forge.verifyCommand`, `forge.verifyTimeoutSec` (300s); `src/agent/verifyBeforeDone.ts` auto-detect order; runs on finals after `write_file` in Agent/Auto/Outcome (per-chat Outcome verify unchanged); final shows verify command + pass. E2e auto-detect: **t09** and **t11** → `bash check.sh`.
